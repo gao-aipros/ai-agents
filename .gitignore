@@ -1,0 +1,18 @@
+# Agent binaries
+docker/*/bin/
+
+# Runtime workspace
+workspace/
+
+# Environment secrets
+.env
+
+# Claude Code
+.claude/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/

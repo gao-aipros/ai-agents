@@ -1,0 +1,5 @@
+# Exclude runtime workspace
+workspace/tasks/*/
+.env
+.git/
+
