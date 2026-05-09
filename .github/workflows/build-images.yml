@@ -36,9 +36,11 @@ jobs:
           echo "PREFIX=${REGISTRY}/${OWNER_LC}" >> $GITHUB_ENV
 
       # Layer 0 — base image
+      # Layer 0 — base image (other images depend on it via FROM ai-base:latest)
       - name: Build ai-base
         run: |
           docker build \
+            --load \
             -t ai-base:latest \
             -t ${PREFIX}/ai-base:latest \
             docker/base/
@@ -47,6 +49,7 @@ jobs:
       - name: Build claude-code
         run: |
           docker build \
+            --load \
             -t claude-code:latest \
             -t ${PREFIX}/claude-code:latest \
             docker/claude-code/
@@ -54,6 +57,7 @@ jobs:
       - name: Build copilot
         run: |
           docker build \
+            --load \
             -t copilot:latest \
             -t ${PREFIX}/copilot:latest \
             docker/copilot/
@@ -61,6 +65,7 @@ jobs:
       - name: Build opencode
         run: |
           docker build \
+            --load \
             -t opencode:latest \
             -t ${PREFIX}/opencode:latest \
             docker/opencode/
@@ -69,6 +74,7 @@ jobs:
       - name: Build master-agent
         run: |
           docker build \
+            --load \
             -t master-agent:latest \
             -t ${PREFIX}/master-agent:latest \
             docker/master-agent/
@@ -76,6 +82,7 @@ jobs:
       - name: Build worker-claude
         run: |
           docker build \
+            --load \
             -t worker-claude:latest \
             -t ${PREFIX}/worker-claude:latest \
             docker/worker-claude/
