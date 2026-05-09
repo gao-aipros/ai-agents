@@ -28,12 +28,19 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # Docker registries require lowercase; ${{ github.repository_owner }} may have uppercase chars
+      - name: Compute lowercase image prefix
+        run: |
+          OWNER_LC="${{ github.repository_owner }}"
+          OWNER_LC="${OWNER_LC,,}"
+          echo "PREFIX=${REGISTRY}/${OWNER_LC}" >> $GITHUB_ENV
+
       # Layer 0 — base image
       - name: Build ai-base
         run: |
           docker build \
             -t ai-base:latest \
-            -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/ai-base:latest \
+            -t ${PREFIX}/ai-base:latest \
             docker/base/
 
       # Layer 1 — agent base images (all depend on ai-base)
@@ -41,21 +48,21 @@ jobs:
         run: |
           docker build \
             -t claude-code:latest \
-            -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/claude-code:latest \
+            -t ${PREFIX}/claude-code:latest \
             docker/claude-code/
 
       - name: Build copilot
         run: |
           docker build \
             -t copilot:latest \
-            -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/copilot:latest \
+            -t ${PREFIX}/copilot:latest \
             docker/copilot/
 
       - name: Build opencode
         run: |
           docker build \
             -t opencode:latest \
-            -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/opencode:latest \
+            -t ${PREFIX}/opencode:latest \
             docker/opencode/
 
       # Layer 2 — agent images depending on claude-code
@@ -63,22 +70,22 @@ jobs:
         run: |
           docker build \
             -t master-agent:latest \
-            -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/master-agent:latest \
+            -t ${PREFIX}/master-agent:latest \
             docker/master-agent/
 
       - name: Build worker-claude
         run: |
           docker build \
             -t worker-claude:latest \
-            -t ${{ env.REGISTRY }}/${{ github.repository_owner }}/worker-claude:latest \
+            -t ${PREFIX}/worker-claude:latest \
             docker/worker-claude/
 
       # Push all images
       - name: Push images to ghcr.io
         run: |
-          docker push ${{ env.REGISTRY }}/${{ github.repository_owner }}/ai-base:latest
-          docker push ${{ env.REGISTRY }}/${{ github.repository_owner }}/claude-code:latest
-          docker push ${{ env.REGISTRY }}/${{ github.repository_owner }}/copilot:latest
-          docker push ${{ env.REGISTRY }}/${{ github.repository_owner }}/opencode:latest
-          docker push ${{ env.REGISTRY }}/${{ github.repository_owner }}/master-agent:latest
-          docker push ${{ env.REGISTRY }}/${{ github.repository_owner }}/worker-claude:latest
+          docker push ${PREFIX}/ai-base:latest
+          docker push ${PREFIX}/claude-code:latest
+          docker push ${PREFIX}/copilot:latest
+          docker push ${PREFIX}/opencode:latest
+          docker push ${PREFIX}/master-agent:latest
+          docker push ${PREFIX}/worker-claude:latest
