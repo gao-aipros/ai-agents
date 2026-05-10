@@ -25,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN mkdir -p /home/agent/go /home/agent/.claude \
     && chown -R agent:agent /home/agent/go /home/agent/.claude
 COPY --chown=agent:agent CLAUDE.md /home/agent/.claude/CLAUDE.md
+COPY --chown=agent:agent settings.json /home/agent/.claude/settings.json
 
 USER agent
-ENTRYPOINT ["claude"]
+ENTRYPOINT ["claude", "-p"]
