@@ -137,6 +137,7 @@ TTL: 24h for task result keys. Thread history is the long-term record.
 | `task:{id}:status` | STRING | Task lifecycle state | 24h |
 | `task:{id}:result` | STRING | Agent stdout/stderr | 24h |
 | `task:{id}:*` | STRING | Other per-task metadata | 24h |
+| `thread:{id}:lock` | STRING | Serialization guard (SETNX) | TASK_TIMEOUT + 5 min |
 
 ## Master: Python CLI tool
 
@@ -186,6 +187,9 @@ task.py thread-update --id <thread_id> --status <status> [--design "<text>"] [--
 
 task.py thread-list
     Lists all thread:{*}:current_state keys with status summary.
+
+task.py unlock --thread <thread_id>
+    Deletes thread:{id}:lock. Used to clear a stale lock left by a crashed master.
 ```
 
 ### Example flow
@@ -369,7 +373,7 @@ Worker dequeues task {task_id, thread_id, instruction}
 - After executing, the worker appends its result to the thread history. The next worker in the pipeline sees it.
 - On SIGTERM: lets the current subprocess finish, then exits.
 - Result content is capped at 10k chars when appended to thread history (avoids bloating the list with huge diffs; full result is still in `task:{id}:result`).
-- **Thread serialization:** `enqueue` acquires `SETNX thread:{id}:lock` (with a 30-min TTL to prevent orphaned locks). If the lock exists, enqueue refuses. `task.py wait` deletes the lock on completion, allowing the next task for that thread. This prevents concurrent tasks on the same thread from racing on state updates.
+- **Thread serialization:** `enqueue` acquires `SETNX thread:{id}:lock` (with TTL = TASK_TIMEOUT + 300s to avoid expiry races near task completion). If the lock exists, enqueue refuses. `task.py wait` deletes the lock on completion, allowing the next task for that thread. This prevents concurrent tasks on the same thread from racing on state updates. Stale locks (e.g. master crashed) are cleared by `task.py unlock --thread <id>`.
 
 ## docker-compose
 
@@ -499,3 +503,5 @@ volumes:
 3. **Result size in thread history?** stdout can be large (logs, diffs). Currently capped at 10k chars per message in thread history. Full result always in `task:{id}:result`. Right cap?
 
 4. **Thread state updates by workers?** Resolved — the worker only sets `last_updated_by`, `last_task_id`, `updated_at`. It never touches `status`. The master owns state transitions via `task.py thread-update`. No change needed.
+
+5. **Automatic retry on failure?** Currently a failed task leaves the worker idle until the master manually re-enqueues. A `--retry N` flag on `enqueue` (stored in payload, decremented by worker on failure, moved to dead-letter queue when exhausted) would improve throughput. Deferred to v2.
