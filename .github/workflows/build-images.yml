@@ -7,6 +7,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
   build:
@@ -28,71 +29,64 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Docker registries require lowercase; ${{ github.repository_owner }} may have uppercase chars
       - name: Compute lowercase image prefix
         run: |
           OWNER_LC="${{ github.repository_owner }}"
           OWNER_LC="${OWNER_LC,,}"
           echo "PREFIX=${REGISTRY}/${OWNER_LC}" >> $GITHUB_ENV
 
-      # Layer 0 — base image
-      # Layer 0 — base image (other images depend on it via FROM ai-base:latest)
+      # Layer 0 — base image (no build-arg needed, FROM debian:trixie is multi-arch on Docker Hub)
       - name: Build ai-base
         run: |
-          docker build \
-            --load \
-            -t ai-base:latest \
+          docker buildx build \
+            --platform ${PLATFORMS} \
+            --push \
             -t ${PREFIX}/ai-base:latest \
             docker/base/
 
-      # Layer 1 — agent base images (all depend on ai-base)
+      # Layer 1 — agent base images (FROM ai-base via build-arg)
       - name: Build claude-code
         run: |
-          docker build \
-            --load \
-            -t claude-code:latest \
+          docker buildx build \
+            --platform ${PLATFORMS} \
+            --push \
+            --build-arg BASE_IMAGE=${PREFIX}/ai-base:latest \
             -t ${PREFIX}/claude-code:latest \
             docker/claude-code/
 
       - name: Build copilot
         run: |
-          docker build \
-            --load \
-            -t copilot:latest \
+          docker buildx build \
+            --platform ${PLATFORMS} \
+            --push \
+            --build-arg BASE_IMAGE=${PREFIX}/ai-base:latest \
             -t ${PREFIX}/copilot:latest \
             docker/copilot/
 
       - name: Build opencode
         run: |
-          docker build \
-            --load \
-            -t opencode:latest \
+          docker buildx build \
+            --platform ${PLATFORMS} \
+            --push \
+            --build-arg BASE_IMAGE=${PREFIX}/ai-base:latest \
             -t ${PREFIX}/opencode:latest \
             docker/opencode/
 
       # Layer 2 — agent images depending on claude-code
       - name: Build master-agent
         run: |
-          docker build \
-            --load \
-            -t master-agent:latest \
+          docker buildx build \
+            --platform ${PLATFORMS} \
+            --push \
+            --build-arg CLAUDE_IMAGE=${PREFIX}/claude-code:latest \
             -t ${PREFIX}/master-agent:latest \
             docker/master-agent/
 
       - name: Build worker-claude
         run: |
-          docker build \
-            --load \
-            -t worker-claude:latest \
+          docker buildx build \
+            --platform ${PLATFORMS} \
+            --push \
+            --build-arg CLAUDE_IMAGE=${PREFIX}/claude-code:latest \
             -t ${PREFIX}/worker-claude:latest \
             docker/worker-claude/
-
-      # Push all images
-      - name: Push images to ghcr.io
-        run: |
-          docker push ${PREFIX}/ai-base:latest
-          docker push ${PREFIX}/claude-code:latest
-          docker push ${PREFIX}/copilot:latest
-          docker push ${PREFIX}/opencode:latest
-          docker push ${PREFIX}/master-agent:latest
-          docker push ${PREFIX}/worker-claude:latest

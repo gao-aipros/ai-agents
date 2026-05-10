@@ -15,7 +15,8 @@ RUN curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path
 FROM golang:latest AS go-build
 
 # Final stage
-FROM ai-base:latest
+ARG BASE_IMAGE=ai-base:latest
+FROM ${BASE_IMAGE}
 
 USER root
 
