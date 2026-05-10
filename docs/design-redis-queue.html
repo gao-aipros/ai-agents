@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Redis Task Queue Design</title>
+<style>
+  :root {
+    --bg: #fafbfc;
+    --surface: #fff;
+    --text: #24292e;
+    --muted: #586069;
+    --border: #e1e4e8;
+    --accent: #0366d6;
+    --accent-light: #f1f8ff;
+    --code-bg: #f6f8fa;
+    --red: #d73a49;
+    --green: #28a745;
+    --orange: #e36209;
+    --radius: 6px;
+    --mono: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    font-size: 15px;
+  }
+
+  /* ── Header ── */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 40px 0 32px;
+  }
+  header .wrap { max-width: 900px; margin: 0 auto; padding: 0 24px; }
+  header h1 { font-size: 28px; font-weight: 600; margin-bottom: 6px; }
+  header p  { color: var(--muted); font-size: 14px; }
+
+  /* ── Layout ── */
+  main { max-width: 900px; margin: 0 auto; padding: 0 24px 80px; }
+  section { margin-top: 40px; }
+
+  /* ── Typography ── */
+  h2 {
+    font-size: 22px; font-weight: 600;
+    padding-bottom: 8px; border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+  }
+  h3 { font-size: 17px; font-weight: 600; margin: 24px 0 10px; }
+  h4 { font-size: 14px; font-weight: 600; margin: 16px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  p  { margin-bottom: 12px; }
+  a  { color: var(--accent); text-decoration: none; }
+
+  /* ── Code ── */
+  code {
+    font-family: var(--mono); font-size: 13px;
+    background: var(--code-bg); padding: 2px 5px; border-radius: 3px;
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px; overflow-x: auto;
+    margin-bottom: 16px; line-height: 1.45;
+  }
+  pre code { background: none; padding: 0; }
+
+  /* ── Tables ── */
+  table {
+    width: 100%; border-collapse: collapse; margin-bottom: 16px;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left; padding: 9px 12px;
+    border: 1px solid var(--border);
+  }
+  th { background: var(--code-bg); font-weight: 600; }
+  tr:nth-child(even) td { background: var(--code-bg); }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 20px 24px; margin-bottom: 16px;
+  }
+  .card h4 { margin-top: 0; }
+
+  /* ── Diagram ── */
+  .diagram-box {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 24px; margin-bottom: 16px;
+    text-align: center; overflow-x: auto;
+  }
+
+  /* ── Callouts ── */
+  .callout {
+    border-left: 4px solid var(--accent);
+    background: var(--accent-light);
+    padding: 12px 16px; border-radius: 0 var(--radius) var(--radius) 0;
+    margin-bottom: 16px; font-size: 14px;
+  }
+  .callout.warn  { border-left-color: var(--orange); background: #fff8f2; }
+  .callout.good  { border-left-color: var(--green); background: #f0fff4; }
+
+  /* ── Tag ── */
+  .tag {
+    display: inline-block; font-size: 11px; font-weight: 600;
+    padding: 1px 7px; border-radius: 10px; margin-right: 4px;
+    text-transform: uppercase; letter-spacing: .4px;
+  }
+  .tag-red    { background: #ffeef0; color: var(--red); }
+  .tag-green  { background: #dcffe4; color: #176f2c; }
+  .tag-orange { background: #fff5e6; color: var(--orange); }
+  .tag-blue   { background: var(--accent-light); color: var(--accent); }
+
+  /* ── TOC ── */
+  .toc { list-style: none; columns: 2; column-gap: 24px; margin-bottom: 16px; }
+  .toc li { margin-bottom: 6px; break-inside: avoid; }
+  .toc a  { font-size: 14px; }
+
+  /* ── Responsive ── */
+  @media (max-width: 700px) {
+    header h1 { font-size: 22px; }
+    .toc { columns: 1; }
+    table { font-size: 12px; }
+    th, td { padding: 6px 8px; }
+  }
+
+  /* ── Print ── */
+  @media print {
+    body { background: #fff; }
+    .card, .diagram-box { box-shadow: none; }
+    pre, table { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <h1>Redis Task Queue Design</h1>
+    <p>Multi-agent orchestration with Redis-backed task queues, thread-based context persistence, and Docker Compose deployment.</p>
+  </div>
+</header>
+
+<main>
+
+<!-- ═══════════════════════════════════════════ -->
+<section>
+  <h2>Table of Contents</h2>
+  <ul class="toc">
+    <li><a href="#architecture">Architecture</a></li>
+    <li><a href="#data-model">Redis Data Model</a></li>
+    <li><a href="#master">Master: task.py CLI</a></li>
+    <li><a href="#worker">Worker: worker.py poll loop</a></li>
+    <li><a href="#compose">Docker Compose</a></li>
+    <li><a href="#changes">What Changes vs. Current</a></li>
+    <li><a href="#rationale">Design Rationale</a></li>
+    <li><a href="#files">Files to Create or Modify</a></li>
+    <li><a href="#open-questions">Open Questions</a></li>
+  </ul>
+</section>
+
+<!-- ═══════════════════════════════════════════ -->
+<section id="architecture">
+  <h2>Architecture</h2>
+
+  <div class="diagram-box">
+    <svg viewBox="0 0 860 490" width="100%" max-width="860" style="max-width:860px" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#586069"/></marker>
+        <marker id="arr-red" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#d73a49"/></marker>
+        <linearGradient id="grad-master" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0366d6"/><stop offset="100%" stop-color="#005cc5"/></linearGradient>
+        <linearGradient id="grad-redis" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#d73a49"/><stop offset="100%" stop-color="#b31d28"/></linearGradient>
+        <linearGradient id="grad-worker" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#28a745"/><stop offset="100%" stop-color="#1e7e34"/></linearGradient>
+        <filter id="shadow" x="-4%" y="-4%" width="110%" height="115%"><feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity=".08"/></filter>
+      </defs>
+
+      <!-- docker-compose boundary -->
+      <rect x="18" y="12" width="824" height="355" rx="8" fill="none" stroke="#c6cbd1" stroke-width="1.5" stroke-dasharray="6,3"/>
+      <text x="38" y="36" font-family="var(--sans)" font-size="12" fill="#586069" font-weight="600">docker-compose</text>
+
+      <!-- Master -->
+      <rect x="50" y="60" width="160" height="70" rx="6" fill="url(#grad-master)" filter="url(#shadow)"/>
+      <text x="130" y="92" text-anchor="middle" fill="#fff" font-family="sans-serif" font-size="13" font-weight="600">master</text>
+      <text x="130" y="112" text-anchor="middle" fill="rgba(255,255,255,.8)" font-family="sans-serif" font-size="11">(claude)</text>
+
+      <!-- Redis -->
+      <rect x="340" y="60" width="160" height="70" rx="6" fill="url(#grad-redis)" filter="url(#shadow)"/>
+      <text x="420" y="92" text-anchor="middle" fill="#fff" font-family="sans-serif" font-size="13" font-weight="600">Redis</text>
+      <text x="420" y="112" text-anchor="middle" fill="rgba(255,255,255,.8)" font-family="sans-serif" font-size="11">task queues + threads</text>
+
+      <!-- Worker Claude -->
+      <rect x="630" y="60" width="180" height="54" rx="6" fill="url(#grad-worker)" filter="url(#shadow)"/>
+      <text x="720" y="84" text-anchor="middle" fill="#fff" font-family="sans-serif" font-size="12" font-weight="600">worker-claude</text>
+      <text x="720" y="102" text-anchor="middle" fill="rgba(255,255,255,.8)" font-family="sans-serif" font-size="10">claude -p</text>
+
+      <!-- Worker Copilot -->
+      <rect x="630" y="130" width="180" height="54" rx="6" fill="url(#grad-worker)" filter="url(#shadow)"/>
+      <text x="720" y="154" text-anchor="middle" fill="#fff" font-family="sans-serif" font-size="12" font-weight="600">worker-copilot</text>
+      <text x="720" y="172" text-anchor="middle" fill="rgba(255,255,255,.8)" font-family="sans-serif" font-size="10">copilot -p --allow-all</text>
+
+      <!-- Worker OpenCode -->
+      <rect x="630" y="200" width="180" height="54" rx="6" fill="url(#grad-worker)" filter="url(#shadow)"/>
+      <text x="720" y="224" text-anchor="middle" fill="#fff" font-family="sans-serif" font-size="12" font-weight="600">worker-opencode</text>
+      <text x="720" y="242" text-anchor="middle" fill="rgba(255,255,255,.8)" font-family="sans-serif" font-size="10">opencode run ...</text>
+
+      <!-- Arrows: Master → Redis -->
+      <line x1="210" y1="80" x2="330" y2="80" stroke="#586069" stroke-width="1.5" marker-end="url(#arr)"/>
+      <text x="270" y="72" text-anchor="middle" font-family="sans-serif" font-size="9" fill="#586069">LPUSH</text>
+
+      <!-- Arrows: Master ← Redis (result) -->
+      <line x1="330" y1="108" x2="210" y2="108" stroke="#d73a49" stroke-width="1.5" marker-end="url(#arr-red)"/>
+      <text x="270" y="122" text-anchor="middle" font-family="sans-serif" font-size="9" fill="#d73a49">GET result</text>
+
+      <!-- Arrows: Redis → Workers (BLMOVE) -->
+      <line x1="500" y1="80" x2="620" y2="80" stroke="#586069" stroke-width="1.5" marker-end="url(#arr)"/>
+      <text x="560" y="72" text-anchor="middle" font-family="sans-serif" font-size="9" fill="#586069">BLMOVE</text>
+
+      <!-- Arrows: Workers → Redis (SET result) -->
+      <line x1="620" y1="154" x2="500" y2="110" stroke="#d73a49" stroke-width="1.5" marker-end="url(#arr-red)"/>
+      <text x="555" y="142" text-anchor="middle" font-family="sans-serif" font-size="9" fill="#d73a49">SET result</text>
+
+      <!-- Shared workspace box -->
+      <rect x="50" y="270" width="760" height="70" rx="6" fill="#f6f8fa" stroke="#e1e4e8" stroke-width="1"/>
+      <text x="430" y="298" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="600" fill="#24292e">/workspace (shared volume)</text>
+      <text x="430" y="318" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#586069">Data plane — workers clone repos, write code, produce artifacts here</text>
+
+      <!-- Dashed lines from master and workers to workspace -->
+      <line x1="130" y1="130" x2="130" y2="265" stroke="#c6cbd1" stroke-width="1" stroke-dasharray="3,3"/>
+      <line x1="420" y1="130" x2="420" y2="265" stroke="#c6cbd1" stroke-width="1" stroke-dasharray="3,3"/>
+      <line x1="720" y1="254" x2="720" y2="265" stroke="#c6cbd1" stroke-width="1" stroke-dasharray="3,3"/>
+      <line x1="130" y1="265" x2="720" y2="265" stroke="#c6cbd1" stroke-width="1" stroke-dasharray="3,3"/>
+
+      <!-- Labels -->
+      <text x="430" y="388" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#586069">
+        Control plane (Redis) — task delegation, results, thread history
+      </text>
+      <text x="430" y="403" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#586069">
+        Data plane (/workspace) — shared filesystem for clones, builds, artifacts
+      </text>
+    </svg>
+  </div>
+
+  <div class="card">
+    <h4>Two-plane design</h4>
+    <p><strong>Control plane:</strong> Redis with per-worker-type task queues, plus thread-based message history for persistent project context across delegations.</p>
+    <p style="margin-bottom:0"><strong>Data plane:</strong> Shared <code>/workspace</code> volume between master and all workers. Workers clone repos, write code, and produce artifacts here.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════ -->
+<section id="data-model">
+  <h2>Redis Data Model</h2>
+  <p>Five groups of keys, each with a clear purpose and TTL policy.</p>
+
+  <!-- Group 1 -->
+  <h3>1. Task Queues <span class="tag tag-blue">per worker type</span></h3>
+  <table>
+    <tr><th>Key</th><th>Type</th><th>Purpose</th><th>TTL</th></tr>
+    <tr><td><code>tasks:queue:claude</code></td><td>LIST</td><td>Pending tasks for Claude worker</td><td>none</td></tr>
+    <tr><td><code>tasks:queue:copilot</code></td><td>LIST</td><td>Pending tasks for Copilot worker</td><td>none</td></tr>
+    <tr><td><code>tasks:queue:opencode</code></td><td>LIST</td><td>Pending tasks for OpenCode worker</td><td>none</td></tr>
+    <tr><td><code>tasks:processing:claude</code></td><td>LIST</td><td>In-flight tasks (BLMOVE target, crash recovery)</td><td>none</td></tr>
+    <tr><td><code>tasks:processing:copilot</code></td><td>LIST</td><td>In-flight tasks</td><td>none</td></tr>
+    <tr><td><code>tasks:processing:opencode</code></td><td>LIST</td><td>In-flight tasks</td><td>none</td></tr>
+  </table>
+  <p>Task payload (JSON in list):</p>
+  <pre><code>{
+  "task_id": "uuid-abc",
+  "thread_id": "thread-123",
+  "instruction": "Add OAuth2 support to the existing design"
+}</code></pre>
+
+  <!-- Group 2 -->
+  <h3>2. Thread Message History</h3>
+  <pre><code>thread:{thread_id}:messages   LIST — ordered history of all interactions
+TTL: 7 days, refreshed on each new message</code></pre>
+  <p>Each entry:</p>
+  <pre><code>{
+  "role": "master | claude | copilot | opencode",
+  "content": "The actual design text, code diff, or instruction",
+  "timestamp": "2026-05-09T10:00:00Z",
+  "metadata": { "task_id": "uuid-abc", "tokens": 1200 }
+}</code></pre>
+  <p>Workers pull context with <code>LRANGE thread:{id}:messages -5 -1</code> before executing. Inactive threads auto-cleanup via TTL.</p>
+
+  <!-- Group 3 -->
+  <h3>3. Thread Current State</h3>
+  <pre><code>thread:{thread_id}:current_state   HASH</code></pre>
+  <table>
+    <tr><th>Field</th><th>Values / Description</th></tr>
+    <tr><td><code>status</code></td><td>awaiting_review | refining | implementing | complete</td></tr>
+    <tr><td><code>last_design</code></td><td>Full text of the latest design version</td></tr>
+    <tr><td><code>last_updated_by</code></td><td>Worker type that last updated</td></tr>
+    <tr><td><code>last_task_id</code></td><td>Task ID of the last update</td></tr>
+    <tr><td><code>gh_pr_number</code></td><td>GitHub PR number (if code was pushed)</td></tr>
+    <tr><td><code>gh_repo</code></td><td>GitHub repo (e.g. "owner/repo")</td></tr>
+    <tr><td><code>updated_at</code></td><td>ISO timestamp</td></tr>
+  </table>
+  <p class="callout">A snapshot updated after each task — avoids parsing the full message history to find the current state.</p>
+
+  <!-- Group 4 -->
+  <h3>4. Active Task Registry</h3>
+  <pre><code>active_tasks   HASH
+Field: task_id → {"status":"running", "worker":"claude", "thread_id":"...", "started_at":"..."}</code></pre>
+  <p>The master uses this to see what's in flight. Workers register on dequeue, remove on completion.</p>
+
+  <!-- Group 5 -->
+  <h3>5. Per-Task Result Keys</h3>
+  <table>
+    <tr><th>Key</th><th>Type</th><th>Values</th></tr>
+    <tr><td><code>task:{id}:status</code></td><td>STRING</td><td>pending | running | done | failed | cancelled</td></tr>
+    <tr><td><code>task:{id}:worker</code></td><td>STRING</td><td>claude | copilot | opencode</td></tr>
+    <tr><td><code>task:{id}:thread_id</code></td><td>STRING</td><td>Parent thread</td></tr>
+    <tr><td><code>task:{id}:description</code></td><td>STRING</td><td>Original instruction</td></tr>
+    <tr><td><code>task:{id}:result</code></td><td>STRING</td><td>stdout/stderr from agent CLI</td></tr>
+    <tr><td><code>task:{id}:created_at</code></td><td>STRING</td><td>ISO timestamp</td></tr>
+    <tr><td><code>task:{id}:completed_at</code></td><td>STRING</td><td>ISO timestamp</td></tr>
+    <tr><td><code>task:{id}:exit_code</code></td><td>STRING</td><td>Exit code (0 = success)</td></tr>
+    <tr><td><code>task:{id}:cancel</code></td><td>STRING</td><td>Cancellation flag</td></tr>
+  </table>
+  <p class="callout">TTL: 24 hours for all per-task keys. Thread history is the long-term record.</p>
+
+  <h3>Full Key Inventory</h3>
+  <table>
+    <tr><th>Key Pattern</th><th>Type</th><th>Purpose</th><th>TTL</th></tr>
+    <tr><td><code>tasks:queue:{worker}</code></td><td>LIST</td><td>Pending task payloads</td><td>—</td></tr>
+    <tr><td><code>tasks:processing:{worker}</code></td><td>LIST</td><td>In-flight tasks (crash recovery)</td><td>—</td></tr>
+    <tr><td><code>thread:{id}:messages</code></td><td>LIST</td><td>Full interaction history</td><td>7d</td></tr>
+    <tr><td><code>thread:{id}:current_state</code></td><td>HASH</td><td>Latest design/status snapshot</td><td>7d</td></tr>
+    <tr><td><code>active_tasks</code></td><td>HASH</td><td>What's running right now</td><td>—</td></tr>
+    <tr><td><code>task:{id}:status</code></td><td>STRING</td><td>Task lifecycle state</td><td>24h</td></tr>
+    <tr><td><code>task:{id}:result</code></td><td>STRING</td><td>Agent stdout/stderr</td><td>24h</td></tr>
+    <tr><td><code>task:{id}:cancel</code></td><td>STRING</td><td>Cancellation flag</td><td>24h</td></tr>
+    <tr><td><code>task:{id}:*</code></td><td>STRING</td><td>Other per-task metadata</td><td>24h</td></tr>
+    <tr><td><code>thread:{id}:lock</code></td><td>STRING</td><td>Serialization guard (SETNX)</td><td>timeout + 5m</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════ -->
+<section id="master">
+  <h2>Master: <code>task.py</code> CLI</h2>
+  <p>The master runs <code>claude</code> interactively. It calls <code>task.py</code> for all task and thread management. The script lives at <code>scripts/task.py</code> and is copied into the master image at <code>/usr/local/bin/task.py</code>.</p>
+
+  <h3>Task Commands</h3>
+  <table>
+    <tr><th>Command</th><th>Description</th></tr>
+    <tr>
+      <td><code>task.py enqueue --worker X --thread ID --instruction "..."</code></td>
+      <td>LPUSH a task onto <code>tasks:queue:X</code>. Appends instruction to <code>thread:{id}:messages</code>. Refuses if <code>thread:{id}:lock</code> exists. Prints <code>{"task_id": "..."}</code>.</td>
+    </tr>
+    <tr>
+      <td><code>task.py status --id ID</code></td>
+      <td>Prints JSON: <code>{task_id, worker, thread_id, status, exit_code, timestamps}</code>.</td>
+    </tr>
+    <tr>
+      <td><code>task.py result --id ID [--tail N]</code></td>
+      <td>Prints the result field.</td>
+    </tr>
+    <tr>
+      <td><code>task.py list [--worker X] [--status X] [--thread X] [--limit N]</code></td>
+      <td>Scans <code>active_tasks</code> and <code>task:*</code> keys with SCAN, prints summary table.</td>
+    </tr>
+    <tr>
+      <td><code>task.py wait --id ID [--timeout 300]</code></td>
+      <td>Blocks until done/failed. Polls every 2s. On completion, deletes <code>thread:{id}:lock</code>.</td>
+    </tr>
+    <tr>
+      <td><code>task.py requeue-stale [--worker X] [--older-than 600]</code></td>
+      <td>Scans <code>tasks:processing:X</code> and re-queues orphaned tasks.</td>
+    </tr>
+    <tr>
+      <td><code>task.py cancel --id ID</code></td>
+      <td>Sets <code>task:{id}:cancel = "1"</code>. Checked by worker before subprocess start.</td>
+    </tr>
+  </table>
+
+  <div class="callout warn">
+    <strong>requeue-stale edge case:</strong> If a worker crashes after writing the result but before <code>lrem(PROCESSING, ...)</code>, the task has correct status and won't be re-queued, but a stale entry remains in the processing list. Harmless but accumulates over time.
+  </div>
+
+  <h3>Thread Commands</h3>
+  <table>
+    <tr><th>Command</th><th>Description</th></tr>
+    <tr><td><code>task.py thread-create --id ID [--repo owner/repo]</code></td><td>Initializes <code>thread:{id}:current_state</code> with status=initiated.</td></tr>
+    <tr><td><code>task.py thread-history --id ID [--tail N]</code></td><td>Prints last N messages from <code>thread:{id}:messages</code>.</td></tr>
+    <tr><td><code>task.py thread-state --id ID</code></td><td>Prints current_state hash as JSON.</td></tr>
+    <tr><td><code>task.py thread-update --id ID --status S [--design "..."] [--pr N]</code></td><td>Updates fields in current_state. Used by master after reviewing results.</td></tr>
+    <tr><td><code>task.py thread-list</code></td><td>Lists all threads with status summary.</td></tr>
+    <tr><td><code>task.py thread-cleanup --id ID</code></td><td>Deletes <code>/workspace/{id}/</code>. Prevents volume bloat.</td></tr>
+    <tr><td><code>task.py unlock --thread ID</code></td><td>Clears stale lock left by crashed master.</td></tr>
+  </table>
+
+  <h3>Example Flow</h3>
+  <pre><code># Start a new project thread
+task.py thread-create --id "add-oauth2" --repo "owner/repo"
+
+# Delegate design to Claude worker
+DESIGN_TASK=$(task.py enqueue --worker claude --thread add-oauth2 \
+    --instruction "Design OAuth2 support." | jq -r '.task_id')
+task.py wait --id "$DESIGN_TASK"
+
+# Delegate review to Copilot worker
+REVIEW_TASK=$(task.py enqueue --worker copilot --thread add-oauth2 \
+    --instruction "Review the OAuth2 design. Find security gaps." | jq -r '.task_id')
+task.py wait --id "$REVIEW_TASK"
+
+# Delegate implementation to OpenCode worker
+task.py enqueue --worker opencode --thread add-oauth2 \
+    --instruction "Implement OAuth2 based on design and review."
+
+# Check progress
+task.py thread-state --id add-oauth2
+task.py thread-history --id add-oauth2 --tail 10</code></pre>
+</section>
+
+<!-- ═══════════════════════════════════════════ -->
+<section id="worker">
+  <h2>Worker: <code>worker.py</code> Poll Loop</h2>
+  <p>A single generic <code>worker.py</code> shared by all three worker types. Parameterized by environment variables:</p>
+
+  <table>
+    <tr><th>Env var</th><th>Claude</th><th>Copilot</th><th>OpenCode</th></tr>
+    <tr><td><code>WORKER_TYPE</code></td><td><code>claude</code></td><td><code>copilot</code></td><td><code>opencode</code></td></tr>
+    <tr><td><code>AGENT_CMD</code></td><td><code>claude -p</code></td><td><code>copilot -p --allow-all</code></td><td><code>opencode run --dangerously-skip-permissions</code></td></tr>
+  </table>
+
+  <h3>Build Prompt Flow</h3>
+  <div class="diagram-box">
+    <svg viewBox="0 0 700 340" width="100%" max-width="700" style="max-width:700px" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arr2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#586069"/></marker>
+        <rect id="box" width="180" height="44" rx="6" fill="#f6f8fa" stroke="#e1e4e8" stroke-width="1"/>
+      </defs>
+
+      <!-- Dequeue -->
+      <use href="#box" x="260" y="10"/>
+      <text x="350" y="30" text-anchor="middle" font-family="sans-serif" font-size="11" font-weight="600">Dequeue task</text>
+      <text x="350" y="46" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#586069">{task_id, thread_id, instruction}</text>
+
+      <line x1="350" y1="54" x2="350" y2="80" stroke="#586069" stroke-width="1.5" marker-end="url(#arr2)"/>
+
+      <!-- Fork -->
+      <text x="350" y="96" text-anchor="middle" font-family="sans-serif" font-size="9" fill="#586069">FORK</text>
+      <line x1="350" y1="100" x2="160" y2="100" stroke="#586069" stroke-width="1" stroke-dasharray="3,3"/>
+      <line x1="350" y1="100" x2="540" y2="100" stroke="#586069" stroke-width="1" stroke-dasharray="3,3"/>
+      <line x1="160" y1="100" x2="160" y2="128" stroke="#586069" stroke-width="1.5" marker-end="url(#arr2)"/>
+      <line x1="540" y1="100" x2="540" y2="128" stroke="#586069" stroke-width="1.5" marker-end="url(#arr2)"/>
+
+      <!-- Left: Thread history -->
+      <use href="#box" x="70" y="132"/>
+      <text x="160" y="150" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#586069">LRANGE thread:{id}:messages</text>
+      <text x="160" y="166" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#586069">last HISTORY_WINDOW entries</text>
+
+      <!-- Right: Current state -->
+      <use href="#box" x="450" y="132"/>
+      <text x="540" y="150" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#586069">HGETALL thread:{id}:current_state</text>
+      <text x="540" y="166" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#586069">status, design, PR#, repo</text>
+
+      <line x1="160" y1="176" x2="160" y2="200" stroke="#586069" stroke-width="1"/>
+      <line x1="540" y1="176" x2="540" y2="200" stroke="#586069" stroke-width="1"/>
+      <line x1="160" y1="200" x2="540" y2="200" stroke="#586069" stroke-width="1"/>
+      <line x1="350" y1="200" x2="350" y2="228" stroke="#586069" stroke-width="1.5" marker-end="url(#arr2)"/>
+
+      <!-- Merge: Prompt -->
+      <use href="#box" x="260" y="232"/>
+      <text x="350" y="252" text-anchor="middle" font-family="sans-serif" font-size="11" font-weight="600">Full prompt</text>
+      <text x="350" y="268" text-anchor="middle" font-family="sans-serif" font-size="10" fill="#586069">context + instruction</text>
+
+      <line x1="350" y1="276" x2="350" y2="302" stroke="#586069" stroke-width="1.5" marker-end="url(#arr2)"/>
+
+      <!-- Agent CLI -->
+      <use href="#box" x="260" y="284" stroke="#28a745"/>
+      <text x="350" y="304" text-anchor="middle" font-family="sans-serif" font-size="11" font-weight="600" fill="#28a745">claude -p "..."</text>
+    </svg>
+  </div>
+
+  <h3>Worker Behavior</h3>
+  <div class="card">
+    <ul style="list-style:none;padding:0">
+      <li style="margin-bottom:10px"><span class="tag tag-green">seq</span> Each worker runs one task at a time, sequentially.</li>
+      <li style="margin-bottom:10px"><span class="tag tag-blue">ctx</span> Before executing, fetches last <code>HISTORY_WINDOW</code> messages + current_state snapshot. Gives the agent full context without the master repeating it.</li>
+      <li style="margin-bottom:10px"><span class="tag tag-blue">append</span> After executing, appends its result to thread history. The next worker in the pipeline sees it.</li>
+      <li style="margin-bottom:10px"><span class="tag tag-orange">sigterm</span> On SIGTERM: lets the current subprocess finish, then exits. In practice Docker Compose sends SIGKILL after the stop grace period (default 10s), so the container is killed and the in-flight task is left in <code>tasks:processing:*</code> for <code>requeue-stale</code> to recover.</li>
+      <li style="margin-bottom:10px"><span class="tag tag-blue">cap</span> Result content capped at 10k chars when appended to thread history. Full result still in <code>task:{id}:result</code>.</li>
+      <li style="margin-bottom:10px"><span class="tag tag-red">lock</span> <strong>Thread serialization:</strong> <code>SETNX thread:{id}:lock</code> prevents concurrent tasks on the same thread. Lock released on <code>wait</code> completion. Stale locks cleared by <code>unlock</code>.</li>
+      <li style="margin-bottom:10px"><span class="tag tag-red">cancel</span> <strong>Task cancellation:</strong> Master sets <code>task:{id}:cancel</code>. Worker checks before subprocess start. Mid-execution cancellation not supported in v1.</li>
+      <li style="margin-bottom:0"><span class="tag tag-orange">health</span> <strong>Healthcheck:</strong> 3 failures (90s) → Docker restarts container. Task recovered by <code>requeue-stale</code>.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════ -->
+<section id="compose">
+  <h2>Docker Compose</h2>
+  <p>All services run from built images. Redis uses the official <code>redis:7-alpine</code> image. Master and workers share the <code>/workspace</code> volume.</p>
+
+  <table>
+    <tr><th>Service</th><th>Image</th><th>Healthcheck</th><th>Key Env Vars</th></tr>
+    <tr>
+      <td><code>redis</code></td>
+      <td><code>redis:7-alpine</code></td>
+      <td><code>redis-cli ping</code> (5s)</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td><code>master</code></td>
+      <td><code>master-agent:latest</code></td>
+      <td>—</td>
+      <td><code>REDIS_HOST, TASK_TIMEOUT, ANTHROPIC_AUTH_TOKEN, GH_TOKEN</code></td>
+    </tr>
+    <tr>
+      <td><code>worker-claude</code></td>
+      <td><code>worker-claude:latest</code></td>
+      <td>Python Redis ping (30s, 3 retries)</td>
+      <td><code>WORKER_TYPE=claude, AGENT_CMD=claude -p</code></td>
+    </tr>
+    <tr>
+      <td><code>worker-copilot</code></td>
+      <td><code>copilot:latest</code></td>
+      <td>Python Redis ping (30s, 3 retries)</td>
+      <td><code>WORKER_TYPE=copilot, AGENT_CMD=copilot -p --allow-all</code></td>
+    </tr>
+    <tr>
+      <td><code>worker-opencode</code></td>
+      <td><code>opencode:latest</code></td>
+      <td>Python Redis ping (30s, 3 retries)</td>
+      <td><code>WORKER_TYPE=opencode, AGENT_CMD=opencode run ...</code></td>
+    </tr>
+  </table>
+
+  <h3>Volumes</h3>
+  <table>
+    <tr><th>Volume</th><th>Driver</th><th>Purpose</th></tr>
+    <tr><td><code>workspace</code></td><td>local</td><td>Shared filesystem for clones, builds, artifacts</td></tr>
+    <tr><td><code>redis_data</code></td><td>local</td><td>Redis persistence (AOF/RDB)</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════ -->
+<section id="changes">
+  <h2>What Changes vs. Current</h2>
+  <table>
+    <tr><th>Aspect</th><th>Before</th><th>After</th></tr>
+    <tr>
+      <td>Master delegates</td>
+      <td><code>docker run worker "task"</code> (blocks)</td>
+      <td><code>task.py enqueue ...</code> (non-blocking)</td>
+    </tr>
+    <tr>
+      <td>Worker context</td>
+      <td>Single prompt string, no history</td>
+      <td>Thread history (last N messages) + current state snapshot</td>
+    </tr>
+    <tr>
+      <td>Context persistence</td>
+      <td>None — each task isolated</td>
+      <td>Thread history accumulates across delegations (7d TTL)</td>
+    </tr>
+    <tr>
+      <td>Master reads result</td>
+      <td>stdout from <code>docker run</code></td>
+      <td><code>task.py result --id ...</code> or <code>thread-history</code></td>
+    </tr>
+    <tr>
+      <td>Worker lifecycle</td>
+      <td>Ephemeral, one per task</td>
+      <td>Long-running, BLMOVE loop</td>
+    </tr>
+    <tr>
+      <td>Worker entrypoint</td>
+      <td><code>claude -p</code> / <code>copilot -p</code> / <code>opencode run</code></td>
+      <td><code>python3 worker.py</code> → builds context → agent CLI</td>
+    </tr>
+    <tr>
+      <td>Docker socket</td>
+      <td>Required for delegation</td>
+      <td>Not required for delegation</td>
+    </tr>
+    <tr>
+      <td>Task visibility</td>
+      <td>None (container runs until exit)</td>
+      <td><code>active_tasks</code> hash + per-task status keys</td>
+    </tr>
+    <tr>
+      <td>Project state</td>
+      <td>Ad-hoc via /workspace files</td>
+      <td><code>thread:{id}:current_state</code> hash — structured</td>
+    </tr>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════ -->
+<section id="rationale">
+  <h2>Design Rationale</h2>
+
+  <div class="card">
+    <h3>Python vs Go for the Orchestration Scripts</h3>
+    <p>Python wins for this use case. <code>task.py</code> and <code>worker.py</code> are thin orchestration glue — CLI arg parsing, Redis commands, subprocess management. <code>redis-py</code>, <code>argparse</code>, and <code>subprocess</code> are mature and concise for this.</p>
+    <p style="margin-bottom:0">Go would add build complexity (multi-arch binaries), a Go toolchain dependency in the build pipeline, and more code for the same logic — without benefit, since the worker is single-task-at-a-time and <code>subprocess.run()</code> matches the model perfectly. No goroutines needed.</p>
+  </div>
+
+  <div class="card">
+    <h3>Shared /workspace Volume Tradeoffs</h3>
+    <p>The shared volume is the data plane — where workers clone repos, write code, and produce artifacts.</p>
+    <p><strong>Without it, you lose:</strong></p>
+    <ul style="margin-bottom:12px">
+      <li>The master can't inspect files a worker produced (only sees text output in Redis)</li>
+      <li>Thread workspace isolation (<code>/workspace/{thread_id}/</code>)</li>
+      <li>A restarted worker loses in-progress clones and builds</li>
+    </ul>
+    <p><strong>What's not lost:</strong> all task delegation, results, and thread history flow through Redis. If workers push code to GitHub (branches/PRs), the repo is the real artifact store and the workspace is scratch space.</p>
+    <div class="callout good"><strong>Verdict:</strong> Keep the shared volume. It's lightweight and gives the master a direct window into worker output. For a future iteration it could become optional, with workers using local ephemeral storage and relying on git as the sole artifact store.</div>
+  </div>
+
+  <div class="card">
+    <h3>Agent Session Save/Load</h3>
+    <p>Claude Code supports <code>--resume &lt;session-id&gt;</code> and <code>--continue</code> (resumes the last session from <code>~/.claude/projects/</code>). Copilot (<code>copilot -p</code>) and OpenCode (<code>opencode run</code>) are one-shot — no built-in session persistence.</p>
+    <p>This design intentionally does not rely on agent-native sessions. Instead it rebuilds context from Redis thread history before each task. This is tool-agnostic and works uniformly across all three workers.</p>
+    <div class="callout"><strong>Tradeoff:</strong> The agent's internal reasoning chain from the previous invocation is lost; each run is a cold start with conversation history injected. For v2, <code>--resume</code> could be added as an optimization for the Claude worker without changing the architecture.</div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════ -->
+<section id="files">
+  <h2>Files to Create or Modify</h2>
+  <table>
+    <tr><th>File</th><th>Action</th></tr>
+    <tr><td><code>scripts/task.py</code></td><td><span class="tag tag-green">Create</span> Master CLI: enqueue, thread management, status, wait</td></tr>
+    <tr><td><code>scripts/worker.py</code></td><td><span class="tag tag-green">Create</span> Generic worker poll loop (shared by all 3 types)</td></tr>
+    <tr><td><code>docker/worker-claude/Dockerfile</code></td><td><span class="tag tag-orange">Modify</span> Add redis dep, copy worker.py, change ENTRYPOINT</td></tr>
+    <tr><td><code>docker/copilot/Dockerfile</code></td><td><span class="tag tag-orange">Modify</span> Add redis dep, copy worker.py, change ENTRYPOINT</td></tr>
+    <tr><td><code>docker/opencode/Dockerfile</code></td><td><span class="tag tag-orange">Modify</span> Add redis dep, copy worker.py, change ENTRYPOINT</td></tr>
+    <tr><td><code>docker/master-agent/Dockerfile</code></td><td><span class="tag tag-orange">Modify</span> Add redis dep, copy task.py</td></tr>
+    <tr><td><code>docker/master-agent/CLAUDE.md</code></td><td><span class="tag tag-orange">Modify</span> Replace <code>docker run</code> with <code>task.py</code> thread-based workflow</td></tr>
+    <tr><td><code>docker/worker-claude/CLAUDE.md</code></td><td><span class="tag tag-orange">Modify</span> Update worker instructions for thread-based context</td></tr>
+    <tr><td><code>docker-compose.yml</code></td><td><span class="tag tag-green">Create</span> Redis + master + 3 workers</td></tr>
+  </table>
+</section>
+
+<!-- ═══════════════════════════════════════════ -->
+<section id="open-questions">
+  <h2>Open Questions</h2>
+
+  <table>
+    <tr><th>#</th><th>Question</th><th>Decision</th><th>Status</th></tr>
+    <tr>
+      <td>1</td>
+      <td><strong>Task timeout?</strong></td>
+      <td>30 min default, per-task overridable via <code>timeout</code> field in task payload. Default stays 1800s.</td>
+      <td><span class="tag tag-green">resolved</span></td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td><strong>Reaper cron loop?</strong></td>
+      <td>Manual for v1. Docker Compose healthcheck restarts unhealthy containers. Automation deferred to v2.</td>
+      <td><span class="tag tag-green">resolved</span></td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td><strong>Result size in thread history?</strong></td>
+      <td>10k chars cap confirmed. Full results in <code>task:{id}:result</code> (24h TTL). Git is the real artifact.</td>
+      <td><span class="tag tag-green">resolved</span></td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td><strong>Thread state updates by workers?</strong></td>
+      <td>Worker sets <code>last_updated_by</code>, <code>last_task_id</code>, <code>updated_at</code> only. Master owns status transitions.</td>
+      <td><span class="tag tag-green">resolved</span></td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td><strong>Automatic retry on failure?</strong></td>
+      <td>Deferred to v2. Master re-enqueues manually after reviewing failures in v1.</td>
+      <td><span class="tag tag-orange">deferred</span></td>
+    </tr>
+  </table>
+</section>
+
+</main>
+</body>
+</html>
