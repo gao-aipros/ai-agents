@@ -163,7 +163,9 @@ task.py wait --id <task_id> [--timeout 300]
     Blocks until done or failed. Polls every 2s.
 
 task.py requeue-stale [--worker X] [--older-than 600]
-    Scans tasks:processing:<worker>. Requeues tasks stuck in "running" > older-than.
+    Scans tasks:processing:<worker>. For each task, checks task:{id}:status. If missing (worker
+    crashed before writing status) or "running" for > older-than, requeues it. Pushes the task
+    back onto tasks:queue:<worker> and removes it from tasks:processing:<worker>.
 
 # Thread management
 task.py thread-create --id <thread_id> [--repo owner/repo]
@@ -288,18 +290,24 @@ while running:
 
     # Execute agent
     cmd = AGENT_CMD.split() + [full_prompt]
-    proc = subprocess.run(
-        cmd, cwd="/workspace", capture_output=True, text=True,
-        timeout=int(os.environ.get("TASK_TIMEOUT", 1800)),
-    )
+    try:
+        proc = subprocess.run(
+            cmd, cwd="/workspace", capture_output=True, text=True,
+            timeout=int(os.environ.get("TASK_TIMEOUT", 1800)),
+        )
+        exit_code = proc.returncode
+        result = proc.stdout if proc.returncode == 0 else (proc.stderr or f"exit {proc.returncode}")
+        status = "done" if proc.returncode == 0 else "failed"
+    except subprocess.TimeoutExpired:
+        exit_code = -1
+        result = f"Task timed out after {os.environ.get('TASK_TIMEOUT', 1800)}s"
+        status = "failed"
 
-    result = proc.stdout if proc.returncode == 0 else (proc.stderr or f"exit {proc.returncode}")
-
-    # Store result
-    r.set(f"task:{task_id}:result", result)
-    r.set(f"task:{task_id}:exit_code", str(proc.returncode))
-    r.set(f"task:{task_id}:completed_at", time.strftime("%Y-%m-%dT%H:%M:%SZ"))
-    r.set(f"task:{task_id}:status", "done" if proc.returncode == 0 else "failed")
+    # Store result (with TTLs so keys don't accumulate forever)
+    r.set(f"task:{task_id}:result", result, ex=TTL_TASK)
+    r.set(f"task:{task_id}:exit_code", str(exit_code), ex=TTL_TASK)
+    r.set(f"task:{task_id}:completed_at", time.strftime("%Y-%m-%dT%H:%M:%SZ"), ex=TTL_TASK)
+    r.set(f"task:{task_id}:status", status, ex=TTL_TASK)
 
     # Append result to thread history
     r.rpush(f"thread:{thread_id}:messages", json.dumps({
