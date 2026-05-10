@@ -6,7 +6,7 @@
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ docker-compose                                                                │
 │                                                                               │
-│  ┌──────────┐   LPUSH            ┌──────────┐   BRPOP          ┌───────────┐ │
+│  ┌──────────┐   LPUSH            ┌──────────┐   BLMOVE         ┌───────────┐ │
 │  │  master  │───────────────────▶│  Redis   │─────────────────▶│ worker-   │ │
 │  │ (claude) │                    │          │                  │ claude    │ │
 │  │          │◀──────────────────│          │◀─────────────────│ (1x)      │ │
@@ -90,7 +90,8 @@ thread:{thread_id}:current_state   HASH
 Fields:
 ```
 status           — "awaiting_review" | "refining" | "implementing" | "complete"
-last_design      — full text of the latest design version
+last_design      — full text of the latest design version (or pointer to thread
+                    message index to avoid storing large text in a HASH field)
 last_updated_by  — worker type that last updated
 last_task_id     — task_id of the last update
 gh_pr_number     — GitHub PR number (if code was pushed)
@@ -157,7 +158,8 @@ task.py result --id <task_id> [--tail N]
     Prints the result field.
 
 task.py list [--worker X] [--status X] [--thread X] [--limit N]
-    Scans active_tasks and task:* keys, prints summary table.
+    Scans active_tasks and task:* keys, prints summary table. Uses SCAN (not KEYS)
+    to avoid blocking Redis if the task count grows beyond trivial scale.
 
 task.py wait --id <task_id> [--timeout 300]
     Blocks until done or failed. Polls every 2s.
@@ -191,14 +193,20 @@ task.py thread-list
 task.py thread-create --id "add-oauth2" --repo "owner/repo"
 
 # Delegate design to Claude worker
-task.py enqueue --worker claude --thread add-oauth2 \
-    --instruction "Design OAuth2 support. Read thread history for context."
+DESIGN_TASK=$(task.py enqueue --worker claude --thread add-oauth2 \
+    --instruction "Design OAuth2 support. Read thread history for context." | jq -r '.task_id')
 
-# Delegate review to Copilot worker (after design is done)
-task.py enqueue --worker copilot --thread add-oauth2 \
-    --instruction "Review the OAuth2 design in thread history. Find security gaps."
+# Wait for design to complete before starting the next step
+task.py wait --id "$DESIGN_TASK"
 
-# Delegate implementation to OpenCode worker (after review is done)
+# Delegate review to Copilot worker
+REVIEW_TASK=$(task.py enqueue --worker copilot --thread add-oauth2 \
+    --instruction "Review the OAuth2 design in thread history. Find security gaps." | jq -r '.task_id')
+
+# Wait for review to complete before starting implementation
+task.py wait --id "$REVIEW_TASK"
+
+# Delegate implementation to OpenCode worker
 task.py enqueue --worker opencode --thread add-oauth2 \
     --instruction "Implement OAuth2 based on design and review in thread history."
 
@@ -219,7 +227,7 @@ A single generic `worker.py` shared by all three worker types. Parameterized by 
 | `AGENT_CMD` | `claude -p` | `copilot -p --allow-all` | `opencode run --dangerously-skip-permissions` |
 
 ```python
-import os, json, subprocess, signal, time, uuid
+import os, json, subprocess, signal, time
 import redis
 
 WORKER = os.environ["WORKER_TYPE"]
@@ -259,13 +267,12 @@ while running:
         "thread_id": thread_id, "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ")
     }))
 
-    # Set task status
-    r.set(f"task:{task_id}:status", "running")
-    r.set(f"task:{task_id}:worker", WORKER)
-    r.set(f"task:{task_id}:thread_id", thread_id)
-    r.set(f"task:{task_id}:description", instruction)
-    r.set(f"task:{task_id}:created_at", time.strftime("%Y-%m-%dT%H:%M:%SZ"))
-    r.expire(f"task:{task_id}:status", TTL_TASK)
+    # Set task status (all task keys get TTL_TASK so they auto-expire)
+    r.set(f"task:{task_id}:status", "running", ex=TTL_TASK)
+    r.set(f"task:{task_id}:worker", WORKER, ex=TTL_TASK)
+    r.set(f"task:{task_id}:thread_id", thread_id, ex=TTL_TASK)
+    r.set(f"task:{task_id}:description", instruction, ex=TTL_TASK)
+    r.set(f"task:{task_id}:created_at", time.strftime("%Y-%m-%dT%H:%M:%SZ"), ex=TTL_TASK)
 
     # Build prompt with thread context
     history = r.lrange(f"thread:{thread_id}:messages", -HISTORY_WINDOW, -1)
@@ -288,11 +295,16 @@ while running:
 
     full_prompt = f"{context}\n## Task\n{instruction}"
 
+    # Per-thread workspace isolation: avoid collisions when multiple
+    # threads are active across different workers.
+    workspace = f"/workspace/{thread_id}"
+    os.makedirs(workspace, exist_ok=True)
+
     # Execute agent
     cmd = AGENT_CMD.split() + [full_prompt]
     try:
         proc = subprocess.run(
-            cmd, cwd="/workspace", capture_output=True, text=True,
+            cmd, cwd=workspace, capture_output=True, text=True,
             timeout=int(os.environ.get("TASK_TIMEOUT", 1800)),
         )
         exit_code = proc.returncode
@@ -355,6 +367,7 @@ Worker dequeues task {task_id, thread_id, instruction}
 - After executing, the worker appends its result to the thread history. The next worker in the pipeline sees it.
 - On SIGTERM: lets the current subprocess finish, then exits.
 - Result content is capped at 10k chars when appended to thread history (avoids bloating the list with huge diffs; full result is still in `task:{id}:result`).
+- **Thread serialization:** The master MUST `task.py wait` for a task to complete before enqueuing another task for the same thread. If two workers operate on the same thread concurrently, their state updates will race. Using `BLMOVE` ensures no two workers pick up the same task, but it does not prevent two workers from picking up *different* tasks for the same thread.
 
 ## docker-compose
 
@@ -376,7 +389,6 @@ services:
     restart: unless-stopped
     volumes:
       - workspace:/workspace
-      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
@@ -484,4 +496,4 @@ volumes:
 
 3. **Result size in thread history?** stdout can be large (logs, diffs). Currently capped at 10k chars per message in thread history. Full result always in `task:{id}:result`. Right cap?
 
-4. **Thread state updates by workers?** Workers set `last_updated_by` and `updated_at`. But `status` transitions (e.g., "awaiting_review" → "implementing") should be set by the master after it reviews results, not by the worker. Should `task.py thread-update` be the only way to change status?
+4. **Thread state updates by workers?** Resolved — the worker only sets `last_updated_by`, `last_task_id`, `updated_at`. It never touches `status`. The master owns state transitions via `task.py thread-update`. No change needed.
