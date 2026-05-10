@@ -172,6 +172,11 @@ task.py requeue-stale [--worker X] [--older-than 600]
     Scans tasks:processing:<worker>. For each task, checks task:{id}:status. If missing (worker
     crashed before writing status) or "running" for > older-than, requeues it. Pushes the task
     back onto tasks:queue:<worker> and removes it from tasks:processing:<worker>.
+    Edge case: if a worker crashed after writing result but before `lrem(PROCESSING, ...)`, the
+    task has correct status (done/failed) and won't be re-queued, but a stale entry remains in
+    the processing list. Harmless — the entry is never dequeued again — but it accumulates over
+    time. A future `requeue-stale` could also garbage-collect entries whose task:{id}:status has
+    reached a terminal state.
 
 # Thread management
 task.py thread-create --id <thread_id> [--repo owner/repo]
@@ -412,7 +417,12 @@ Worker dequeues task {task_id, thread_id, instruction}
 - Each worker runs one task at a time, sequentially.
 - Before executing, the worker fetches the last `HISTORY_WINDOW` messages from the thread + the current_state snapshot. This gives the agent full context without the master needing to repeat it.
 - After executing, the worker appends its result to the thread history. The next worker in the pipeline sees it.
-- On SIGTERM: lets the current subprocess finish, then exits.
+- On SIGTERM: lets the current subprocess finish, then exits. This means graceful
+  Docker Compose restarts can hang for up to `TASK_TIMEOUT` (30 min) if a task is
+  in-flight. Not a correctness issue — the task stays in `tasks:processing:*` and
+  `requeue-stale` recovers it — but it delays the restart. Docker Compose sends
+  SIGKILL after a configurable stop grace period (default 10s), so in practice the
+  container is killed and the task is recovered.
 - Result content is capped at 10k chars when appended to thread history (avoids bloating the list with huge diffs; full result is still in `task:{id}:result`).
 - **Thread serialization:** `enqueue` acquires `SETNX thread:{id}:lock` (with TTL = TASK_TIMEOUT + 300s to avoid expiry races near task completion). If the lock exists, enqueue refuses. `task.py wait` deletes the lock on completion, allowing the next task for that thread. This prevents concurrent tasks on the same thread from racing on state updates. Stale locks (e.g. master crashed) are cleared by `task.py unlock --thread <id>`.
 - **Task cancellation:** The master may call `task.py cancel --id <task_id>`, which sets `task:{id}:cancel`. The worker checks this key before starting the subprocess; if set, it marks the task `cancelled` and skips execution. Mid-execution cancellation is not supported in v1 — `subprocess.run()` blocks until the task finishes or times out.
@@ -540,6 +550,52 @@ volumes:
 | Task visibility | None (container runs until exit) | `active_tasks` hash + per-task status keys |
 | Project state | Ad-hoc via /workspace files | `thread:{id}:current_state` hash — structured snapshot |
 
+## Design Rationale
+
+### Python vs Go for the orchestration scripts
+
+Python wins for this use case. `task.py` and `worker.py` are thin orchestration
+glue — CLI arg parsing, Redis commands, subprocess management.
+`redis-py`, `argparse`, and `subprocess` are mature and concise for this. Go
+would add build complexity (multi-arch binaries), a Go toolchain dependency in
+the build pipeline, and more code for the same logic — without benefit, since
+the worker is single-task-at-a-time (`subprocess.run()` matches the model
+perfectly). No goroutines needed.
+
+### Shared /workspace volume tradeoffs
+
+The shared volume is the data plane — where workers clone repos, write code,
+and produce artifacts. Without it:
+
+- The master can't inspect files a worker produced (only sees text output in Redis)
+- Thread workspace isolation (`/workspace/{thread_id}/`) is lost
+- A restarted worker loses in-progress clones and builds
+
+What's not lost: all task delegation, results, and thread history flow through
+Redis. If workers push code to GitHub (branches/PRs), the repo is the real
+artifact store and the workspace is scratch space.
+
+Verdict: keep the shared volume. It's lightweight and gives the master a direct
+window into worker output. For a future iteration it could become optional,
+with workers using local ephemeral storage (`/tmp/{thread_id}`) and relying on
+git as the sole artifact store.
+
+### Agent session save/load
+
+Claude Code supports `--resume <session-id>` and `--continue` (resumes the last
+session from `~/.claude/projects/`). Copilot (`copilot -p`) and OpenCode
+(`opencode run`) are one-shot — no built-in session persistence.
+
+This design intentionally does not rely on agent-native sessions. Instead it
+rebuilds context from Redis thread history before each task. This is
+tool-agnostic and works uniformly across all three workers. The tradeoff: the
+agent's internal reasoning chain from the previous invocation is lost; each run
+is a cold start with conversation history injected.
+
+For v2, `--resume` could be added as an optimization for the Claude worker
+without changing the overall architecture. The thread history remains the
+portable, cross-agent context store.
+
 ## Files to Create or Modify
 
 | File | Action |
@@ -556,12 +612,26 @@ volumes:
 
 ## Open Questions
 
-1. **Task timeout?** Default 30 min. Reasonable for real workloads (clone + implement + test)?
+1. **Task timeout?** Resolved — 30 min default is reasonable for clone + implement + test
+   workloads. Make it per-task overridable via a `timeout` field in the task payload so
+   lightweight tasks don't needlessly wait and heavy ones get headroom. Default stays 1800s.
 
-2. **Reaper cron loop?** `task.py requeue-stale` is specced with flags and behavior, but should the master container run it on a timer (e.g. every 5 min via cron or a background thread), or is it a manual admin command?
+2. **Reaper cron loop?** Resolved — manual for v1. Docker Compose already restarts unhealthy
+   containers (declared in healthcheck config), so worker process death self-heals. The
+   `requeue-stale` command exists as an admin tool for scenario where a worker crashes due
+   to a logic error (OOM, segfault) that Docker restart can't fix. Automation (cron or
+   background thread in the master container) is deferred to v2.
 
-3. **Result size in thread history?** stdout can be large (logs, diffs). Currently capped at 10k chars per message in thread history. Full result always in `task:{id}:result`. Right cap?
+3. **Result size in thread history?** Resolved — 10k chars is the right cap for continuity
+   context. Full results are always available in `task:{id}:result` (24h TTL), and the real
+   artifact (code) lives in git. The message history is for the next agent to understand
+   what happened, not to replay the full diff.
 
-4. **Thread state updates by workers?** Resolved — the worker only sets `last_updated_by`, `last_task_id`, `updated_at`. It never touches `status`. The master owns state transitions via `task.py thread-update`. No change needed.
+4. **Thread state updates by workers?** Resolved — the worker only sets `last_updated_by`,
+   `last_task_id`, `updated_at`. It never touches `status`. The master owns state transitions
+   via `task.py thread-update`. No change needed.
 
-5. **Automatic retry on failure?** Currently a failed task leaves the worker idle until the master manually re-enqueues. A `--retry N` flag on `enqueue` (stored in payload, decremented by worker on failure, moved to dead-letter queue when exhausted) would improve throughput. Deferred to v2.
+5. **Automatic retry on failure?** Deferred to v2. A `--retry N` flag on `enqueue` (stored
+   in payload, decremented by worker on failure, moved to dead-letter queue when exhausted)
+   would improve throughput for transient failures (network blips, API rate limits). For
+   v1, the master re-enqueues manually after reviewing the failure.
