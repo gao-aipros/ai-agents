@@ -336,6 +336,7 @@ while running:
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "metadata": {"task_id": task_id}
         }))
+        r.expire(f"thread:{thread_id}:messages", TTL_THREAD)
         r.lrem(PROCESSING, 0, task_json)
         r.hdel("active_tasks", task_id)
         continue
@@ -415,7 +416,7 @@ Worker dequeues task {task_id, thread_id, instruction}
 - Result content is capped at 10k chars when appended to thread history (avoids bloating the list with huge diffs; full result is still in `task:{id}:result`).
 - **Thread serialization:** `enqueue` acquires `SETNX thread:{id}:lock` (with TTL = TASK_TIMEOUT + 300s to avoid expiry races near task completion). If the lock exists, enqueue refuses. `task.py wait` deletes the lock on completion, allowing the next task for that thread. This prevents concurrent tasks on the same thread from racing on state updates. Stale locks (e.g. master crashed) are cleared by `task.py unlock --thread <id>`.
 - **Task cancellation:** The master may call `task.py cancel --id <task_id>`, which sets `task:{id}:cancel`. The worker checks this key before starting the subprocess; if set, it marks the task `cancelled` and skips execution. Mid-execution cancellation is not supported in v1 — `subprocess.run()` blocks until the task finishes or times out.
-- **Healthcheck interaction:** If a worker fails 3 healthchecks (90s) during a long subprocess run, Docker restarts the container. The task is left in `tasks:processing:*` and recovered by `requeue-stale`. Docker waits up to 100s (30s × 3 retries + 10s start_period) before restarting an unhealthy container. Subprocesses may block Redis I/O for the duration of the task, so healthchecks pause during execution.
+- **Healthcheck interaction:** If a worker fails 3 healthchecks (90s) during a long subprocess run, Docker restarts the container. The task is left in `tasks:processing:*` and recovered by `requeue-stale`. Docker waits up to 100s (30s × 3 retries + 10s start_period) before restarting an unhealthy container.
 - **Logging:** The worker emits JSON-lines logs with `task_id` and `thread_id` fields to stdout. Docker's `json-file` logging driver captures these natively, enabling correlation across services.
 
 ## docker-compose
