@@ -417,12 +417,10 @@ Worker dequeues task {task_id, thread_id, instruction}
 - Each worker runs one task at a time, sequentially.
 - Before executing, the worker fetches the last `HISTORY_WINDOW` messages from the thread + the current_state snapshot. This gives the agent full context without the master needing to repeat it.
 - After executing, the worker appends its result to the thread history. The next worker in the pipeline sees it.
-- On SIGTERM: lets the current subprocess finish, then exits. This means graceful
-  Docker Compose restarts can hang for up to `TASK_TIMEOUT` (30 min) if a task is
-  in-flight. Not a correctness issue — the task stays in `tasks:processing:*` and
-  `requeue-stale` recovers it — but it delays the restart. Docker Compose sends
-  SIGKILL after a configurable stop grace period (default 10s), so in practice the
-  container is killed and the task is recovered.
+- On SIGTERM: lets the current subprocess finish, then exits. In practice Docker
+  Compose sends SIGKILL after the stop grace period (default 10s), so the
+  container is killed and the in-flight task is left in `tasks:processing:*`
+  for `requeue-stale` to recover. No data loss, but the task must be re-queued.
 - Result content is capped at 10k chars when appended to thread history (avoids bloating the list with huge diffs; full result is still in `task:{id}:result`).
 - **Thread serialization:** `enqueue` acquires `SETNX thread:{id}:lock` (with TTL = TASK_TIMEOUT + 300s to avoid expiry races near task completion). If the lock exists, enqueue refuses. `task.py wait` deletes the lock on completion, allowing the next task for that thread. This prevents concurrent tasks on the same thread from racing on state updates. Stale locks (e.g. master crashed) are cleared by `task.py unlock --thread <id>`.
 - **Task cancellation:** The master may call `task.py cancel --id <task_id>`, which sets `task:{id}:cancel`. The worker checks this key before starting the subprocess; if set, it marks the task `cancelled` and skips execution. Mid-execution cancellation is not supported in v1 — `subprocess.run()` blocks until the task finishes or times out.
@@ -612,26 +610,26 @@ portable, cross-agent context store.
 
 ## Open Questions
 
-1. **Task timeout?** Resolved — 30 min default is reasonable for clone + implement + test
+1. **Task timeout?** **Decision:** 30 min default is reasonable for clone + implement + test
    workloads. Make it per-task overridable via a `timeout` field in the task payload so
    lightweight tasks don't needlessly wait and heavy ones get headroom. Default stays 1800s.
 
-2. **Reaper cron loop?** Resolved — manual for v1. Docker Compose already restarts unhealthy
+2. **Reaper cron loop?** **Decision:** Manual for v1. Docker Compose already restarts unhealthy
    containers (declared in healthcheck config), so worker process death self-heals. The
-   `requeue-stale` command exists as an admin tool for scenario where a worker crashes due
+   `requeue-stale` command exists as an admin tool for scenarios where a worker crashes due
    to a logic error (OOM, segfault) that Docker restart can't fix. Automation (cron or
    background thread in the master container) is deferred to v2.
 
-3. **Result size in thread history?** Resolved — 10k chars is the right cap for continuity
+3. **Result size in thread history?** **Decision:** 10k chars is the right cap for continuity
    context. Full results are always available in `task:{id}:result` (24h TTL), and the real
    artifact (code) lives in git. The message history is for the next agent to understand
    what happened, not to replay the full diff.
 
-4. **Thread state updates by workers?** Resolved — the worker only sets `last_updated_by`,
+4. **Thread state updates by workers?** **Decision:** The worker only sets `last_updated_by`,
    `last_task_id`, `updated_at`. It never touches `status`. The master owns state transitions
    via `task.py thread-update`. No change needed.
 
-5. **Automatic retry on failure?** Deferred to v2. A `--retry N` flag on `enqueue` (stored
+5. **Automatic retry on failure?** **Decision:** Deferred to v2. A `--retry N` flag on `enqueue` (stored
    in payload, decremented by worker on failure, moved to dead-letter queue when exhausted)
    would improve throughput for transient failures (network blips, API rate limits). For
    v1, the master re-enqueues manually after reviewing the failure.
