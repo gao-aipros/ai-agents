@@ -39,7 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /home/agent/go && chown -R agent:agent /home/agent/go && \
-    mkdir -p /home/agent/.config/opencode && chown -R agent:agent /home/agent/.config && \
+    mkdir -p /home/agent/.config/opencode && chown -R agent:agent /home/agent/.config \
 
 # Provider/model defaults — overridable at runtime
 ENV OPENCODE_PROVIDER=deepseek \
