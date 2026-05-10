@@ -33,7 +33,7 @@ You are a master orchestrator agent running inside a Docker container with acces
      -e GH_TOKEN \
      -e GITHUB_TOKEN \
      ${WORKER_CLAUDE_IMAGE:-worker-claude:latest} \
-     claude -p "<task description>"
+     "<task description>"
    ```
    For Copilot or OpenCode workers, use `$WORKER_COPILOT_IMAGE` or `$WORKER_OPENCODE_IMAGE` respectively, adjusting the entrypoint args as needed.
 3. **Monitor**: Check worker progress with `docker ps` and `docker logs worker-<id>`.
