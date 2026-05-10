@@ -26,6 +26,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     python3 \
     unzip \
     wget \
+    vim \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g "$AGENT_GID" agent \

@@ -38,11 +38,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /home/agent/go && chown -R agent:agent /home/agent/go
+RUN mkdir -p /home/agent/go && chown -R agent:agent /home/agent/go && \
+    mkdir -p /home/agent/.config/opencode && chown -R agent:agent /home/agent/.config && \
 
 # Provider/model defaults — overridable at runtime
 ENV OPENCODE_PROVIDER=deepseek \
-    OPENCODE_MODEL=deepseek-v4-pro[1m]
+    OPENCODE_MODEL=deepseek-v4-pro
 
 # API key — pass at build time (--build-arg) or runtime (-e)
 ARG DEEPSEEK_API_KEY
@@ -52,7 +53,8 @@ ENV DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
 COPY --chown=agent:agent AGENTS.md /home/agent/AGENTS.md
 
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
 
 USER agent
+RUN opencode models --refresh
+
 ENTRYPOINT ["/entrypoint.sh"]

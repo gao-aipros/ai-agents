@@ -55,6 +55,5 @@ RUN mkdir -p /home/agent/go && chown -R agent:agent /home/agent/go
 COPY --chown=agent:agent AGENTS.md /home/agent/AGENTS.md
 
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
 
 ENTRYPOINT ["/entrypoint.sh"]
