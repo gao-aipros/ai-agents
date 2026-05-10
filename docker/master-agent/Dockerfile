@@ -1,8 +1,9 @@
+ARG CLAUDE_IMAGE=claude-code:latest
+
 # Build stage: extract docker CLI binary
 FROM docker:latest AS docker-build
 
 # Final stage
-ARG CLAUDE_IMAGE=claude-code:latest
 FROM ${CLAUDE_IMAGE}
 
 COPY --from=docker-build /usr/local/bin/docker /usr/local/bin/docker

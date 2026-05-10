@@ -1,3 +1,5 @@
+ARG BASE_IMAGE=ai-base:latest
+
 # Build stage: install Copilot CLI binary
 FROM debian:trixie AS copilot-build
 
@@ -15,7 +17,6 @@ RUN curl -fsSL https://gh.io/copilot-install | bash
 FROM golang:latest AS go-build
 
 # Final stage
-ARG BASE_IMAGE=ai-base:latest
 FROM ${BASE_IMAGE}
 
 USER root

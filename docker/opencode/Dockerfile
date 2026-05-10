@@ -1,3 +1,5 @@
+ARG BASE_IMAGE=ai-base:latest
+
 # Build stage: install OpenCode binary
 FROM debian:trixie AS opencode-build
 
@@ -15,7 +17,6 @@ RUN curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path
 FROM golang:latest AS go-build
 
 # Final stage
-ARG BASE_IMAGE=ai-base:latest
 FROM ${BASE_IMAGE}
 
 USER root

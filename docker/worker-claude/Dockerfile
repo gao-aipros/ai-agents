@@ -1,8 +1,9 @@
+ARG CLAUDE_IMAGE=claude-code:latest
+
 # Build stage: extract Go toolchain
 FROM golang:latest AS go-build
 
 # Final stage
-ARG CLAUDE_IMAGE=claude-code:latest
 FROM ${CLAUDE_IMAGE}
 
 USER root

@@ -1,3 +1,5 @@
+ARG BASE_IMAGE=ai-base:latest
+
 # Build stage: run install script to extract the binary
 FROM debian:trixie AS build
 
@@ -12,7 +14,6 @@ ARG CLAUDE_VERSION=stable
 RUN curl -sL https://claude.ai/install.sh | bash -s -- "$CLAUDE_VERSION"
 
 # Final stage
-ARG BASE_IMAGE=ai-base:latest
 FROM ${BASE_IMAGE}
 
 COPY --from=build /root/.local/bin/claude /usr/local/bin/claude
