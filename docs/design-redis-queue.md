@@ -188,6 +188,14 @@ task.py thread-update --id <thread_id> --status <status> [--design "<text>"] [--
 task.py thread-list
     Lists all thread:{*}:current_state keys with status summary.
 
+task.py thread-cleanup --id <thread_id>
+    Deletes /workspace/{thread_id}/ (cloned repos, build artifacts). Safe to
+    run after thread-update --status complete. Prevents volume bloat.
+
+task.py cancel --id <task_id>
+    Sets task:{id}:cancel = "1". The worker checks this key before each Redis
+    operation in the execution loop and sends SIGTERM to the subprocess if set.
+
 task.py unlock --thread <thread_id>
     Deletes thread:{id}:lock. Used to clear a stale lock left by a crashed master.
 ```
@@ -258,7 +266,14 @@ signal.signal(signal.SIGTERM, shutdown)
 signal.signal(signal.SIGINT, shutdown)
 
 while running:
-    task_json = r.blmove(QUEUE, PROCESSING, "RIGHT", "LEFT", timeout=5)
+    try:
+        task_json = r.blmove(QUEUE, PROCESSING, "RIGHT", "LEFT", timeout=5)
+    except redis.exceptions.ConnectionError:
+        time.sleep(1)
+        r = redis.Redis(host=os.environ.get("REDIS_HOST", "redis"),
+                        port=int(os.environ.get("REDIS_PORT", 6379)),
+                        decode_responses=True)
+        continue
     if not task_json:
         continue
 
@@ -306,6 +321,16 @@ while running:
     workspace = f"/workspace/{thread_id}"
     os.makedirs(workspace, exist_ok=True)
 
+    # Check for cancellation before starting subprocess
+    if r.get(f"task:{task_id}:cancel"):
+        r.set(f"task:{task_id}:status", "cancelled", ex=TTL_TASK)
+        r.set(f"task:{task_id}:result", "Cancelled by master", ex=TTL_TASK)
+        r.set(f"task:{task_id}:exit_code", "-1", ex=TTL_TASK)
+        r.set(f"task:{task_id}:completed_at", time.strftime("%Y-%m-%dT%H:%M:%SZ"), ex=TTL_TASK)
+        r.lrem(PROCESSING, 0, task_json)
+        r.hdel("active_tasks", task_id)
+        continue
+
     # Execute agent
     cmd = AGENT_CMD.split() + [full_prompt]
     try:
@@ -314,7 +339,13 @@ while running:
             timeout=int(os.environ.get("TASK_TIMEOUT", 1800)),
         )
         exit_code = proc.returncode
-        result = proc.stdout if proc.returncode == 0 else (proc.stderr or f"exit {proc.returncode}")
+        # Combine stdout+stderr regardless of exit code — agents often
+        # produce useful output on stdout even when they exit non-zero.
+        result = proc.stdout
+        if proc.stderr:
+            result += "\n[stderr]\n" + proc.stderr
+        if proc.returncode != 0:
+            result = f"[FAILED exit={proc.returncode}]\n" + result
         status = "done" if proc.returncode == 0 else "failed"
     except subprocess.TimeoutExpired:
         exit_code = -1
@@ -374,6 +405,8 @@ Worker dequeues task {task_id, thread_id, instruction}
 - On SIGTERM: lets the current subprocess finish, then exits.
 - Result content is capped at 10k chars when appended to thread history (avoids bloating the list with huge diffs; full result is still in `task:{id}:result`).
 - **Thread serialization:** `enqueue` acquires `SETNX thread:{id}:lock` (with TTL = TASK_TIMEOUT + 300s to avoid expiry races near task completion). If the lock exists, enqueue refuses. `task.py wait` deletes the lock on completion, allowing the next task for that thread. This prevents concurrent tasks on the same thread from racing on state updates. Stale locks (e.g. master crashed) are cleared by `task.py unlock --thread <id>`.
+- **Task cancellation:** The master may call `task.py cancel --id <task_id>`, which sets `task:{id}:cancel`. The worker checks this key before starting the subprocess; if set, it marks the task `cancelled` and skips execution.
+- **Logging:** The worker emits JSON-lines logs with `task_id` and `thread_id` fields to stdout. Docker's `json-file` logging driver captures these natively, enabling correlation across services.
 
 ## docker-compose
 
@@ -423,6 +456,11 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "redis", "ping"]
+      interval: 30s
+      retries: 3
+      start_period: 10s
 
   worker-copilot:
     image: copilot:latest
@@ -441,6 +479,11 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "redis", "ping"]
+      interval: 30s
+      retries: 3
+      start_period: 10s
 
   worker-opencode:
     image: opencode:latest
@@ -459,6 +502,11 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "redis", "ping"]
+      interval: 30s
+      retries: 3
+      start_period: 10s
 
 volumes:
   workspace:
@@ -499,7 +547,7 @@ volumes:
 
 1. **Task timeout?** Default 30 min. Reasonable for real workloads (clone + implement + test)?
 
-2. **Reaper for stale tasks?** If a worker crashes, the task stays in `tasks:processing:*` and `active_tasks`. A reaper command in `task.py` can scan + requeue. v1 or v2?
+2. **Reaper cron loop?** `task.py requeue-stale` is specced with flags and behavior, but should the master container run it on a timer (e.g. every 5 min via cron or a background thread), or is it a manual admin command?
 
 3. **Result size in thread history?** stdout can be large (logs, diffs). Currently capped at 10k chars per message in thread history. Full result always in `task:{id}:result`. Right cap?
 
