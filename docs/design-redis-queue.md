@@ -398,6 +398,7 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      TASK_TIMEOUT: "1800"
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
       GH_TOKEN: ${GH_TOKEN}
       GITHUB_TOKEN: ${GITHUB_TOKEN}
