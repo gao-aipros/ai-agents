@@ -193,8 +193,9 @@ task.py thread-cleanup --id <thread_id>
     run after thread-update --status complete. Prevents volume bloat.
 
 task.py cancel --id <task_id>
-    Sets task:{id}:cancel = "1". The worker checks this key before each Redis
-    operation in the execution loop and sends SIGTERM to the subprocess if set.
+    Sets task:{id}:cancel = "1". The worker checks this key before starting the
+    subprocess; if set, marks the task cancelled and moves on. (Mid-execution
+    cancellation via SIGTERM would require a Popen polling loop — deferred.)
 
 task.py unlock --thread <thread_id>
     Deletes thread:{id}:lock. Used to clear a stale lock left by a crashed master.
@@ -285,7 +286,7 @@ while running:
     # Register as active
     r.hset("active_tasks", task_id, json.dumps({
         "status": "running", "worker": WORKER,
-        "thread_id": thread_id, "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ")
+        "thread_id": thread_id, "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     }))
 
     # Set task status (all task keys get TTL_TASK so they auto-expire)
@@ -293,7 +294,7 @@ while running:
     r.set(f"task:{task_id}:worker", WORKER, ex=TTL_TASK)
     r.set(f"task:{task_id}:thread_id", thread_id, ex=TTL_TASK)
     r.set(f"task:{task_id}:description", instruction, ex=TTL_TASK)
-    r.set(f"task:{task_id}:created_at", time.strftime("%Y-%m-%dT%H:%M:%SZ"), ex=TTL_TASK)
+    r.set(f"task:{task_id}:created_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), ex=TTL_TASK)
 
     # Build prompt with thread context
     history = r.lrange(f"thread:{thread_id}:messages", -HISTORY_WINDOW, -1)
@@ -326,7 +327,7 @@ while running:
         r.set(f"task:{task_id}:status", "cancelled", ex=TTL_TASK)
         r.set(f"task:{task_id}:result", "Cancelled by master", ex=TTL_TASK)
         r.set(f"task:{task_id}:exit_code", "-1", ex=TTL_TASK)
-        r.set(f"task:{task_id}:completed_at", time.strftime("%Y-%m-%dT%H:%M:%SZ"), ex=TTL_TASK)
+        r.set(f"task:{task_id}:completed_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), ex=TTL_TASK)
         r.lrem(PROCESSING, 0, task_json)
         r.hdel("active_tasks", task_id)
         continue
@@ -355,14 +356,14 @@ while running:
     # Store result (with TTLs so keys don't accumulate forever)
     r.set(f"task:{task_id}:result", result, ex=TTL_TASK)
     r.set(f"task:{task_id}:exit_code", str(exit_code), ex=TTL_TASK)
-    r.set(f"task:{task_id}:completed_at", time.strftime("%Y-%m-%dT%H:%M:%SZ"), ex=TTL_TASK)
+    r.set(f"task:{task_id}:completed_at", time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), ex=TTL_TASK)
     r.set(f"task:{task_id}:status", status, ex=TTL_TASK)
 
     # Append result to thread history
     r.rpush(f"thread:{thread_id}:messages", json.dumps({
         "role": WORKER,
         "content": result[:10000],  # cap per message at 10k chars
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "metadata": {"task_id": task_id}
     }))
     r.expire(f"thread:{thread_id}:messages", TTL_THREAD)
@@ -371,7 +372,7 @@ while running:
     r.hset(f"thread:{thread_id}:current_state", mapping={
         "last_updated_by": WORKER,
         "last_task_id": task_id,
-        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     })
     r.expire(f"thread:{thread_id}:current_state", TTL_THREAD)
 
@@ -405,7 +406,8 @@ Worker dequeues task {task_id, thread_id, instruction}
 - On SIGTERM: lets the current subprocess finish, then exits.
 - Result content is capped at 10k chars when appended to thread history (avoids bloating the list with huge diffs; full result is still in `task:{id}:result`).
 - **Thread serialization:** `enqueue` acquires `SETNX thread:{id}:lock` (with TTL = TASK_TIMEOUT + 300s to avoid expiry races near task completion). If the lock exists, enqueue refuses. `task.py wait` deletes the lock on completion, allowing the next task for that thread. This prevents concurrent tasks on the same thread from racing on state updates. Stale locks (e.g. master crashed) are cleared by `task.py unlock --thread <id>`.
-- **Task cancellation:** The master may call `task.py cancel --id <task_id>`, which sets `task:{id}:cancel`. The worker checks this key before starting the subprocess; if set, it marks the task `cancelled` and skips execution.
+- **Task cancellation:** The master may call `task.py cancel --id <task_id>`, which sets `task:{id}:cancel`. The worker checks this key before starting the subprocess; if set, it marks the task `cancelled` and skips execution. Mid-execution cancellation is not supported in v1 — `subprocess.run()` blocks until the task finishes or times out.
+- **Healthcheck interaction:** If a worker fails 3 healthchecks (90s) during a long subprocess run, Docker restarts the container. The task is left in `tasks:processing:*` and recovered by `requeue-stale`. Healthcheck grace periods are set conservatively (30s interval, 3 retries + 10s start_period = 100s minimum between alive checks) because subprocesses may block Redis I/O for the duration of the task.
 - **Logging:** The worker emits JSON-lines logs with `task_id` and `thread_id` fields to stdout. Docker's `json-file` logging driver captures these natively, enabling correlation across services.
 
 ## docker-compose
@@ -457,7 +459,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "redis-cli", "-h", "redis", "ping"]
+      test: ["CMD", "python3", "-c", "import redis; assert redis.Redis(host='redis').ping()"]
       interval: 30s
       retries: 3
       start_period: 10s
@@ -480,7 +482,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "redis-cli", "-h", "redis", "ping"]
+      test: ["CMD", "python3", "-c", "import redis; assert redis.Redis(host='redis').ping()"]
       interval: 30s
       retries: 3
       start_period: 10s
@@ -503,7 +505,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "redis-cli", "-h", "redis", "ping"]
+      test: ["CMD", "python3", "-c", "import redis; assert redis.Redis(host='redis').ping()"]
       interval: 30s
       retries: 3
       start_period: 10s
