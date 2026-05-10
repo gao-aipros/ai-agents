@@ -49,7 +49,7 @@ You are a master orchestrator agent running inside a Docker container with acces
      "<task description>"
    ```
 
-   **Copilot worker** (appends args to `copilot`):
+   **Copilot worker** (headless `-p --allow-all` baked into entrypoint):
    ```
    docker run -d --name worker-<id> \
      -v /workspace:/workspace \
