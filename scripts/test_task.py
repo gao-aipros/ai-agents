@@ -497,6 +497,14 @@ class TestWait:
         task.cmd_wait(args)
         assert "done" in capsys.readouterr().out
 
+    def test_wait_nonexistent_task(self, mock_redis):
+        args = argparse.Namespace(id="nonexistent-task", timeout=300)
+
+        with pytest.raises(DieError) as exc:
+            task.cmd_wait(args)
+
+        assert "not found" in exc.value.msg.lower()
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Task Management: requeue-stale
@@ -1154,9 +1162,8 @@ class TestEdgeCases:
         args = argparse.Namespace(id=TEST_TASK_ID, tail=0)
         task.cmd_result(args)
 
-        # Python truthiness: if args.tail: treats 0 as falsy, so full result
-        # is printed. This matches task.py's current behavior.
-        assert capsys.readouterr().out.strip() == "line1\nline2"
+        # tail=0 should print only a newline (print("") emits \n)
+        assert capsys.readouterr().out.strip() == ""
 
     def test_list_limit_zero(self, mock_redis, capsys):
         r = mock_redis
@@ -1167,8 +1174,76 @@ class TestEdgeCases:
         args = argparse.Namespace(worker=None, status=None, thread=None, limit=0)
         task.cmd_list(args)
 
-        # Should not crash
-        assert True
+        # limit=0 should show no tasks
+        stdout = capsys.readouterr().out.strip()
+        assert "(no tasks)" in stdout
+
+    def test_cancel_on_terminal_task(self, mock_redis, capsys):
+        """cancel on done/failed task should still set the cancel flag (idempotent)."""
+        r = mock_redis
+        r.set(f"task:{TEST_TASK_ID}:status", "done")
+
+        args = argparse.Namespace(id=TEST_TASK_ID)
+        task.cmd_cancel(args)
+
+        assert r.get(f"task:{TEST_TASK_ID}:cancel") == "1"
+        assert "Cancel flag set" in capsys.readouterr().out
+
+    def test_list_combined_filters(self, mock_redis, capsys):
+        """Combined --worker and --status filters should both apply."""
+        r = mock_redis
+        r.set("task:a:status", "done")
+        r.set("task:a:worker", "claude")
+        r.set("task:a:thread_id", "thread-0")
+        r.set("task:a:created_at", "2026-05-10T00:00:00Z")
+        r.hset("active_tasks", "a", json.dumps({"status": "done", "worker": "claude"}))
+        r.set("task:b:status", "running")
+        r.set("task:b:worker", "claude")
+        r.set("task:b:thread_id", "thread-1")
+        r.set("task:b:created_at", "2026-05-10T00:00:00Z")
+        r.hset("active_tasks", "b", json.dumps({"status": "running", "worker": "claude"}))
+
+        args = argparse.Namespace(worker="claude", status="done", thread=None, limit=50)
+        task.cmd_list(args)
+
+        stdout = capsys.readouterr().out
+        # cmd_list splits key "task:a:status" → task_id = "a"
+        assert "a " in stdout
+        assert "b " not in stdout
+
+    def test_history_tail_exceeds_count(self, mock_redis, thread_with_history, capsys):
+        """--tail larger than total message count returns all messages."""
+        args = argparse.Namespace(id=TEST_THREAD, tail=100)
+        task.cmd_thread_history(args)
+
+        stdout = capsys.readouterr().out
+        # Both messages should appear (only 2 exist, tail=100)
+        assert "Initial design" in stdout
+        assert "Design result" in stdout
+
+    def test_wait_timeout_zero(self, mock_redis):
+        """wait --timeout 0 with non-terminal task -> die() immediately."""
+        r = mock_redis
+        r.set(f"task:{TEST_TASK_ID}:status", "running")
+        r.set(f"task:{TEST_TASK_ID}:thread_id", TEST_THREAD)
+
+        args = argparse.Namespace(id=TEST_TASK_ID, timeout=0)
+        with pytest.raises(DieError) as exc:
+            task.cmd_wait(args)
+
+        assert "timed" in exc.value.msg.lower()
+
+    def test_wait_timeout_negative(self, mock_redis):
+        """wait --timeout -1 with non-terminal task -> die() immediately."""
+        r = mock_redis
+        r.set(f"task:{TEST_TASK_ID}:status", "running")
+        r.set(f"task:{TEST_TASK_ID}:thread_id", TEST_THREAD)
+
+        args = argparse.Namespace(id=TEST_TASK_ID, timeout=-1)
+        with pytest.raises(DieError) as exc:
+            task.cmd_wait(args)
+
+        assert "timed" in exc.value.msg.lower()
 
     def test_redis_connection_error(self, monkeypatch):
         """When Redis is unreachable, ConnectionError → die()."""

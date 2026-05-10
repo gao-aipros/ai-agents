@@ -100,9 +100,12 @@ def cmd_status(args):
 def cmd_result(args):
     r = get_redis()
     result = r.get(f"task:{args.id}:result") or ""
-    if args.tail:
-        lines = result.splitlines()
-        result = "\n".join(lines[-args.tail:])
+    if args.tail is not None:
+        if args.tail == 0:
+            result = ""
+        else:
+            lines = result.splitlines()
+            result = "\n".join(lines[-args.tail:])
     print(result)
 
 
@@ -134,10 +137,13 @@ def cmd_list(args):
     worker_filter = getattr(args, 'worker', None)
     status_filter = getattr(args, 'status', None)
     thread_filter = getattr(args, 'thread', None)
-    limit = args.limit or 50
+    limit = args.limit if args.limit is not None else 50
 
     rows = []
     for task_id in sorted(tasks.keys()):
+        if len(rows) >= limit:
+            break
+
         entry = tasks[task_id]
         entry["task_id"] = task_id
 
@@ -160,9 +166,6 @@ def cmd_list(args):
 
         rows.append(entry)
 
-        if len(rows) >= limit:
-            break
-
     # Print summary table
     if not rows:
         print("(no tasks)")
@@ -184,8 +187,11 @@ def cmd_wait(args):
     r = get_redis()
     task_id = args.id
     timeout = args.timeout
-    deadline = time.monotonic() + timeout
 
+    if not r.exists(f"task:{task_id}:status"):
+        die(f"Task {task_id} not found")
+
+    deadline = time.monotonic() + timeout
     while True:
         status = r.get(f"task:{task_id}:status")
         if status in ("done", "failed", "cancelled"):
@@ -291,7 +297,10 @@ def cmd_thread_history(args):
     r = get_redis()
     thread_id = args.id
     key = f"thread:{thread_id}:messages"
-    if args.tail:
+    if args.tail is not None:
+        if args.tail == 0:
+            print("(no messages)")
+            return
         msgs = r.lrange(key, -args.tail, -1)
     else:
         msgs = r.lrange(key, 0, -1)
