@@ -90,8 +90,7 @@ thread:{thread_id}:current_state   HASH
 Fields:
 ```
 status           — "awaiting_review" | "refining" | "implementing" | "complete"
-last_design      — full text of the latest design version (or pointer to thread
-                    message index to avoid storing large text in a HASH field)
+last_design      — full text of the latest design version
 last_updated_by  — worker type that last updated
 last_task_id     — task_id of the last update
 gh_pr_number     — GitHub PR number (if code was pushed)
@@ -149,7 +148,9 @@ The master runs `claude` interactively. It calls `task.py` for all task and thre
 # Task management
 task.py enqueue --worker claude|copilot|opencode --thread <thread_id> --instruction "<text>"
     LPUSHes a task onto tasks:queue:<worker>. Also appends the instruction to
-    thread:{thread_id}:messages (role=master). Prints "task_id=<id>".
+    thread:{thread_id}:messages (role=master). If thread:{id}:lock exists, refuses
+    with an error (another task is in-flight for this thread). Prints JSON:
+    {"task_id": "<id>"}.
 
 task.py status --id <task_id>
     Prints JSON: {task_id, worker, thread_id, status, exit_code, timestamps}.
@@ -162,7 +163,8 @@ task.py list [--worker X] [--status X] [--thread X] [--limit N]
     to avoid blocking Redis if the task count grows beyond trivial scale.
 
 task.py wait --id <task_id> [--timeout 300]
-    Blocks until done or failed. Polls every 2s.
+    Blocks until done or failed. Polls every 2s. On completion, deletes
+    thread:{thread_id}:lock so another task can be enqueued for the same thread.
 
 task.py requeue-stale [--worker X] [--older-than 600]
     Scans tasks:processing:<worker>. For each task, checks task:{id}:status. If missing (worker
@@ -367,7 +369,7 @@ Worker dequeues task {task_id, thread_id, instruction}
 - After executing, the worker appends its result to the thread history. The next worker in the pipeline sees it.
 - On SIGTERM: lets the current subprocess finish, then exits.
 - Result content is capped at 10k chars when appended to thread history (avoids bloating the list with huge diffs; full result is still in `task:{id}:result`).
-- **Thread serialization:** The master MUST `task.py wait` for a task to complete before enqueuing another task for the same thread. If two workers operate on the same thread concurrently, their state updates will race. Using `BLMOVE` ensures no two workers pick up the same task, but it does not prevent two workers from picking up *different* tasks for the same thread.
+- **Thread serialization:** `enqueue` acquires `SETNX thread:{id}:lock` (with a 30-min TTL to prevent orphaned locks). If the lock exists, enqueue refuses. `task.py wait` deletes the lock on completion, allowing the next task for that thread. This prevents concurrent tasks on the same thread from racing on state updates.
 
 ## docker-compose
 
