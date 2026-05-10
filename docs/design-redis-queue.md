@@ -136,6 +136,7 @@ TTL: 24h for task result keys. Thread history is the long-term record.
 | `active_tasks` | HASH | What's running right now | none |
 | `task:{id}:status` | STRING | Task lifecycle state | 24h |
 | `task:{id}:result` | STRING | Agent stdout/stderr | 24h |
+| `task:{id}:cancel` | STRING | Cancellation flag (set by master, checked by worker) | TTL_TASK if set by master |
 | `task:{id}:*` | STRING | Other per-task metadata | 24h |
 | `thread:{id}:lock` | STRING | Serialization guard (SETNX) | TASK_TIMEOUT + 5 min |
 
@@ -193,7 +194,7 @@ task.py thread-cleanup --id <thread_id>
     run after thread-update --status complete. Prevents volume bloat.
 
 task.py cancel --id <task_id>
-    Sets task:{id}:cancel = "1". The worker checks this key before starting the
+    Sets task:{id}:cancel = "1" (with TTL_TASK expiry so it auto-cleans up). The worker checks this key before starting the
     subprocess; if set, marks the task cancelled and moves on. (Mid-execution
     cancellation via SIGTERM would require a Popen polling loop — deferred.)
 
