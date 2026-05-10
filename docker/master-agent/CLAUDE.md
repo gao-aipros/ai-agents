@@ -25,7 +25,9 @@ You are a master orchestrator agent running inside a Docker container with acces
 ## Workflow
 
 1. **Plan**: Analyze the request. Break it into sub-tasks (high-level design, detailed design, code, review). Identify what can run in parallel vs sequentially.
-2. **Delegate**: For each sub-task, spawn a worker using the image from the env var:
+2. **Delegate**: For each sub-task, spawn a worker. All workers accept a task string as the sole argument (entrypoint handles non-interactive mode).
+
+   **Claude Code worker** (headless `-p` baked into entrypoint):
    ```
    docker run -d --name worker-<id> \
      -v /workspace:/workspace \
@@ -35,7 +37,28 @@ You are a master orchestrator agent running inside a Docker container with acces
      ${WORKER_CLAUDE_IMAGE:-worker-claude:latest} \
      "<task description>"
    ```
-   For Copilot or OpenCode workers, use `$WORKER_COPILOT_IMAGE` or `$WORKER_OPENCODE_IMAGE` respectively, adjusting the entrypoint args as needed.
+
+   **OpenCode worker** (headless `run` baked into entrypoint):
+   ```
+   docker run -d --name worker-<id> \
+     -v /workspace:/workspace \
+     -e DEEPSEEK_API_KEY \
+     -e GH_TOKEN \
+     -e GITHUB_TOKEN \
+     ${WORKER_OPENCODE_IMAGE:-opencode:latest} \
+     "<task description>"
+   ```
+
+   **Copilot worker** (appends args to `copilot`):
+   ```
+   docker run -d --name worker-<id> \
+     -v /workspace:/workspace \
+     -e COPILOT_PROVIDER_API_KEY \
+     -e GH_TOKEN \
+     -e GITHUB_TOKEN \
+     ${WORKER_COPILOT_IMAGE:-copilot:latest} \
+     "<task description>"
+   ```
 3. **Monitor**: Check worker progress with `docker ps` and `docker logs worker-<id>`.
 4. **Aggregate**: Collect results from `/workspace/result.md`, synthesize into a final response.
 5. **Cleanup**: Remove completed workers with `docker rm -f worker-<id>`.
