@@ -22,10 +22,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Worker poll loop
+COPY scripts/worker.py /usr/local/bin/worker.py
+
 RUN mkdir -p /home/agent/go /home/agent/.claude \
     && chown -R agent:agent /home/agent/go /home/agent/.claude
-COPY --chown=agent:agent CLAUDE.md /home/agent/.claude/CLAUDE.md
-COPY --chown=agent:agent settings.json /home/agent/.claude/settings.json
+COPY --chown=agent:agent docker/worker-claude/CLAUDE.md /home/agent/.claude/CLAUDE.md
+COPY --chown=agent:agent docker/worker-claude/settings.json /home/agent/.claude/settings.json
 
 USER agent
-ENTRYPOINT ["claude", "-p"]
+ENTRYPOINT ["python3", "/usr/local/bin/worker.py"]

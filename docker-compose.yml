@@ -1,0 +1,107 @@
+services:
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+
+  master:
+    image: ${MASTER_AGENT_IMAGE:-master-agent:latest}
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+    volumes:
+      - workspace:/workspace
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      TASK_TIMEOUT: "1800"
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
+      GH_TOKEN: ${GH_TOKEN}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker-claude:
+    image: ${WORKER_CLAUDE_IMAGE:-worker-claude:latest}
+    restart: unless-stopped
+    volumes:
+      - workspace:/workspace
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      WORKER_TYPE: claude
+      AGENT_CMD: "claude -p"
+      TASK_TIMEOUT: "1800"
+      HISTORY_WINDOW: "10"
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
+      GH_TOKEN: ${GH_TOKEN}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import redis; assert redis.Redis(host='redis').ping()"]
+      interval: 30s
+      retries: 3
+      start_period: 10s
+
+  # Stub: copilot image doesn't run worker.py yet — will fail to dequeue tasks.
+  # Healthcheck passes (redis ping works) but no tasks are consumed.
+  worker-copilot:
+    image: ${WORKER_COPILOT_IMAGE:-copilot:latest}
+    restart: unless-stopped
+    volumes:
+      - workspace:/workspace
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      WORKER_TYPE: copilot
+      AGENT_CMD: "copilot -p --allow-all"
+      TASK_TIMEOUT: "1800"
+      HISTORY_WINDOW: "10"
+      COPILOT_PROVIDER_API_KEY: ${DEEPSEEK_API_KEY}
+      GH_TOKEN: ${GH_TOKEN}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import redis; assert redis.Redis(host='redis').ping()"]
+      interval: 30s
+      retries: 3
+      start_period: 10s
+
+  worker-opencode:
+    image: ${WORKER_OPENCODE_IMAGE:-opencode:latest}
+    restart: unless-stopped
+    volumes:
+      - workspace:/workspace
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      WORKER_TYPE: opencode
+      AGENT_CMD: "opencode run --dangerously-skip-permissions"
+      TASK_TIMEOUT: "1800"
+      HISTORY_WINDOW: "10"
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      GH_TOKEN: ${GH_TOKEN}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import redis; assert redis.Redis(host='redis').ping()"]
+      interval: 30s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  workspace:
+    driver: local
+  redis_data:
+    driver: local
