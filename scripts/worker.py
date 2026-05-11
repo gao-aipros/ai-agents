@@ -12,6 +12,7 @@ Parameterized by env vars:
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 import time
@@ -101,6 +102,13 @@ def process_one_task(task_json):
 
     workspace = os.path.join(WORKSPACE_DIR, thread_id)
     os.makedirs(workspace, exist_ok=True)
+
+    # Propagate agent instructions to workspace cwd (copilot reads AGENTS.md from cwd)
+    home = os.path.expanduser("~")
+    for filename in ("AGENTS.md", "CLAUDE.md"):
+        src = os.path.join(home, filename)
+        if os.path.exists(src):
+            shutil.copy2(src, os.path.join(workspace, filename))
 
     # Check for cancellation before starting subprocess
     if r.get(f"task:{task_id}:cancel"):
