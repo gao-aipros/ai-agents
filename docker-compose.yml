@@ -83,7 +83,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       WORKER_TYPE: opencode
-      AGENT_CMD: "opencode run --dangerously-skip-permissions"
+      AGENT_CMD: "opencode -m deepseek/deepseek-v4-pro run --dangerously-skip-permissions"
       TASK_TIMEOUT: "1800"
       HISTORY_WINDOW: "10"
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
