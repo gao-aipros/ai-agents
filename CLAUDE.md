@@ -4,21 +4,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture
 
-Multi-agent Docker orchestration where a master agent delegates tasks to worker agents (Claude Code, Copilot, OpenCode). All agents run in Docker containers, communicating via Docker socket (control plane) and a shared `/workspace` volume (data plane).
+Multi-agent Docker orchestration where a master agent delegates tasks to worker agents (Claude Code, Copilot, OpenCode). All agents run in Docker containers, communicating via a Redis task queue (control plane) and a shared `/workspace` volume (data plane).
 
 **Image dependency layers:**
 
 ```
-ai-base (debian:trixie + gh, git, jq, python3, curl, ssh)
+ai-base (debian:trixie + gh, git, jq, python3, redis-py, curl, ssh)
   ├─ claude-code (FROM ai-base, + claude CLI)
   ├─ copilot     (FROM ai-base, + copilot CLI, + Go toolchain)
   └─ opencode    (FROM ai-base, + opencode CLI, + Go toolchain)
         │
-        ├─ master-agent   (FROM claude-code, + docker CLI binary)
+        ├─ master-agent   (FROM claude-code, + task.py CLI)
         └─ worker-claude  (FROM claude-code, + Go toolchain)
 ```
 
-The master agent spawns workers via `docker run` using the mounted Docker socket (`/var/run/docker.sock`). Workers receive tasks as CLI prompts (`claude -p "..."`) and write results to `/workspace/result.md`. Auth tokens (`ANTHROPIC_AUTH_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`) are forwarded via `-e` flags.
+The master agent delegates tasks via `task.py enqueue` to a Redis task queue. Long-running worker containers (one per agent type) dequeue tasks via `BLMOVE`, execute them with full thread context, and post results back to Redis. All containers share a `/workspace` volume for file exchange. Auth tokens (`ANTHROPIC_AUTH_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`) are passed via environment variables.
 
 All agents use DeepSeek as the backend. Claude Code and Copilot use the Anthropic-compatible API (`https://api.deepseek.com/anthropic`); OpenCode uses DeepSeek's native API.
 
@@ -37,7 +37,7 @@ docker build --load -t opencode:latest docker/opencode/ &
 wait
 
 # Layer 2 — depends on layer 1
-docker build --load -t master-agent:latest docker/master-agent/
+docker build --load -t master-agent:latest -f docker/master-agent/Dockerfile .
 docker build --load -t worker-claude:latest docker/worker-claude/
 ```
 
