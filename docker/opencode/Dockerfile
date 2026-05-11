@@ -50,8 +50,8 @@ ARG DEEPSEEK_API_KEY
 ENV DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
 
 # Worker instructions
-COPY --chown=agent:agent AGENTS.md /home/agent/AGENTS.md
-COPY --chown=agent:agent opencode.json /home/agent/.config/opencode/opencode.json
+COPY --chown=agent:agent docker/opencode/AGENTS.md /home/agent/AGENTS.md
+COPY --chown=agent:agent docker/opencode/opencode.json /home/agent/.config/opencode/opencode.json
 
 # Worker poll loop
 COPY scripts/worker.py /usr/local/bin/worker.py
