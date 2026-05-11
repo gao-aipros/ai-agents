@@ -50,8 +50,6 @@ services:
       retries: 3
       start_period: 10s
 
-  # Stub: copilot image doesn't run worker.py yet — will fail to dequeue tasks.
-  # Healthcheck passes (redis ping works) but no tasks are consumed.
   worker-copilot:
     image: ${WORKER_COPILOT_IMAGE:-copilot:latest}
     restart: unless-stopped
