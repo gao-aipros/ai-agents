@@ -53,9 +53,10 @@ ENV DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
 COPY --chown=agent:agent AGENTS.md /home/agent/AGENTS.md
 COPY --chown=agent:agent opencode.json /home/agent/.config/opencode/opencode.json
 
-COPY entrypoint.sh /entrypoint.sh
+# Worker poll loop
+COPY scripts/worker.py /usr/local/bin/worker.py
 
 USER agent
 RUN opencode models --refresh
 
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["python3", "/usr/local/bin/worker.py"]

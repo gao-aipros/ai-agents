@@ -61,7 +61,8 @@ jobs:
             --push \
             --build-arg BASE_IMAGE=${PREFIX}/ai-base:latest \
             -t ${PREFIX}/copilot:latest \
-            docker/copilot/
+            -f docker/copilot/Dockerfile \
+            .
 
       - name: Build opencode
         run: |
@@ -70,7 +71,8 @@ jobs:
             --push \
             --build-arg BASE_IMAGE=${PREFIX}/ai-base:latest \
             -t ${PREFIX}/opencode:latest \
-            docker/opencode/
+            -f docker/opencode/Dockerfile \
+            .
 
       # Layer 2 — agent images depending on claude-code
       - name: Build master-agent

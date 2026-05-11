@@ -50,8 +50,6 @@ services:
       retries: 3
       start_period: 10s
 
-  # Stub: copilot image doesn't run worker.py yet — will fail to dequeue tasks.
-  # Healthcheck passes (redis ping works) but no tasks are consumed.
   worker-copilot:
     image: ${WORKER_COPILOT_IMAGE:-copilot:latest}
     restart: unless-stopped
@@ -85,7 +83,7 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       WORKER_TYPE: opencode
-      AGENT_CMD: "opencode run --dangerously-skip-permissions"
+      AGENT_CMD: "opencode -m deepseek/deepseek-v4-pro run --dangerously-skip-permissions"
       TASK_TIMEOUT: "1800"
       HISTORY_WINDOW: "10"
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}

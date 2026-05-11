@@ -32,8 +32,8 @@ docker build --load -t ai-base:latest docker/base/
 
 # Layer 1 — can run in parallel
 docker build --load -t claude-code:latest docker/claude-code/ &
-docker build --load -t copilot:latest docker/copilot/ &
-docker build --load -t opencode:latest docker/opencode/ &
+docker build --load -t copilot:latest -f docker/copilot/Dockerfile . &
+docker build --load -t opencode:latest -f docker/opencode/Dockerfile . &
 wait
 
 # Layer 2 — depends on layer 1

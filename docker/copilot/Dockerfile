@@ -54,6 +54,8 @@ RUN mkdir -p /home/agent/go && chown -R agent:agent /home/agent/go
 # Copilot custom instructions (stored in home, copied to workspace at runtime)
 COPY --chown=agent:agent AGENTS.md /home/agent/AGENTS.md
 
-COPY entrypoint.sh /entrypoint.sh
+# Worker poll loop
+COPY scripts/worker.py /usr/local/bin/worker.py
 
-ENTRYPOINT ["/entrypoint.sh"]
+USER agent
+ENTRYPOINT ["python3", "/usr/local/bin/worker.py"]
