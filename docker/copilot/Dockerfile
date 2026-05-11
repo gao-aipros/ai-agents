@@ -52,7 +52,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN mkdir -p /home/agent/go && chown -R agent:agent /home/agent/go
 
 # Copilot custom instructions (stored in home, copied to workspace at runtime)
-COPY --chown=agent:agent AGENTS.md /home/agent/AGENTS.md
+COPY --chown=agent:agent docker/copilot/AGENTS.md /home/agent/AGENTS.md
 
 # Worker poll loop
 COPY scripts/worker.py /usr/local/bin/worker.py
