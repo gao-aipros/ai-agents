@@ -80,7 +80,8 @@ jobs:
             --push \
             --build-arg CLAUDE_IMAGE=${PREFIX}/claude-code:latest \
             -t ${PREFIX}/master-agent:latest \
-            docker/master-agent/
+            -f docker/master-agent/Dockerfile \
+            .
 
       - name: Build worker-claude
         run: |

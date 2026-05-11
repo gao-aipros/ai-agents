@@ -192,18 +192,19 @@ def cmd_wait(args):
         die(f"Task {task_id} not found")
 
     deadline = time.monotonic() + timeout
-    while True:
-        status = r.get(f"task:{task_id}:status")
-        if status in ("done", "failed", "cancelled"):
-            break
-        if time.monotonic() >= deadline:
-            die(f"Timed out waiting for task {task_id} (status: {status or 'unknown'})")
-        time.sleep(2)
-
-    # Release thread lock so the next task can be enqueued
-    thread_id = r.get(f"task:{task_id}:thread_id")
-    if thread_id:
-        r.delete(f"thread:{thread_id}:lock")
+    try:
+        while True:
+            status = r.get(f"task:{task_id}:status")
+            if status in ("done", "failed", "cancelled"):
+                break
+            if time.monotonic() >= deadline:
+                die(f"Timed out waiting for task {task_id} (status: {status or 'unknown'})")
+            time.sleep(2)
+    finally:
+        # Release thread lock even on timeout so the thread isn't stuck
+        thread_id = r.get(f"task:{task_id}:thread_id")
+        if thread_id:
+            r.delete(f"thread:{thread_id}:lock")
 
     # Print final status
     info = {"task_id": task_id}

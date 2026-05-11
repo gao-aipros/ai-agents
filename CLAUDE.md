@@ -69,7 +69,7 @@ FROM ${BASE_IMAGE}                      # final stage (parameterized)
 ...
 ```
 
-Build stages (`FROM debian:trixie`, `FROM golang:latest`, `FROM docker:latest`) use Docker Hub images, which are already multi-arch.
+Build stages (`FROM debian:trixie`, `FROM golang:latest`) use Docker Hub images, which are already multi-arch.
 
 ## CI
 
@@ -80,4 +80,5 @@ GitHub Actions workflow at `.github/workflows/build-images.yml`. Triggers on pus
 See `.env.example` for all variables. Key ones:
 - `GH_TOKEN` / `GITHUB_TOKEN` — GitHub auth for `gh` CLI
 - `DEEPSEEK_API_KEY` — shared by all agents
-- Docker image overrides for workers: `WORKER_CLAUDE_IMAGE`, `WORKER_COPILOT_IMAGE`, `WORKER_OPENCODE_IMAGE`
+- `REDIS_HOST` / `REDIS_PORT` — Redis connection (task queue)
+- Docker image overrides (compose-level): `WORKER_CLAUDE_IMAGE`, `WORKER_COPILOT_IMAGE`, `WORKER_OPENCODE_IMAGE`, `MASTER_AGENT_IMAGE`
