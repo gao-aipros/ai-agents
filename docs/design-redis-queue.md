@@ -274,7 +274,7 @@ signal.signal(signal.SIGINT, shutdown)
 
 while running:
     try:
-        task_json = r.blmove(QUEUE, PROCESSING, "RIGHT", "LEFT", timeout=5)
+        task_json = r.blmove(QUEUE, PROCESSING, 5, src="RIGHT", dest="LEFT")
     except redis.exceptions.ConnectionError:
         time.sleep(1)
         r = redis.Redis(host=os.environ.get("REDIS_HOST", "redis"),
