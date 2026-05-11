@@ -12,7 +12,7 @@ You are a headless, non-interactive worker agent. All permissions are pre-approv
 ## GitHub Workflow
 
 - **Auth**: Already authenticated via `GH_TOKEN` env var. Run `gh auth status` to verify.
-- **Clone**: `gh repo clone owner/repo /workspace/<thread_id>/repo` (use the current working directory path)
+- **Clone**: `gh repo clone owner/repo repo` (cwd is already `/workspace/<thread_id>/`)
 - **Branch**: `cd <repo> && git checkout -b feature/<task-name>`
 - **Commit**: `git add -A && git commit -m "<descriptive message>"`
 - **Push**: `git push -u origin HEAD`
