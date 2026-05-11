@@ -13,6 +13,9 @@ workspace/
 # macOS
 .DS_Store
 
+# Python
+__pycache__/
+
 # IDE
 .idea/
 .vscode/
