@@ -14,7 +14,6 @@ import json
 import os
 import signal
 import subprocess
-import sys
 import time
 
 import redis
@@ -83,8 +82,12 @@ def process_one_task(task_json):
     if history:
         context = "## Thread History (recent)\n\n"
         for msg in history:
-            msg_data = json.loads(msg)
-            context += f"[{msg_data['role']}]: {msg_data['content']}\n\n"
+            try:
+                msg_data = json.loads(msg)
+            except (json.JSONDecodeError, TypeError):
+                log("warn", "skipping malformed thread message", thread_id=thread_id)
+                continue
+            context += f"[{msg_data.get('role', 'unknown')}]: {msg_data.get('content', '')}\n\n"
     if state:
         context += f"\n## Current State\nstatus: {state.get('status', 'unknown')}\n"
         if state.get("last_design"):

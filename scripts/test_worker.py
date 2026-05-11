@@ -1061,8 +1061,8 @@ class TestCancellationTTLs:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestMalformedInput:
-    """Document current behavior for malformed inputs — some crash, which is
-    the expected baseline before explicit error handling is added."""
+    """Verify graceful handling of malformed inputs — invalid payloads still
+    raise, but malformed thread messages are skipped with warnings."""
 
     @patch("worker.subprocess.run")
     def test_malformed_task_payload_raises_json_decode_error(self, mock_run, fake_redis):
@@ -1076,41 +1076,39 @@ class TestMalformedInput:
         mock_run.assert_not_called()
 
     @patch("worker.subprocess.run")
-    def test_malformed_thread_message_crashes_on_json_parse(self, mock_run, fake_redis):
-        """A corrupt message in thread history crashes on json.loads(msg)."""
+    def test_malformed_thread_message_skipped_with_warning(self, mock_run, fake_redis):
+        """A corrupt message in thread history is skipped with a warning."""
         mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
         fake_redis.rpush(f"thread:{TEST_THREAD}:messages", "not valid json")
         payload = make_task_payload()
         fake_redis.lpush(worker.PROCESSING, payload)
 
-        with pytest.raises(json.JSONDecodeError):
-            worker.process_one_task(payload)
+        status = worker.process_one_task(payload)
+        assert status == "done"
 
     @patch("worker.subprocess.run")
-    def test_thread_message_missing_role_key_crashes(self, mock_run, fake_redis):
-        """A message without 'role' key crashes on msg_data['role'] access."""
+    def test_thread_message_missing_role_key_uses_unknown(self, mock_run, fake_redis):
+        """A message without 'role' key defaults to 'unknown'."""
         mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
         bad_msg = json.dumps({"content": "no role field", "timestamp": "2026-05-10T00:00:00Z"})
         fake_redis.rpush(f"thread:{TEST_THREAD}:messages", bad_msg)
         payload = make_task_payload()
         fake_redis.lpush(worker.PROCESSING, payload)
 
-        with pytest.raises(KeyError) as exc:
-            worker.process_one_task(payload)
-        assert "role" in str(exc.value)
+        status = worker.process_one_task(payload)
+        assert status == "done"
 
     @patch("worker.subprocess.run")
-    def test_thread_message_missing_content_key_crashes(self, mock_run, fake_redis):
-        """A message without 'content' key crashes on msg_data['content'] access."""
+    def test_thread_message_missing_content_key_uses_empty(self, mock_run, fake_redis):
+        """A message without 'content' key defaults to empty string."""
         mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
         bad_msg = json.dumps({"role": "master", "timestamp": "2026-05-10T00:00:00Z"})
         fake_redis.rpush(f"thread:{TEST_THREAD}:messages", bad_msg)
         payload = make_task_payload()
         fake_redis.lpush(worker.PROCESSING, payload)
 
-        with pytest.raises(KeyError) as exc:
-            worker.process_one_task(payload)
-        assert "content" in str(exc.value)
+        status = worker.process_one_task(payload)
+        assert status == "done"
 
     @patch("worker.subprocess.run")
     def test_thread_message_with_extra_fields_does_not_crash(self, mock_run, fake_redis):
