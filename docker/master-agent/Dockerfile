@@ -1,20 +1,14 @@
 ARG CLAUDE_IMAGE=claude-code:latest
 
-# Build stage: extract docker CLI binary
-FROM docker:latest AS docker-build
-
-# Final stage
 FROM ${CLAUDE_IMAGE}
 
-COPY --from=docker-build /usr/local/bin/docker /usr/local/bin/docker
+USER root
+
+# Master CLI tool
+COPY scripts/task.py /usr/local/bin/task.py
 
 RUN mkdir -p /home/agent/.claude
-COPY --chown=agent:agent CLAUDE.md /home/agent/.claude/CLAUDE.md
-
-# Worker image references — overridable at runtime
-ENV WORKER_CLAUDE_IMAGE=worker-claude:latest \
-    WORKER_COPILOT_IMAGE=copilot:latest \
-    WORKER_OPENCODE_IMAGE=opencode:latest
+COPY --chown=agent:agent docker/master-agent/CLAUDE.md /home/agent/.claude/CLAUDE.md
 
 USER agent
 ENTRYPOINT ["claude"]

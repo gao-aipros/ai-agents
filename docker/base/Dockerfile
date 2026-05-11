@@ -24,6 +24,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     jq \
     openssh-client \
     python3 \
+    python3-pip \
     unzip \
     wget \
     vim \
@@ -31,6 +32,8 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g "$AGENT_GID" agent \
     && useradd -m -d /home/agent -s /bin/bash -u "$AGENT_UID" -g "$AGENT_GID" agent
+
+RUN pip install --break-system-packages redis
 
 RUN mkdir -p /workspace /home/agent/.config && chown agent:agent /workspace /home/agent/.config
 
