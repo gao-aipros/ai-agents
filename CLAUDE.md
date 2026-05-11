@@ -38,7 +38,7 @@ wait
 
 # Layer 2 — depends on layer 1
 docker build --load -t master-agent:latest -f docker/master-agent/Dockerfile .
-docker build --load -t worker-claude:latest docker/worker-claude/
+docker build --load -t worker-claude:latest -f docker/worker-claude/Dockerfile .
 ```
 
 Note: local builds use `--load` (no `--platform` flag). `ARG BASE_IMAGE` and `ARG CLAUDE_IMAGE` default to local tags.

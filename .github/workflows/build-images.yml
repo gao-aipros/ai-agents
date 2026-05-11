@@ -90,4 +90,5 @@ jobs:
             --push \
             --build-arg CLAUDE_IMAGE=${PREFIX}/claude-code:latest \
             -t ${PREFIX}/worker-claude:latest \
-            docker/worker-claude/
+            -f docker/worker-claude/Dockerfile \
+            .
