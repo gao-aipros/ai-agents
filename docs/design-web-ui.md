@@ -57,11 +57,12 @@ The Go web server has **no LLM client, no tool definitions, no planning logic**.
 When a user submits a request via the web UI:
 
 1. Web UI receives `POST /api/requests` with `{thread_id?, repo?, request}`.
-2. If `thread_id` is omitted, auto-generate one: `web_<unix_seconds>_<random 6-char>`. Create the thread via `tasklib.CreateThread`.
+2. If `thread_id` is omitted, auto-generate one: `web_<unix_seconds>_<random 6-char>`.
 3. Execute `tasklib.PushRequestAtomic` — a **Lua script** that atomically:
+   - Creates the thread state hash if it doesn't exist (`HSETNX thread:<id>:state repo <repo>`)
    - Appends the user request to `thread:<id>:messages` as a JSON message with `role: "user"` and `source: "webui"`
    - LPUSHes the request payload onto `requests:inbox`
-   Both operations succeed or fail together.
+   All three operations succeed or fail together — no orphan thread shells. A separate `POST /api/threads` endpoint still exists for creating a thread without submitting a request (e.g., pre-configuring repo metadata before the first request).
 4. An inbox-reader sidecar in the master container does `BLPOP` on `requests:inbox`, then writes the request text to a **named pipe** (`/tmp/master-inbox.fifo`).
 5. A **supervisor process** in the master container multiplexes stdin from two sources (the named pipe and the interactive TTY) using a mutex — only one source writes to claude's stdin at a time. If the master is mid-response, the inbox-reader waits for the mutex.
 6. The master agent processes the request exactly as if the user typed it — plans, delegates via Go `task` CLI to workers, aggregates results.
@@ -73,13 +74,19 @@ This preserves the master agent as the single source of truth for planning. The 
 
 ### Response convention
 
-The master agent's CLAUDE.md is updated with a response convention: when the master finishes processing a request and all worker tasks are complete, it writes a final message to the thread history:
+The master agent's CLAUDE.md is updated with a response convention: when the master finishes processing a request, it writes a final message to the thread history:
 
 ```json
 {"role": "master", "type": "response", "content": "<summary for the user>", "timestamp": "<iso8601>"}
 ```
 
-The web UI's thread detail page polls for messages with `type: "response"` and displays them in a styled banner at the top of the message timeline. Threads with a pending request and no response yet show a "Waiting for master..." indicator.
+If the master encounters an unrecoverable error (e.g., all workers fail, impossible request), it writes an error variant instead:
+
+```json
+{"role": "master", "type": "error", "content": "<error description>", "timestamp": "<iso8601>"}
+```
+
+The web UI's thread detail page polls for messages with `type: "response"` or `type: "error"` and displays them in a styled banner at the top of the message timeline (green for response, red for error). Threads with a pending request and no response yet show a "Waiting for master..." indicator. As a fallback, the web UI treats a thread that has been `planning` for longer than 30 minutes with no master response as timed out and displays a "This request may have been lost — try re-submitting" warning.
 
 ### Thread creation (bootstrap only)
 
@@ -104,7 +111,7 @@ The web UI's thread detail page polls for messages with `type: "response"` and d
 | Testing (unit) | `miniredis` — non-blocking CRUD operations only |
 | Testing (integration) | Real Redis — blocking commands (`BLPOP`, `BLMOVE`) + JSON compatibility |
 | Templates | `html/template` (stdlib) |
-| Frontend | HTMX via CDN, no JS build step |
+| Frontend | HTMX (~15KB, vendored in `static/htmx.min.js`), no JS build step. Source URL overridable via `WEBUI_HTMX_SRC` env var for air-gapped deployments. |
 | CSS | Minimal hand-written stylesheet using CSS custom properties for theming |
 
 No `anthropic-sdk-go` — the Go server doesn't talk to any LLM.
@@ -154,10 +161,15 @@ func (c *Client) GetWorkerInfo(workerType string) (*WorkerInfo, error)
 func (c *Client) UpdateWorkerHeartbeat(workerType string) error  // SETEX worker:<type>:heartbeat 15
 
 // Inbox (atomic write — used by cmd/webui)
-// PushRequestAtomic wraps both operations in a Lua script for atomicity:
-//   1. RPUSH thread:<id>:messages <user-request-json>
-//   2. LPUSH requests:inbox <request-payload-json>
+// PushRequestAtomic wraps three operations in a Lua script for atomicity:
+//   1. HSETNX thread:<id>:state repo <repo> (creates thread if not exists)
+//   2. RPUSH thread:<id>:messages <user-request-json>
+//   3. LPUSH requests:inbox <request-payload-json>
 func (c *Client) PushRequestAtomic(threadID, repo, request string) error
+
+// CancelRequest removes a pending request from the inbox and marks the thread
+// as cancelled. Used by the web UI to cancel a request that hasn't been picked up yet.
+func (c *Client) CancelRequest(threadID string) error
 ```
 
 ### Key design rules
@@ -177,7 +189,7 @@ Workers update a heartbeat key in their poll loop:
 |-----|------|-----|---------|
 | `worker:<type>:heartbeat` | String | 15s | Set by `cmd/worker` via `SETEX` on each poll iteration. The web UI checks for this key to determine online/offline status. If absent or expired, the worker is offline. |
 
-`GetWorkerStats()` reads all three heartbeat keys and reports `online: true/false` for each worker type.
+`GetWorkerStats()` reads all three heartbeat keys and reports `online: true/false` for each worker type. Expected detection latency: a dead worker will show as offline within ~15s (TTL expiry) plus up to 5s (next polling cycle). This is acceptable for a monitoring dashboard — it's not a real-time alerting system.
 
 ## `cmd/task` — Go CLI (replaces `scripts/task.py`)
 
@@ -201,6 +213,8 @@ task thread-cleanup --id <thread_id>
 ```
 
 Implementation: `cobra` commands that call `tasklib.Client` methods. `thread-cleanup` additionally calls `os.RemoveAll` on `<workspaceDir>/<thread_id>/` — this is the one command that touches the filesystem, and it lives in `cmd/task`, not `tasklib`. The workspace directory is read from the `WORKSPACE_DIR` env var (default `/workspace`) and passed to `tasklib.NewClient`.
+
+**Stdout format compatibility:** The Go CLI must replicate the exact stdout output format of `task.py` for each command. The master agent parses stdout programmatically. For example, `enqueue` returns `{"task_id": "..."}` on stdout, while `status` returns a multi-field JSON object. These formats are defined by the current Python code and must be matched byte-for-byte. The JSON compatibility test suite (Step 2) covers this.
 
 Estimated ~350 lines of CLI glue (cobra dispatcher + output formatting + the one filesystem operation). The binary is statically compiled (`CGO_ENABLED=0`) and copied into the master container at `/usr/local/bin/task`.
 
@@ -252,6 +266,7 @@ A single-page overview showing:
 | **State panel** | Current status, repo, PR number, last design, last updated. Read-only (state is managed by the master agent). |
 | **Message history** | Chat-like scrollable timeline of all messages (user → master → worker → result). Color-coded by role. Auto-scrolls to bottom. |
 | **Task list** | All tasks for this thread with status icons, click to expand result |
+| **Actions** | If thread has a pending request (status `planning`), show "Cancel request" button. Submits `POST /api/threads/{id}/cancel`. Only cancels the inbox entry — already-enqueued tasks continue to completion but the master won't process further. |
 
 ### 3. Task Management
 
@@ -273,7 +288,8 @@ All endpoints return JSON. Every endpoint also serves HTMX partials when the `HX
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/requests` | Submit a request to the master agent. Body: `{thread_id?, repo?, request}`. Auto-generates `thread_id` if omitted (`web_<ts>_<random>`), creates thread, then calls `tasklib.PushRequestAtomic` (Lua script: append to thread history + LPUSH to inbox). Returns `{thread_id, status: "submitted"}`. |
+| `POST` | `/api/requests` | Submit a request to the master agent. Body: `{thread_id?, repo?, request}`. Auto-generates `thread_id` if omitted (`web_<ts>_<random>`), then calls `tasklib.PushRequestAtomic` (Lua script: create thread if needed + append to thread history + LPUSH to inbox). Returns `{thread_id, status: "submitted"}`. |
+| `POST` | `/api/threads/{thread_id}/cancel` | Cancel a pending request. Calls `tasklib.CancelRequest` to remove the request from `requests:inbox` and mark the thread as cancelled. Only works for requests that haven't been picked up by the master yet. |
 
 #### Tasks (read-only)
 
@@ -308,48 +324,57 @@ All endpoints return JSON. Every endpoint also serves HTMX partials when the `HX
 
 ### 5. Real-Time Updates
 
-HTMX polling with configurable intervals (set via `WEBUI_POLL_INTERVAL` env var, defaults below):
+HTMX polling with configurable intervals (each has its own env var, defaults below):
 
-| Section | Default | Key |
-|---------|---------|-----|
-| Dashboard task list | 5s | `hx-trigger="every 5s"` |
-| Dashboard thread list | 5s | `hx-trigger="every 5s"` |
-| Thread detail (active) | 3s | `hx-trigger="every 3s"` |
-| Worker status cards | 5s | `hx-trigger="every 5s"` |
+| Section | Default | Env var |
+|---------|---------|---------|
+| Dashboard task list | 5s | `WEBUI_POLL_DASHBOARD` |
+| Dashboard thread list | 5s | `WEBUI_POLL_DASHBOARD` |
+| Thread detail (active) | 3s | `WEBUI_POLL_THREAD_DETAIL` |
+| Worker status cards | 5s | `WEBUI_POLL_WORKERS` |
 
-All polling intervals scale proportionally to `WEBUI_POLL_INTERVAL` (e.g., setting it to `10` makes all timers 10s). Each poll hits the existing REST endpoint with `HX-Request` header, returning only the HTML partial for that section. No WebSocket needed.
+Each poll hits the existing REST endpoint with `HX-Request` header, returning only the HTML partial for that section. No WebSocket needed. The thread detail page can also return dynamic `hx-trigger` attributes based on thread state: active threads poll faster (2s), idle threads poll slower (10s).
 
 ### 6. Inbox Reader + Supervisor
 
-The master container runs a **supervisor process** that multiplexes stdin from two sources into the Claude Code session:
+The master container runs a **supervisor process** (PID 1) that manages all child processes and multiplexes stdin into the Claude Code session:
 
 ```
 master container (ENTRYPOINT: supervisor):
-  supervisor (Go binary)
-    ├─ opens named pipe /tmp/master-inbox.fifo for reading
+  supervisor (Go binary, PID 1)
+    ├─ spawns inbox-reader as child process (restarts on exit)
+    ├─ spawns claude as child process
+    ├─ opens named pipe /tmp/master-inbox.fifo (O_RDONLY | O_NONBLOCK)
     ├─ opens /dev/tty for interactive CLI input
-    ├─ spawns claude as child process, stdin/stdout connected
-    └─ select loop:
-        ├─ reads from FIFO → acquires stdin-mutex → writes to claude stdin → releases
-        └─ reads from TTY  → acquires stdin-mutex → writes to claude stdin → releases
+    ├─ select loop:
+    │   ├─ reads from FIFO → acquires stdin-mutex → writes to claude stdin → releases
+    │   └─ reads from TTY  → acquires stdin-mutex → writes to claude stdin → releases
+    └─ signal handling:
+        ├─ SIGTERM/SIGINT → forward to claude → wait for exit → cleanup FIFO → exit
+        └─ inbox-reader exit → log warning → respawn after 1s backoff
 
-  inbox-reader (Go binary, managed by supervisor)
+  inbox-reader (Go binary, spawned by supervisor)
     └─ BLPOP requests:inbox → writes request text to /tmp/master-inbox.fifo
+       (reconnect-on-error loop, same pattern as worker.py)
 ```
 
 How it works:
 
-1. `inbox-reader` does `BLPOP requests:inbox 0` (blocking). When a request arrives, it writes the request text to the named pipe `/tmp/master-inbox.fifo`.
-2. The `supervisor` does a `select` on the FIFO and TTY file descriptors. When data arrives on either, it acquires a mutex and writes the full request to claude's stdin.
-3. The mutex prevents interleaving — if the master is mid-response (Claude is actively outputting), the supervisor buffers the incoming request until the response completes (detected via Claude's prompt marker or idle timeout).
-4. Interactive CLI users typing at the TTY are similarly serialized.
+1. `supervisor` spawns both `inbox-reader` and `claude` as child processes. If `inbox-reader` exits unexpectedly (Redis disconnect, panic), the supervisor respawns it after a 1s backoff.
+2. `inbox-reader` runs a reconnect-on-error loop: `BLPOP requests:inbox 0` wrapped in a retry that reconnects to Redis on `ConnectionError`, identical to `worker.py`'s behavior today. A Redis restart does not require container restart.
+3. `supervisor` opens the FIFO with `O_NONBLOCK` so that a stale partial write from a previous (crashed) supervisor instance doesn't block the new supervisor on startup.
+4. `supervisor` does a `select` on the FIFO and TTY file descriptors. When data arrives on either, it acquires a mutex and writes the full request to claude's stdin.
+5. The mutex prevents interleaving — if the master is mid-response (Claude is actively outputting), the supervisor buffers the incoming request until the response completes (detected via Claude's prompt marker or idle timeout).
+6. On `SIGTERM` (Docker stop), the supervisor forwards the signal to claude, waits for graceful exit, then cleans up the FIFO and exits. On its own crash, Docker's `restart: unless-stopped` restarts the container — the FIFO is recreated by the Dockerfile's `mkfifo` and opened with `O_NONBLOCK` to handle any stale state.
 
-The FIFO is created by the Docker entrypoint before the supervisor starts:
+The FIFO is created by the Dockerfile before the supervisor starts:
 
 ```dockerfile
 RUN mkfifo /tmp/master-inbox.fifo
 ENTRYPOINT ["/usr/local/bin/supervisor"]
 ```
+
+**Readiness probe:** The supervisor serves a minimal HTTP health endpoint on `:9090` (`GET /healthz` returns 200 when the FIFO is open and both child processes are running). Docker Compose `healthcheck` can target this endpoint.
 
 ### 7. Authentication
 
@@ -369,7 +394,7 @@ Updated images (Go binaries replace Python scripts):
 | `worker-claude` | Replace `scripts/worker.py` with Go `worker` binary. New `ENTRYPOINT ["worker", "claude"]`. Python fallback via `TASKLIB_BACKEND=python`. |
 | `worker-copilot` | (inherits worker changes from base) |
 | `worker-opencode` | (inherits worker changes from base) |
-| `webui` (new) | Go `webui` binary, templates, static CSS. Base image: `gcr.io/distroless/static-debian12` (minimal, shell-less). |
+| `webui` (new) | Go `webui` binary, templates, static CSS, vendored HTMX. Base image: `gcr.io/distroless/static-debian12` (minimal, shell-less — set `DEBUG=true` build arg to use `ai-base` instead for `docker exec` access). |
 
 New `webui` service in `docker-compose.yml`:
 
@@ -384,12 +409,27 @@ webui:
     - REDIS_PORT=6379
     - WEBUI_PORT=8000
     - WEBUI_API_KEY=${WEBUI_API_KEY:-}
-    - WEBUI_POLL_INTERVAL=5
+    - WEBUI_POLL_DASHBOARD=5
+    - WEBUI_POLL_THREAD_DETAIL=3
+    - WEBUI_POLL_WORKERS=5
+    - WEBUI_HTMX_SRC=/static/htmx.min.js
     - WORKSPACE_DIR=${WORKSPACE_DIR:-/workspace}
     - TASKLIB_BACKEND=go
   ports:
     - "${WEBUI_PORT:-8000}:8000"
   restart: unless-stopped
+```
+
+Master service gains a healthcheck targeting the supervisor's readiness probe:
+
+```yaml
+master:
+  # ... existing config ...
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:9090/healthz"]
+    interval: 10s
+    timeout: 2s
+    retries: 3
 ```
 
 `master` and `worker` services also gain `TASKLIB_BACKEND=go` with fallback to `python`. This allows a one-line env change to revert to the Python code if a Go `tasklib` edge case surfaces in production.
@@ -398,7 +438,7 @@ Dockerfiles:
 
 - `docker/master-agent/Dockerfile` — copies `task` + `supervisor` + `inbox-reader` binaries; `RUN mkfifo /tmp/master-inbox.fifo`; `ENTRYPOINT ["/usr/local/bin/supervisor"]`
 - `docker/worker-claude/Dockerfile` — copies `worker` binary; `ENTRYPOINT ["worker", "claude"]`
-- `docker/webui/Dockerfile` — multi-stage: Go build, then `FROM gcr.io/distroless/static-debian12`; copies `webui` binary + `templates/` + `static/`
+- `docker/webui/Dockerfile` — multi-stage: Go build, then `FROM gcr.io/distroless/static-debian12` (or `FROM ai-base:latest` when `DEBUG=true`); copies `webui` binary + `templates/` + `static/` (including vendored `htmx.min.js`)
 
 ### 9. File Structure
 
@@ -434,11 +474,11 @@ cmd/
         router.go               # Chi router, HTMX detection middleware, auth middleware, error recovery
         requests.go             # POST /api/requests (auto-gen thread, tasklib.PushRequestAtomic)
         tasks.go                # GET /api/tasks handlers (read-only)
-        threads.go              # GET/POST /api/threads handlers
+        threads.go              # GET/POST /api/threads + POST /api/threads/{id}/cancel handlers
         workers.go              # GET /api/workers handlers
         system.go               # GET /api/health, /api/stats handlers
       templates/
-        base.html               # Layout shell (nav, HTMX CDN, polling)
+        base.html               # Layout shell (nav, vendored HTMX, polling config)
         dashboard.html          # Dashboard page
         threads/
           list.html             # Thread list
@@ -455,6 +495,7 @@ cmd/
           _form.html            # HTMX partial: request form + submission response
     static/
       style.css                 # Minimal CSS with custom properties for theming
+      htmx.min.js               # Vendored HTMX (~15KB)
 
 docker/
   master-agent/
@@ -527,7 +568,7 @@ Build `cmd/webui/internal/api/` — chi router, auth middleware (bearer token wh
 
 ### Step 6: HTML templates and CSS
 
-Build all Go `html/template` files under `cmd/webui/internal/templates/`. Minimal CSS with CSS custom properties for theming (`--color-*`, `--spacing-*`). HTMX attributes for polling (intervals from `WEBUI_POLL_INTERVAL`) and form submissions. Response banner in thread detail for master responses.
+Build all Go `html/template` files under `cmd/webui/internal/templates/`. Minimal CSS with CSS custom properties for theming (`--color-*`, `--spacing-*`). HTMX loaded from `WEBUI_HTMX_SRC` (default `/static/htmx.min.js` — vendored). HTMX attributes for polling (intervals from respective `WEBUI_POLL_*` env vars) and form submissions. Response banner in thread detail for master responses (green for `type: "response"`, red for `type: "error"`).
 
 ### Step 7: Dockerize
 
