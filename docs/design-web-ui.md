@@ -97,7 +97,8 @@ Response completion is detected by the **supervisor**, not by relying on the LLM
    {"role": "master", "type": "response", "content": "<captured from claude stdout>", "timestamp": "<iso8601>"}
    ```
 3. The supervisor captures claude's stdout output during the response window (between request write and prompt marker) and stores it as the response content.
-4. If no prompt marker is detected within `MASTER_RESPONSE_TIMEOUT` (default 30 minutes, configurable), the supervisor writes an error message:
+4. If the claude child process exits non-zero before the prompt marker is seen, the supervisor writes an error message with the captured stderr (exit code + last 4KB of stderr). This catches crashes, fatals, and API errors.
+5. If no prompt marker is detected and claude hasn't exited within `MASTER_RESPONSE_TIMEOUT` (default 30 minutes, configurable), the supervisor writes an error message:
    ```json
    {"role": "master", "type": "error", "content": "Master agent timed out after 30m", "timestamp": "<iso8601>"}
    ```
@@ -129,7 +130,7 @@ The web UI's thread detail page polls for messages with `type: "response"` or `t
 | Testing (unit) | `miniredis` — non-blocking CRUD operations only |
 | Testing (integration) | Real Redis — blocking commands (`BLPOP`, `BLMOVE`) + JSON compatibility |
 | Templates | `html/template` (stdlib) |
-| Frontend | HTMX (~15KB, vendored in `static/htmx.min.js`), no JS build step. Source URL overridable via `WEBUI_HTMX_SRC` env var for air-gapped deployments. |
+| Frontend | HTMX 2.0.x (~15KB, vendored in `static/htmx.min.js` with version comment), no JS build step. Source URL overridable via `WEBUI_HTMX_SRC` env var (pin to a specific version for air-gapped deployments). |
 | CSS | Minimal hand-written stylesheet using CSS custom properties for theming (`WEBUI_THEME: light/dark`) |
 
 No `anthropic-sdk-go` — the Go server doesn't talk to any LLM.
@@ -163,6 +164,7 @@ func (c *Client) GetThread(threadID string) (*Thread, error)
 func (c *Client) ListThreads() ([]*Thread, error)
 func (c *Client) GetThreadHistory(threadID string, tail int) ([]Message, error)
 func (c *Client) UpdateThread(threadID string, fields map[string]string) error
+func (c *Client) LockThread(threadID, taskID string, ttl time.Duration) (bool, error) // SET NX thread:<id>:lock
 func (c *Client) UnlockThread(threadID string) error
 
 // Threads — filesystem operation lives in cmd/task, not tasklib
@@ -214,7 +216,9 @@ Workers update a heartbeat key in their poll loop:
 
 `GetWorkerStats()` reports `online: true` when either the heartbeat key exists OR the `active_tasks` hash contains entries for this worker type. A worker running a long task (up to 30 minutes) keeps its `active_tasks` entries fresh while the heartbeat TTL is only 15s — the `active_tasks` check provides a secondary liveness signal that prevents false offline indicators during long-running work.
 
-The heartbeat key is per worker **type** (not per instance). Multiple replicas of the same worker type (e.g., 3 `worker-claude` containers) will race on the same key. For now, assume single-instance per worker type. Multi-instance support (instance-specific keys like `worker:<type>:<hostname>:heartbeat` with `SCAN`-based aggregation) is deferred to a future iteration.
+**Stale active_tasks cleanup:** A crashed worker leaves orphaned entries in `active_tasks`. A periodic cleanup goroutine in `cmd/worker` (or a Lua script called by `GetWorkerStats`) HDELs entries where the task status key (`task:<id>:status`) is missing or has been `done`/`failed`/`cancelled` for more than 60 seconds. This prevents permanently-false online indicators from crashed workers.
+
+Heartbeat keys use per-instance keys from day one: `worker:<type>:<hostname>:heartbeat`. `GetWorkerStats()` aggregates via `SCAN worker:*:heartbeat` and reports counts per type (e.g., `{"claude": {"instances": 3, "online": 2, "total_active": 5}, ...}`). This supports horizontal worker scaling immediately — no migration needed later. The `SCAN` cost is negligible for typical instance counts (1–10).
 
 ## `cmd/task` — Go CLI (replaces `scripts/task.py`)
 
@@ -237,7 +241,7 @@ task thread-list
 task thread-cleanup --id <thread_id>
 ```
 
-Implementation: `cobra` commands that call `tasklib.Client` methods. `thread-cleanup` additionally calls `os.RemoveAll` on `<workspaceDir>/<thread_id>/` — this is the one command that touches the filesystem, and it lives in `cmd/task`, not `tasklib`. The workspace directory is read from the `WORKSPACE_DIR` env var (default `/workspace`).
+Implementation: `cobra` commands that call `tasklib.Client` methods. `enqueue` acquires a thread-level lock via `LockThread(threadID, taskID, LOCK_TTL)` with `SET NX` before enqueuing — identical to the Python `task.py` behavior. `wait` releases the lock on completion via `UnlockThread`. `thread-cleanup` calls `os.RemoveAll` on the workspace path after validating it's within `WORKSPACE_DIR` (rejects `../` traversal). The workspace directory is read from the `WORKSPACE_DIR` env var (default `/workspace`).
 
 **Stdout format compatibility:** The Go CLI must replicate the exact stdout output format of `task.py` for each command. The master agent parses stdout programmatically. Note that `task.py list` prints a human-readable table (not JSON), while `enqueue` returns `{"task_id": "..."}` and `status` returns a multi-field JSON object. All these formats are defined by the current Python code and must be matched byte-for-byte. The JSON compatibility test suite (Step 2) covers this.
 
@@ -254,11 +258,12 @@ Long-running process that:
    - If no task, continue
 4. `HSET active_tasks <task_id> <task_info_json>` — mark as active (also serves as a secondary liveness signal: a worker with entries in `active_tasks` is alive regardless of heartbeat)
 5. Reads thread history and state via `tasklib`
-6. Builds a prompt from task instruction + thread context
-7. Executes `AGENT_CMD` (from env) as a subprocess with the prompt on stdin
-8. Writes result + exit code back via `tasklib` (`task:<id>:result`, `task:<id>:status`)
-9. `HDEL active_tasks <task_id>` — unmark
-10. Appends result to thread history via `tasklib`
+6. Copies `~/.claude/CLAUDE.md` (or `~/CLAUDE.md`) and `~/AGENTS.md` into the thread workspace (`<WORKSPACE_DIR>/<thread_id>/`) — same behavior as current `worker.py` at lines 111–120
+7. Builds a prompt from task instruction + thread context (supports `history_window` field in task payload, default from `HISTORY_WINDOW` env var — backward-compat with current `worker.py`)
+8. Executes `AGENT_CMD` (from env) as a subprocess with the prompt on stdin
+9. Writes result + exit code back via `tasklib` (`task:<id>:result`, `task:<id>:status`)
+10. `HDEL active_tasks <task_id>` — unmark
+11. Appends result to thread history via `tasklib`
 
 The worker binary takes a single argument: the worker type (`claude`, `copilot`, or `opencode`). It reads `AGENT_CMD` from the environment (set in the Dockerfile, same as today).
 
@@ -334,7 +339,7 @@ All endpoints return JSON. Every endpoint also serves HTMX partials when the `HX
 | `GET` | `/api/threads` | List all threads via `tasklib.ListThreads`. |
 | `GET` | `/api/threads/{thread_id}` | Get thread state + recent messages via `tasklib.GetThread`. |
 | `GET` | `/api/threads/{thread_id}/history` | Get full message history via `tasklib.GetThreadHistory`. Supports `?tail=N` and offset-based pagination (`?offset=M&limit=N`). |
-| `DELETE` | `/api/threads/{thread_id}/workspace` | Cleanup thread workspace directory. Validates that the resolved path is within `WORKSPACE_DIR` (rejects `../` traversal with 400). Requires `?confirm=true` query param. Auth-gated. |
+| `DELETE` | `/api/threads/{thread_id}/workspace` | Cleanup thread workspace directory. Validates path within `WORKSPACE_DIR` (rejects `../` traversal with 400). Refuses if `ListTasks(threadID, status="running")` is non-empty (400: "in-flight tasks"). Requires `?confirm=true`. Auth-gated. Does NOT delete Redis thread/task keys (archival). |
 
 #### Workers (read-only)
 
@@ -364,6 +369,8 @@ HTMX polling with configurable intervals (each has its own env var, defaults bel
 | Worker status cards | 5s | `WEBUI_POLL_WORKERS` |
 
 Each poll hits the existing REST endpoint with `HX-Request` header, returning only the HTML partial for that section. No WebSocket needed. The thread detail page can also return dynamic `hx-trigger` attributes based on thread state: active threads poll faster (2s), idle threads poll slower (10s).
+
+**Scaling:** For deployments with many concurrent users, the thread detail page can optionally use Redis Pub/Sub (`tasklib.SubscribeToThread(threadID)`) to receive real-time updates instead of polling. The active thread detail endpoint supports a `?stream=true` query param that returns a Server-Sent Events (SSE) stream of thread messages. Polling remains the default for simplicity.
 
 ### 6. Inbox Reader + Supervisor
 
@@ -397,8 +404,8 @@ master container (ENTRYPOINT: supervisor):
 How it works:
 
 1. `supervisor` spawns both `inbox-reader` and `claude` as child processes. On startup, it checks `/tmp/inbox-reader.pid` for a stale process from a previous (crashed) supervisor, sends `SIGTERM` if found, and removes the PID file before re-creating the FIFO. If `inbox-reader` exits unexpectedly during normal operation, the supervisor respawns it after a 1s backoff.
-2. `inbox-reader` runs a reconnect-on-error loop: `BLPOP requests:inbox 0` wrapped in a retry that reconnects to Redis on `ConnectionError`, identical to `worker.py`'s behavior today.
-3. `supervisor` opens the FIFO with `O_NONBLOCK` so that a stale partial write from a previous (crashed) supervisor instance doesn't block the new supervisor on startup. The supervisor creates and opens the FIFO reader end **before** spawning the inbox-reader, so the inbox-reader's `open(WRONLY)` never blocks on `ENXIO`.
+2. `inbox-reader` runs a reconnect-on-error loop with a **reliable queue pattern**: `LMOVE requests:inbox requests:inbox_processing 0 0` (atomically moves to processing list), writes to the FIFO, then `LREM requests:inbox_processing`. On startup, a sweep restores any stranded `requests:inbox_processing` entries back to `requests:inbox` (covers crash-after-LMOVE).
+3. `supervisor` opens the FIFO with `O_NONBLOCK`. On startup, it drains any leftover bytes from the FIFO (a short read loop that discards partial data from a previous crashed instance) before entering the select loop. This prevents a partial newline-delimited message from being mis-parsed as valid. The supervisor creates and opens the FIFO reader end **before** spawning the inbox-reader, so the inbox-reader's `open(WRONLY)` never blocks on `ENXIO`.
 
 **FIFO message framing:** Requests are written as **newline-delimited JSON** (`<json>\n`). The supervisor accumulates reads into a buffer, splitting on `\n` to get complete messages. This handles partial reads (Linux PIPE_BUF is 4KB and payloads can be ~32.5KB — writes larger than PIPE_BUF are non-atomic).
 4. `supervisor` does a `select` on the FIFO, TTY, and claude stdout file descriptors.
@@ -430,7 +437,7 @@ ENTRYPOINT ["/usr/local/bin/supervisor"]
 | `MASTER_MUTEX_TIMEOUT` | `300` | Seconds before re-queueing a web request that can't get stdin (5 min) |
 | `MASTER_RESPONSE_MIN_ELAPSED` | `2` | Ignore prompt markers within first N seconds (prevents false match on initial output) |
 | `MASTER_RESPONSE_QUIET_PERIOD` | `3` | Seconds of no stdout growth before a marker is considered valid (prevents mid-output false match) |
-| `MASTER_RESPONSE_MAX_SIZE` | `65536` | Max bytes of captured stdout (64KB). Exceeded content is truncated with `...[truncated]` |
+| `MASTER_RESPONSE_MAX_SIZE` | `65536` | Max inline bytes of captured stdout (64KB). Exceeded content is written to `<WORKSPACE_DIR>/<thread_id>/.response.txt` and the thread message contains `{"file": "<path>"}` instead of inline content. The web UI serves the file on demand. |
 
 ### 7. Authentication
 
@@ -581,7 +588,8 @@ Keys used by tasklib (all pre-existing except those marked NEW):
 | Key | Type | Purpose |
 |-----|------|---------|
 | `active_tasks` | Hash | **Existing.** Currently executing tasks. Keyed by `task_id`, value is JSON task info. Written by `cmd/worker` (HSET on start, HDEL on completion). Read by `task list` and web UI. |
-| `requests:inbox` | List (NEW) | Pending web UI requests. The inbox-reader does `BLPOP` on this list. Each value is JSON: `{thread_id, repo, request, submitted_at}`. |
+| `requests:inbox` | List (NEW) | Pending web UI requests. Inbox-reader moves to `requests:inbox_processing` atomically via `LMOVE`. |
+| `requests:inbox_processing` | List (NEW) | Requests being written to the FIFO. Stranded entries restored to inbox on startup. |
 | `worker:<type>:heartbeat` | String (NEW, SETEX, 15s TTL) | Worker liveness. Set by `cmd/worker` on each poll iteration. Read by `GetWorkerStats` to determine online/offline. |
 
 Thread message taxonomy — all messages in `thread:<id>:messages` have `role`, `type`, `content`, and `timestamp` fields:
@@ -601,6 +609,24 @@ The web UI renders each type appropriately in the message timeline from day one.
 All other keys are unchanged.
 
 ## Implementation Plan
+
+### Step 0: Pre-implementation validation
+
+Before any code is written, validate two architectural assumptions:
+
+1. **Prompt marker behavior:** Run Claude Code in a container with a multi-turn task (delegate → wait → result → delegate → aggregate) and capture stdout. Confirm that Claude Code's prompt marker (`⏵ `) only appears at final completion, not between tool invocations. If intermediate markers appear, the `MASTER_RESPONSE_QUIET_PERIOD` / `MASTER_RESPONSE_MIN_ELAPSED` thresholds must be tuned, or a different completion-detection strategy (e.g., exit-code-based) must be used.
+
+2. **Blocking command behavior:** Verify `LMOVE` and `BLMOVE` are available in the target Redis version (6.2+). Verify `SETEX` / `SET ... EX` semantics.
+
+### Deployment milestones
+
+To reduce risk, the implementation is grouped into three deployable milestones. Each milestone ships, stabilizes, and can be rolled back independently via `TASKLIB_BACKEND=python`.
+
+| Milestone | Steps | Deliverables | Revert |
+|-----------|-------|-------------|--------|
+| M1: tasklib | 1, 2 | Go `tasklib` package + JSON compat tests (validated, not yet used in prod) | N/A (test-only) |
+| M2: CLI + worker | 3 | Go `task` + `worker` binaries behind `TASKLIB_BACKEND=go` toggle alongside Python | Set `TASKLIB_BACKEND=python` |
+| M3: web UI | 4, 5, 6, 7 | Supervisor + inbox-reader + web UI, full stack | `docker compose down webui` |
 
 ### Step 1: Go module scaffold + `tasklib` package
 
