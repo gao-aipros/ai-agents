@@ -136,7 +136,7 @@ The web UI's thread detail page polls for messages with `type: "response"` or `t
 
 | Layer | Choice |
 |-------|--------|
-| Language | Go 1.26.3 (pinned in `go.mod` with `toolchain go1.26.3` and `golang:1.26.3-bookworm` build images) |
+| Language | Go 1.26.3 (pinned in `go.mod` with `toolchain go1.26.3` and `golang:1.26.3-trixie` build images) |
 | HTTP router | `chi` (go-chi/chi/v5) |
 | Redis client | `go-redis/v9` |
 | CLI framework | `cobra` (for `cmd/task`) |
@@ -197,7 +197,7 @@ func (c *Client) GetActiveTasks() (map[string]*TaskInfo, error)         // HGETA
 // Workers (read-only for webui; write-only for heartbeat from cmd/worker)
 func (c *Client) GetWorkerStats() (map[string]*WorkerInfo, error)
 func (c *Client) GetWorkerInfo(workerType string) (*WorkerInfo, error)
-func (c *Client) UpdateWorkerHeartbeat(workerType, hostname string) error  // SETEX worker:<type>:<hostname>:heartbeat 15 1
+func (c *Client) UpdateWorkerHeartbeat(workerType, hostname string) error  // SETEX worker:<type>:<hostname>:heartbeat 30 1
 
 // Inbox (atomic write — used by cmd/webui)
 // PushRequestAtomic wraps three operations in a Lua script for atomicity:
@@ -237,7 +237,7 @@ This supports horizontal worker scaling immediately — no migration needed late
 
 | Key | Type | TTL | Purpose |
 |-----|------|-----|---------|
-| `worker:<type>:<hostname>:heartbeat` | String | 15s | Set by background goroutine every 10s with value `1`. If absent or expired, that instance is offline. | 
+| `worker:<type>:<hostname>:heartbeat` | String | 30s | Set by background goroutine every 10s with value `1`. 20s margin covers GC pauses and Redis blips. If absent or expired, that instance is offline. | 
 
 **Orphaned heartbeat cleanup:** Docker restarts change container hostnames, leaving stale keys from previous instances. `GetWorkerStats()` filters `SCAN` results: keys without a TTL (or with TTL < 0) are skipped. Additionally, a periodic cleanup removes keys whose value contains a different instance ID than the current generation.
 
@@ -277,7 +277,7 @@ Estimated ~350 lines of CLI glue (cobra dispatcher + output formatting + the one
 Long-running process that:
 
 1. Connects to Redis via `tasklib`
-2. Starts a background **heartbeat goroutine** that runs `SETEX worker:<type>:<hostname>:heartbeat 15 1` every 10 seconds (hostname from `os.Hostname()`, read once at startup), independently of task processing. This keeps the heartbeat fresh even during long task executions (up to `TASK_TIMEOUT`, default 30 minutes).
+2. Starts a background **heartbeat goroutine** that runs `SETEX worker:<type>:<hostname>:heartbeat 30 1` every 10 seconds (30s TTL with 10s refresh = 20s margin for GC pauses and Redis blips; hostname from `os.Hostname()`, read once at startup), independently of task processing. This keeps the heartbeat fresh even during long task executions (up to `TASK_TIMEOUT`, default 30 minutes).
 3. Main loop:
    - `BLMOVE tasks:queue:<worker> tasks:processing:<worker>` with 5s timeout
    - If no task, continue
@@ -434,7 +434,7 @@ How it works:
 3. `supervisor` opens the FIFO with `O_NONBLOCK`. On startup, it drains any leftover bytes from the FIFO (a short read loop that discards partial data from a previous crashed instance) before entering the select loop. This prevents a partial newline-delimited message from being mis-parsed as valid. The supervisor creates and opens the FIFO reader end **before** spawning the inbox-reader, so the inbox-reader's `open(WRONLY)` never blocks on `ENXIO`.
 
 **FIFO message framing:** Requests are written as **newline-delimited JSON** (`<json>\n`) with a unique `request_id` field (UUIDv4). The supervisor accumulates reads into a buffer, splitting on `\n` to get complete messages. This handles partial reads (Linux PIPE_BUF is 4KB and payloads can be ~32.5KB — writes larger than PIPE_BUF are non-atomic). The supervisor deduplicates by `request_id` within a 1-hour window — if the startup sweep restores a stranded `requests:inbox_processing` entry that was already partially delivered, the duplicate is silently dropped.
-4. `supervisor` does a `select` on FIFO, TTY, and claude stdout file descriptors, with a periodic wake-up (1s timer) to `wait4(WNOHANG)` the claude child process. This detects claude exiting mid-request before the prompt marker.
+4. `supervisor` does a `select` on FIFO, TTY, and claude stdout file descriptors, with a periodic wake-up (1s timer) to `waitpid(-1, WNOHANG)` to reap **any** zombie child process (PID 1 responsibility — prevents process table exhaustion). This also detects claude exiting mid-request before the prompt marker.
 5. Before writing to claude stdin, the supervisor checks `thread:<id>:current_state` via `tasklib` — if the thread status is `"cancelled"`, the request is dropped (a cancel raced with inbox delivery). This closes the race window between `CancelRequest` and the inbox-reader's `LMOVE`. It then monitors claude's stdout for the **prompt marker** — a configurable regex (`MASTER_PROMPT_MARKER`, default matches Claude Code's `"⏵ "` prompt). When the marker appears, the supervisor:
    - Captures the stdout output between request-write and prompt-marker
    - Strips ANSI escape sequences and carriage-return-overwrites (`\r`) from captured output (Claude Code emits spinner animations, color codes, and line-rewrite progress bars)
@@ -474,6 +474,8 @@ Thread history, task results, and aggregate stats can contain source code, PR de
 To disable auth intentionally in dev, explicitly set `WEBUI_API_KEY=` (empty string).
 
 For production deployments on shared networks, place a reverse proxy (nginx, Caddy) with TLS and auth in front of the web UI. The web UI itself is stateless — multiple replicas can run behind a load balancer.
+
+**CSRF protection:** Mutation endpoints require `Content-Type: application/json` (reject non-JSON with `415`). Since simple cross-origin forms cannot set `Content-Type: application/json`, this is an effective CSRF defense without requiring tokens. Additionally, HTMX sends a custom `HX-Request` header on all AJAX requests — the middleware validates this header is present for mutation endpoints.
 
 ### 8. Docker Integration
 
@@ -549,7 +551,8 @@ tasklib/                        # Shared library — all Redis CRUD (pure Redis,
   workers.go                    # Worker stats + heartbeat
   inbox.go                      # PushRequestAtomic (Lua script)
   lua/
-    push_request.lua            # Atomic inbox write + thread history append
+    push_request.lua            # Atomic inbox write + thread history append + dedup
+    cancel_request.lua          # Atomic inbox removal + thread status → cancelled
   tasks_test.go                 # Unit tests with miniredis (non-blocking CRUD only)
   threads_test.go
   tasks_integration_test.go     # Integration tests with real Redis (blocking cmds + JSON compat)
@@ -623,7 +626,7 @@ Keys used by tasklib (all pre-existing except those marked NEW):
 | `requests:inbox:pending:<thread_id>` | String (NEW, SET NX) | Sentinel preventing duplicate inbox entries. Deleted by supervisor when request is fully processed (not solely TTL-based — cleared on completion so follow-ups aren't blocked for 10m). |
 | `supervisor:busy` | String (NEW, TTL 1800s) | Set by supervisor while claude is actively processing, refreshed every 60s. Auto-clears on TTL expiry if supervisor crashes. Web UI checks via Lua script that also tests `thread:<id>:complete` — a stale `supervisor:busy` with a completed thread doesn't block. |
 | `thread:<id>:complete` | String (NEW) | Set by master agent on completion. Dual-signal with prompt marker for completion detection. |
-| `worker:<type>:<hostname>:heartbeat` | String (NEW, SETEX, 15s TTL) | Per-instance worker liveness. Value `1`. Set by background goroutine every 10s. Read by `GetWorkerStats` via `SCAN worker:*:heartbeat`. Docker hostname changes on restart → old keys age out via TTL. |
+| `worker:<type>:<hostname>:heartbeat` | String (NEW, SETEX, 30s TTL) | Per-instance worker liveness. Value `1`. Set by background goroutine every 10s (20s margin). Read by `GetWorkerStats` via `SCAN worker:*:heartbeat`. Docker hostname changes on restart → old keys age out via TTL. |
 
 Thread message taxonomy — all messages in `thread:<id>:messages` have `role`, `type`, `content`, and `timestamp` fields:
 
