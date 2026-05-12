@@ -63,12 +63,23 @@ When a user submits a request via the web UI:
    - Appends the user request to `thread:<id>:messages` as a JSON message with `role: "user"` and `source: "webui"`
    - LPUSHes the request payload onto `requests:inbox`
    All three operations succeed or fail together — no orphan thread shells. A separate `POST /api/threads` endpoint still exists for creating a thread without submitting a request (e.g., pre-configuring repo metadata before the first request).
-4. An inbox-reader sidecar in the master container does `BLPOP` on `requests:inbox`, then writes the request text to a **named pipe** (`/tmp/master-inbox.fifo`).
-5. A **supervisor process** in the master container multiplexes stdin from two sources (the named pipe and the interactive TTY) using a mutex — only one source writes to claude's stdin at a time. If the master is mid-response, the inbox-reader waits for the mutex.
-6. The master agent processes the request exactly as if the user typed it — plans, delegates via Go `task` CLI to workers, aggregates results.
-7. When the supervisor detects claude's prompt marker on stdout, it writes a `type: "response"` message to the thread history (see Response detection below).
-8. All state (thread messages, task statuses, results) is written to Redis by the master and workers — same Redis keys as today.
-9. The web UI polls Redis (via its own REST API, backed by `tasklib`) to show live progress to the browser user.
+4. The web UI responds with `{thread_id, status: "submitted"}` and the browser **redirects** to `/threads/{thread_id}`.
+5. Meanwhile, the inbox-reader does `BLPOP` on `requests:inbox`, writes the request text to a **named pipe** (`/tmp/master-inbox.fifo`).
+6. The **supervisor** writes the request to claude's stdin. The master agent processes it exactly as if the user typed it — plans, delegates via Go `task` CLI to workers, aggregates results.
+7. The supervisor watches claude's stdout for the prompt marker. When detected, it writes a `type: "response"` message (with ANSI-stripped output) to `thread:<id>:messages` via `tasklib`.
+8. The thread detail page at `/threads/{thread_id}` **polls** every 3s (via HTMX, hitting `GET /api/threads/{thread_id}/history`). When the poll picks up a `type: "response"` message, a styled **response banner** appears at the top of the message timeline showing the master's answer.
+
+**What is kept (persisted in Redis):**
+- The user's original request — stored in `thread:<id>:messages` as a `role: "user"` message
+- All intermediate master messages (plan, delegate, tool_call) — same list
+- The final response — stored as a `role: "master"`, `type: "response"` message by the supervisor
+- Thread state (`thread:<id>:current_state`) — status, repo, design, PR number
+
+**What the user sees:**
+- After submission, the browser is on `/threads/{thread_id}` showing the message history
+- A "Waiting for master..." indicator with elapsed timer is visible while the thread is `planning`
+- When the supervisor writes the response, the next poll cycle picks it up and the response banner replaces the waiting indicator
+- The full message timeline (user request → master plan → delegated tasks → worker results → master response) is visible on one scrollable page
 
 This preserves the master agent as the single source of truth for planning. The web UI has zero agency — it cannot create tasks, assign workers, or make decisions.
 
