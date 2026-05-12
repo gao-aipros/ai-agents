@@ -107,7 +107,7 @@ The web UI's thread detail page polls for messages with `type: "response"` or `t
 
 | Layer | Choice |
 |-------|--------|
-| Language | Go 1.22+ |
+| Language | Go 1.22 (pinned in `go.mod` and `golang:1.22-bookworm` build images) |
 | HTTP router | `chi` (go-chi/chi/v5) |
 | Redis client | `go-redis/v9` |
 | CLI framework | `cobra` (for `cmd/task`) |
@@ -300,7 +300,7 @@ All endpoints return JSON. Every endpoint also serves HTMX partials when the `HX
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/requests` | Submit a request to the master agent. Body: `{thread_id?, repo?, request}`. `request` capped at 32KB (HTTP 413 if exceeded). Auto-generates `thread_id` if omitted (`web_<ts>_<10 base36 chars>`), then calls `tasklib.PushRequestAtomic`. Returns `{thread_id, status: "submitted"}`. Returns `409 Conflict` if the thread already has a pending inbox entry. |
+| `POST` | `/api/requests` | Submit a request to the master agent. Body: `{thread_id?, repo?, request}`. `request` capped at 32KB (HTTP 413 if exceeded). Returns `429 Too Many Requests` if `requests:inbox` length exceeds `MAX_INBOX_DEPTH` (default 50). Auto-generates `thread_id` if omitted (`web_<ts>_<10 base36 chars>`), then calls `tasklib.PushRequestAtomic`. Returns `{thread_id, status: "submitted"}`. Returns `409 Conflict` if the thread already has a pending inbox entry. |
 | `POST` | `/api/threads/{thread_id}/cancel` | Cancel a pending request. Calls `tasklib.CancelRequest` to remove the request from `requests:inbox` and mark the thread as cancelled. Only works for requests that haven't been picked up by the master yet. |
 
 #### Tasks (read-only)
@@ -319,7 +319,7 @@ All endpoints return JSON. Every endpoint also serves HTMX partials when the `HX
 | `GET` | `/api/threads` | List all threads via `tasklib.ListThreads`. |
 | `GET` | `/api/threads/{thread_id}` | Get thread state + recent messages via `tasklib.GetThread`. |
 | `GET` | `/api/threads/{thread_id}/history` | Get full message history via `tasklib.GetThreadHistory`. Supports `?tail=N` and offset-based pagination (`?offset=M&limit=N`). |
-| `DELETE` | `/api/threads/{thread_id}/workspace` | Cleanup thread workspace directory (`<WORKSPACE_DIR>/<thread_id>/`). Auth-gated. Calls `os.RemoveAll` on the workspace path. |
+| `DELETE` | `/api/threads/{thread_id}/workspace` | Cleanup thread workspace directory (`<WORKSPACE_DIR>/<thread_id>/`). Requires `?confirm=true` query param to prevent accidental invocation. Auth-gated. Calls `os.RemoveAll` on the workspace path. |
 
 #### Workers (read-only)
 
@@ -335,7 +335,7 @@ All endpoints return JSON. Every endpoint also serves HTMX partials when the `HX
 | `GET` | `/api/health` | Health check — Redis connectivity, worker counts. |
 | `GET` | `/api/stats` | Aggregate stats: total tasks, success rate, avg task duration, queue depths. |
 
-Rate limiting: `POST /api/requests` is rate-limited to 10 requests per minute per client IP via chi middleware. Exceeded returns `429 Too Many Requests`.
+Rate limiting: `POST /api/requests` is rate-limited to 10 requests per minute per client IP via chi middleware. Exceeded returns `429 Too Many Requests`. When deployed behind a reverse proxy (nginx/Caddy), configure trusted `X-Forwarded-For` / `X-Real-IP` headers so the middleware sees real client IPs, not the proxy IP.
 
 ### 5. Real-Time Updates
 
@@ -381,11 +381,11 @@ master container (ENTRYPOINT: supervisor):
 
 How it works:
 
-1. `supervisor` spawns both `inbox-reader` and `claude` as child processes. If `inbox-reader` exits unexpectedly, the supervisor respawns it after a 1s backoff.
+1. `supervisor` spawns both `inbox-reader` and `claude` as child processes. On startup, it checks `/tmp/inbox-reader.pid` for a stale process from a previous (crashed) supervisor, sends `SIGTERM` if found, and removes the PID file before re-creating the FIFO. If `inbox-reader` exits unexpectedly during normal operation, the supervisor respawns it after a 1s backoff.
 2. `inbox-reader` runs a reconnect-on-error loop: `BLPOP requests:inbox 0` wrapped in a retry that reconnects to Redis on `ConnectionError`, identical to `worker.py`'s behavior today.
 3. `supervisor` opens the FIFO with `O_NONBLOCK` so that a stale partial write from a previous (crashed) supervisor instance doesn't block the new supervisor on startup. The supervisor creates and opens the FIFO reader end **before** spawning the inbox-reader, so the inbox-reader's `open(WRONLY)` never blocks on `ENXIO`.
 4. `supervisor` does a `select` on the FIFO, TTY, and claude stdout file descriptors.
-5. When a request arrives via the FIFO (or TTY), the supervisor acquires a mutex and writes it to claude's stdin. It then monitors claude's stdout for the **prompt marker** — a configurable regex (`MASTER_PROMPT_MARKER`, default matches Claude Code's `"⏵ "` prompt). When the marker appears, the supervisor:
+5. Before writing to claude stdin, the supervisor checks `thread:<id>:current_state` via `tasklib` — if the thread status is `"cancelled"`, the request is dropped (a cancel raced with inbox delivery). This closes the race window between `CancelRequest` and the inbox-reader's `BLPOP`. It then monitors claude's stdout for the **prompt marker** — a configurable regex (`MASTER_PROMPT_MARKER`, default matches Claude Code's `"⏵ "` prompt). When the marker appears, the supervisor:
    - Captures the stdout output between request-write and prompt-marker
    - Writes a `type: "response"` message to the thread history via `tasklib`
    - Releases the mutex
@@ -562,13 +562,19 @@ New keys added:
 | `requests:inbox` | List | Pending web UI requests. The inbox-reader does `BLPOP` on this list. Each value is JSON: `{thread_id, repo, request, submitted_at}`. |
 | `worker:<type>:heartbeat` | String (SETEX, 15s TTL) | Worker liveness. Set by `cmd/worker` on each poll iteration. Read by `GetWorkerStats` to determine online/offline. |
 
-New thread message convention:
+Thread message taxonomy — all messages in `thread:<id>:messages` have `role`, `type`, `content`, and `timestamp` fields:
 
-| Field | Value | Purpose |
-|-------|-------|---------|
-| `role` | `"master"` | Identifies the master agent as the message author |
-| `type` | `"response"` | Marks the master's final response to a web UI request |
-| `source` | `"webui"` | On user messages, indicates the request came from the web UI |
+| `role` | `type` | Meaning | Rendered as |
+|--------|--------|---------|-------------|
+| `"user"` | `"request"` | Request from web UI or CLI | Plain text bubble |
+| `"master"` | `"plan"` | Master agent planning output | Dashed border, muted |
+| `"master"` | `"delegate"` | Master agent delegating a task | Dashed border, muted |
+| `"master"` | `"tool_call"` | Master agent invoking a tool (task.py) | Dashed border, muted |
+| `"master"` | `"response"` | Final response written by supervisor | Green banner |
+| `"master"` | `"error"` | Error written by supervisor | Red banner |
+| `"worker"` | `"result"` | Worker agent task result | Solid border, worker color-coded |
+
+The web UI renders each type appropriately in the message timeline from day one. Unknown types fall back to plain-text rendering.
 
 All other keys are unchanged.
 
