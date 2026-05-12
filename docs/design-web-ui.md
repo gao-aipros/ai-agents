@@ -57,9 +57,9 @@ The Go web server has **no LLM client, no tool definitions, no planning logic**.
 When a user submits a request via the web UI:
 
 1. Web UI receives `POST /api/requests` with `{thread_id?, repo?, request}`.
-2. If `thread_id` is omitted, auto-generate one: `web_<unix_seconds>_<random 6-char>`.
+2. If `thread_id` is omitted, auto-generate one: `web_<unix_seconds>_<random 10-char base36>`. The 10 base36 characters provide ~3.6×10¹⁵ combinations — collision probability is negligible even under heavy concurrent use. `HSETNX` in the Lua script additionally guards against any collision.
 3. Execute `tasklib.PushRequestAtomic` — a **Lua script** that atomically:
-   - Creates the thread state hash if it doesn't exist (`HSETNX thread:<id>:state repo <repo>`)
+   - Creates the thread state hash if it doesn't exist (`HSETNX thread:<id>:current_state repo <repo>`)
    - Appends the user request to `thread:<id>:messages` as a JSON message with `role: "user"` and `source: "webui"`
    - LPUSHes the request payload onto `requests:inbox`
    All three operations succeed or fail together — no orphan thread shells. A separate `POST /api/threads` endpoint still exists for creating a thread without submitting a request (e.g., pre-configuring repo metadata before the first request).
@@ -72,21 +72,24 @@ When a user submits a request via the web UI:
 
 This preserves the master agent as the single source of truth for planning. The web UI has zero agency — it cannot create tasks, assign workers, or make decisions.
 
-### Response convention
+### Response detection (supervisor-managed)
 
-The master agent's CLAUDE.md is updated with a response convention: when the master finishes processing a request, it writes a final message to the thread history:
+Response completion is detected by the **supervisor**, not by relying on the LLM to self-report. When the supervisor writes a request to claude's stdin, it also monitors claude's **stdout** for the completion signal:
 
-```json
-{"role": "master", "type": "response", "content": "<summary for the user>", "timestamp": "<iso8601>"}
-```
+1. After the request text is written to claude stdin, the supervisor watches claude stdout for the **prompt marker** — the string that Claude Code emits when it's ready for the next input (e.g., `"⏵ "` or a configurable regex).
+2. When the prompt marker appears on stdout, claude is done responding. The supervisor writes a JSON message to the thread history via `tasklib`:
+   ```json
+   {"role": "master", "type": "response", "content": "<captured from claude stdout>", "timestamp": "<iso8601>"}
+   ```
+3. The supervisor captures claude's stdout output during the response window (between request write and prompt marker) and stores it as the response content.
+4. If no prompt marker is detected within `MASTER_RESPONSE_TIMEOUT` (default 30 minutes, configurable), the supervisor writes an error message:
+   ```json
+   {"role": "master", "type": "error", "content": "Master agent timed out after 30m", "timestamp": "<iso8601>"}
+   ```
 
-If the master encounters an unrecoverable error (e.g., all workers fail, impossible request), it writes an error variant instead:
+The master agent's CLAUDE.md still documents the expected workflow (plan → delegate → aggregate → respond), but the web UI doesn't depend on the LLM correctly formatting a JSON message. The supervisor is the authoritative source for "done / error / timeout."
 
-```json
-{"role": "master", "type": "error", "content": "<error description>", "timestamp": "<iso8601>"}
-```
-
-The web UI's thread detail page polls for messages with `type: "response"` or `type: "error"` and displays them in a styled banner at the top of the message timeline (green for response, red for error). Threads with a pending request and no response yet show a "Waiting for master..." indicator. As a fallback, the web UI treats a thread that has been `planning` for longer than 30 minutes with no master response as timed out and displays a "This request may have been lost — try re-submitting" warning.
+The web UI's thread detail page polls for messages with `type: "response"` or `type: "error"` and displays them in a styled banner (green for response, red for error). Threads with a pending request and no supervisor-written response yet show a "Waiting for master..." indicator with an elapsed timer.
 
 ### Thread creation (bootstrap only)
 
@@ -112,7 +115,7 @@ The web UI's thread detail page polls for messages with `type: "response"` or `t
 | Testing (integration) | Real Redis — blocking commands (`BLPOP`, `BLMOVE`) + JSON compatibility |
 | Templates | `html/template` (stdlib) |
 | Frontend | HTMX (~15KB, vendored in `static/htmx.min.js`), no JS build step. Source URL overridable via `WEBUI_HTMX_SRC` env var for air-gapped deployments. |
-| CSS | Minimal hand-written stylesheet using CSS custom properties for theming |
+| CSS | Minimal hand-written stylesheet using CSS custom properties for theming (`WEBUI_THEME: light/dark`) |
 
 No `anthropic-sdk-go` — the Go server doesn't talk to any LLM.
 
@@ -128,12 +131,7 @@ package tasklib
 // Client wraps *redis.Client and provides all task/thread/worker operations.
 type Client struct { ... }
 
-// NewClient creates a new Client. workspaceDir is the shared volume path
-// (default "/workspace" from WORKSPACE_DIR env var).
-func NewClient(rdb *redis.Client, workspaceDir string) *Client
-
-// WorkspaceDir returns the configured workspace directory.
-func (c *Client) WorkspaceDir() string
+func NewClient(rdb *redis.Client) *Client
 
 // Tasks (read + write — used by cmd/task, cmd/worker, and cmd/webui)
 func (c *Client) Enqueue(worker, threadID, instruction string) (*Task, error)
@@ -155,6 +153,11 @@ func (c *Client) UnlockThread(threadID string) error
 // Threads — filesystem operation lives in cmd/task, not tasklib
 // (tasklib is a pure-Redis library; workspace cleanup requires filesystem access)
 
+// Active tasks hash (backward-compat with existing active_tasks hash in worker.py/task.py)
+func (c *Client) SetActiveTask(taskID string, info TaskInfo) error     // HSET active_tasks <task_id> <json>
+func (c *Client) RemoveActiveTask(taskID string) error                 // HDEL active_tasks <task_id>
+func (c *Client) GetActiveTasks() (map[string]*TaskInfo, error)         // HGETALL active_tasks
+
 // Workers (read-only for webui; write-only for heartbeat from cmd/worker)
 func (c *Client) GetWorkerStats() (map[string]*WorkerInfo, error)
 func (c *Client) GetWorkerInfo(workerType string) (*WorkerInfo, error)
@@ -162,13 +165,18 @@ func (c *Client) UpdateWorkerHeartbeat(workerType string) error  // SETEX worker
 
 // Inbox (atomic write — used by cmd/webui)
 // PushRequestAtomic wraps three operations in a Lua script for atomicity:
-//   1. HSETNX thread:<id>:state repo <repo> (creates thread if not exists)
+//   1. HSETNX thread:<id>:current_state repo <repo> (creates thread if not exists;
+//      if thread already exists with a different repo, the existing repo is kept)
 //   2. RPUSH thread:<id>:messages <user-request-json>
 //   3. LPUSH requests:inbox <request-payload-json>
 func (c *Client) PushRequestAtomic(threadID, repo, request string) error
 
-// CancelRequest removes a pending request from the inbox and marks the thread
-// as cancelled. Used by the web UI to cancel a request that hasn't been picked up yet.
+// CancelRequest atomically (Lua script):
+//   1. Removes the request from requests:inbox
+//   2. Sets thread:<id>:current_state status to "cancelled"
+// Used by the web UI. Only works for requests still in the inbox (not yet picked up).
+// For requests already being processed, the thread status update signals the master
+// to abort gracefully (master checks status early in its processing loop).
 func (c *Client) CancelRequest(threadID string) error
 ```
 
@@ -179,7 +187,7 @@ func (c *Client) CancelRequest(threadID string) error
 - **`miniredis` scope**: Unit tests cover all non-blocking CRUD operations (enqueue, status, result, list, thread CRUD, etc.) and require no real Redis. Blocking commands (`BLPOP`, `BLMOVE`, `WaitTask` polling loop) are tested in a separate integration test suite against a real Redis instance.
 - **No dependency on `cmd/` packages** — `tasklib` is pure library code.
 - **No filesystem operations** — `tasklib` is a pure-Redis library. Workspace cleanup (`thread-cleanup`) lives in `cmd/task` where it can access the workspace directory.
-- **`WORKSPACE_DIR` env var** — default `/workspace`. Read by `tasklib.NewClient` (or passed explicitly by the caller). Used by `cmd/task` for `thread-cleanup` and `cmd/worker` for reading/writing files in the thread workspace. All containers that mount the workspace volume set this env var.
+- **`WORKSPACE_DIR` env var** — default `/workspace`. Read directly by `cmd/task` (for `thread-cleanup`) and `cmd/worker` (for reading/writing files in the thread workspace). `tasklib` does NOT reference this — it is a pure-Redis library. All containers that mount the workspace volume set this env var.
 
 ### Worker heartbeat
 
@@ -190,6 +198,8 @@ Workers update a heartbeat key in their poll loop:
 | `worker:<type>:heartbeat` | String | 15s | Set by `cmd/worker` via `SETEX` on each poll iteration. The web UI checks for this key to determine online/offline status. If absent or expired, the worker is offline. |
 
 `GetWorkerStats()` reads all three heartbeat keys and reports `online: true/false` for each worker type. Expected detection latency: a dead worker will show as offline within ~15s (TTL expiry) plus up to 5s (next polling cycle). This is acceptable for a monitoring dashboard — it's not a real-time alerting system.
+
+The heartbeat key is per worker **type** (not per instance). Multiple replicas of the same worker type (e.g., 3 `worker-claude` containers) will race on the same key. For now, assume single-instance per worker type. Multi-instance support (instance-specific keys like `worker:<type>:<hostname>:heartbeat` with `SCAN`-based aggregation) is deferred to a future iteration.
 
 ## `cmd/task` — Go CLI (replaces `scripts/task.py`)
 
@@ -212,9 +222,9 @@ task thread-list
 task thread-cleanup --id <thread_id>
 ```
 
-Implementation: `cobra` commands that call `tasklib.Client` methods. `thread-cleanup` additionally calls `os.RemoveAll` on `<workspaceDir>/<thread_id>/` — this is the one command that touches the filesystem, and it lives in `cmd/task`, not `tasklib`. The workspace directory is read from the `WORKSPACE_DIR` env var (default `/workspace`) and passed to `tasklib.NewClient`.
+Implementation: `cobra` commands that call `tasklib.Client` methods. `thread-cleanup` additionally calls `os.RemoveAll` on `<workspaceDir>/<thread_id>/` — this is the one command that touches the filesystem, and it lives in `cmd/task`, not `tasklib`. The workspace directory is read from the `WORKSPACE_DIR` env var (default `/workspace`).
 
-**Stdout format compatibility:** The Go CLI must replicate the exact stdout output format of `task.py` for each command. The master agent parses stdout programmatically. For example, `enqueue` returns `{"task_id": "..."}` on stdout, while `status` returns a multi-field JSON object. These formats are defined by the current Python code and must be matched byte-for-byte. The JSON compatibility test suite (Step 2) covers this.
+**Stdout format compatibility:** The Go CLI must replicate the exact stdout output format of `task.py` for each command. The master agent parses stdout programmatically. Note that `task.py list` prints a human-readable table (not JSON), while `enqueue` returns `{"task_id": "..."}` and `status` returns a multi-field JSON object. All these formats are defined by the current Python code and must be matched byte-for-byte. The JSON compatibility test suite (Step 2) covers this.
 
 Estimated ~350 lines of CLI glue (cobra dispatcher + output formatting + the one filesystem operation). The binary is statically compiled (`CGO_ENABLED=0`) and copied into the master container at `/usr/local/bin/task`.
 
@@ -224,14 +234,16 @@ Long-running process that:
 
 1. Connects to Redis via `tasklib`
 2. Loops:
-   - `SETEX worker:<type>:heartbeat 15 "alive"` — update heartbeat
+   - `SETEX worker:<type>:heartbeat 15 "alive"` — update heartbeat (before BLMOVE, to avoid showing offline while holding a task)
    - `BLMOVE tasks:queue:<worker> tasks:processing:<worker>` with 5s timeout
    - If no task, continue (heartbeat still updated)
-3. Reads thread history and state via `tasklib`
-4. Builds a prompt from task instruction + thread context
-5. Executes `AGENT_CMD` (from env) as a subprocess with the prompt on stdin
-6. Writes result + exit code back via `tasklib` (`task:<id>:result`, `task:<id>:status`)
-7. Appends result to thread history via `tasklib`
+3. `HSET active_tasks <task_id> <task_info_json>` — mark as active (backward-compat with current `active_tasks` hash used by `task.py list`)
+4. Reads thread history and state via `tasklib`
+5. Builds a prompt from task instruction + thread context
+6. Executes `AGENT_CMD` (from env) as a subprocess with the prompt on stdin
+7. Writes result + exit code back via `tasklib` (`task:<id>:result`, `task:<id>:status`)
+8. `HDEL active_tasks <task_id>` — unmark
+9. Appends result to thread history via `tasklib`
 
 The worker binary takes a single argument: the worker type (`claude`, `copilot`, or `opencode`). It reads `AGENT_CMD` from the environment (set in the Dockerfile, same as today).
 
@@ -288,7 +300,7 @@ All endpoints return JSON. Every endpoint also serves HTMX partials when the `HX
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/requests` | Submit a request to the master agent. Body: `{thread_id?, repo?, request}`. Auto-generates `thread_id` if omitted (`web_<ts>_<random>`), then calls `tasklib.PushRequestAtomic` (Lua script: create thread if needed + append to thread history + LPUSH to inbox). Returns `{thread_id, status: "submitted"}`. |
+| `POST` | `/api/requests` | Submit a request to the master agent. Body: `{thread_id?, repo?, request}`. `request` capped at 32KB (HTTP 413 if exceeded). Auto-generates `thread_id` if omitted (`web_<ts>_<10 base36 chars>`), then calls `tasklib.PushRequestAtomic`. Returns `{thread_id, status: "submitted"}`. Returns `409 Conflict` if the thread already has a pending inbox entry. |
 | `POST` | `/api/threads/{thread_id}/cancel` | Cancel a pending request. Calls `tasklib.CancelRequest` to remove the request from `requests:inbox` and mark the thread as cancelled. Only works for requests that haven't been picked up by the master yet. |
 
 #### Tasks (read-only)
@@ -303,10 +315,11 @@ All endpoints return JSON. Every endpoint also serves HTMX partials when the `HX
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/threads` | Create an empty thread via `tasklib.CreateThread`. Body: `{thread_id, repo?}`. Allowed as a lightweight bootstrap (the master still owns all state updates). |
+| `POST` | `/api/threads` | Create an empty thread via `tasklib.CreateThread`. Body: `{thread_id, repo?}`. Returns `409 Conflict` if thread already exists. Allowed as a lightweight bootstrap (the master still owns all state updates). |
 | `GET` | `/api/threads` | List all threads via `tasklib.ListThreads`. |
 | `GET` | `/api/threads/{thread_id}` | Get thread state + recent messages via `tasklib.GetThread`. |
-| `GET` | `/api/threads/{thread_id}/history` | Get full message history via `tasklib.GetThreadHistory` (supports `?tail=N`). |
+| `GET` | `/api/threads/{thread_id}/history` | Get full message history via `tasklib.GetThreadHistory`. Supports `?tail=N` and offset-based pagination (`?offset=M&limit=N`). |
+| `DELETE` | `/api/threads/{thread_id}/workspace` | Cleanup thread workspace directory (`<WORKSPACE_DIR>/<thread_id>/`). Auth-gated. Calls `os.RemoveAll` on the workspace path. |
 
 #### Workers (read-only)
 
@@ -321,6 +334,8 @@ All endpoints return JSON. Every endpoint also serves HTMX partials when the `HX
 |--------|------|-------------|
 | `GET` | `/api/health` | Health check — Redis connectivity, worker counts. |
 | `GET` | `/api/stats` | Aggregate stats: total tasks, success rate, avg task duration, queue depths. |
+
+Rate limiting: `POST /api/requests` is rate-limited to 10 requests per minute per client IP via chi middleware. Exceeded returns `429 Too Many Requests`.
 
 ### 5. Real-Time Updates
 
@@ -342,13 +357,19 @@ The master container runs a **supervisor process** (PID 1) that manages all chil
 ```
 master container (ENTRYPOINT: supervisor):
   supervisor (Go binary, PID 1)
+    ├─ connects to Redis via tasklib (for writing response/error messages)
     ├─ spawns inbox-reader as child process (restarts on exit)
     ├─ spawns claude as child process
     ├─ opens named pipe /tmp/master-inbox.fifo (O_RDONLY | O_NONBLOCK)
     ├─ opens /dev/tty for interactive CLI input
+    ├─ pipes claude stdout for prompt-marker detection
     ├─ select loop:
-    │   ├─ reads from FIFO → acquires stdin-mutex → writes to claude stdin → releases
-    │   └─ reads from TTY  → acquires stdin-mutex → writes to claude stdin → releases
+    │   ├─ reads from FIFO → acquires stdin-mutex → writes to claude stdin
+    │   │   → monitors stdout for prompt marker (MASTER_PROMPT_MARKER regex)
+    │   │   → on marker: writes type:"response" to thread via tasklib → releases mutex
+    │   │   → on timeout (MASTER_RESPONSE_TIMEOUT, default 30m): writes type:"error"
+    │   └─ reads from TTY  → acquires stdin-mutex → writes to claude stdin
+    │       → monitors stdout for prompt marker → releases mutex
     └─ signal handling:
         ├─ SIGTERM/SIGINT → forward to claude → wait for exit → cleanup FIFO → exit
         └─ inbox-reader exit → log warning → respawn after 1s backoff
@@ -360,29 +381,44 @@ master container (ENTRYPOINT: supervisor):
 
 How it works:
 
-1. `supervisor` spawns both `inbox-reader` and `claude` as child processes. If `inbox-reader` exits unexpectedly (Redis disconnect, panic), the supervisor respawns it after a 1s backoff.
-2. `inbox-reader` runs a reconnect-on-error loop: `BLPOP requests:inbox 0` wrapped in a retry that reconnects to Redis on `ConnectionError`, identical to `worker.py`'s behavior today. A Redis restart does not require container restart.
-3. `supervisor` opens the FIFO with `O_NONBLOCK` so that a stale partial write from a previous (crashed) supervisor instance doesn't block the new supervisor on startup.
-4. `supervisor` does a `select` on the FIFO and TTY file descriptors. When data arrives on either, it acquires a mutex and writes the full request to claude's stdin.
-5. The mutex prevents interleaving — if the master is mid-response (Claude is actively outputting), the supervisor buffers the incoming request until the response completes (detected via Claude's prompt marker or idle timeout).
-6. On `SIGTERM` (Docker stop), the supervisor forwards the signal to claude, waits for graceful exit, then cleans up the FIFO and exits. On its own crash, Docker's `restart: unless-stopped` restarts the container — the FIFO is recreated by the Dockerfile's `mkfifo` and opened with `O_NONBLOCK` to handle any stale state.
+1. `supervisor` spawns both `inbox-reader` and `claude` as child processes. If `inbox-reader` exits unexpectedly, the supervisor respawns it after a 1s backoff.
+2. `inbox-reader` runs a reconnect-on-error loop: `BLPOP requests:inbox 0` wrapped in a retry that reconnects to Redis on `ConnectionError`, identical to `worker.py`'s behavior today.
+3. `supervisor` opens the FIFO with `O_NONBLOCK` so that a stale partial write from a previous (crashed) supervisor instance doesn't block the new supervisor on startup. The supervisor creates and opens the FIFO reader end **before** spawning the inbox-reader, so the inbox-reader's `open(WRONLY)` never blocks on `ENXIO`.
+4. `supervisor` does a `select` on the FIFO, TTY, and claude stdout file descriptors.
+5. When a request arrives via the FIFO (or TTY), the supervisor acquires a mutex and writes it to claude's stdin. It then monitors claude's stdout for the **prompt marker** — a configurable regex (`MASTER_PROMPT_MARKER`, default matches Claude Code's `"⏵ "` prompt). When the marker appears, the supervisor:
+   - Captures the stdout output between request-write and prompt-marker
+   - Writes a `type: "response"` message to the thread history via `tasklib`
+   - Releases the mutex
+6. If the prompt marker is not detected within `MASTER_RESPONSE_TIMEOUT` (default 30 minutes), the supervisor writes a `type: "error"` message and releases the mutex. This timeout is generous because Claude Code tool calls (e.g., `task.py wait --timeout 300`) can take minutes.
+7. To prevent mutex starvation from long interactive CLI sessions, FIFO-side mutex acquisition has a configurable timeout (`MASTER_MUTEX_TIMEOUT`, default 5 minutes). If the mutex can't be acquired within this window, the request is re-queued (LPUSH back onto `requests:inbox`).
+8. On `SIGTERM` (Docker stop), the supervisor forwards the signal to claude, waits for graceful exit, then cleans up the FIFO and exits.
 
-The FIFO is created by the Dockerfile before the supervisor starts:
+The FIFO is created by the Dockerfile:
 
 ```dockerfile
 RUN mkfifo /tmp/master-inbox.fifo
 ENTRYPOINT ["/usr/local/bin/supervisor"]
 ```
 
-**Readiness probe:** The supervisor serves a minimal HTTP health endpoint on `:9090` (`GET /healthz` returns 200 when the FIFO is open and both child processes are running). Docker Compose `healthcheck` can target this endpoint.
+**Readiness probe:** The supervisor serves a minimal HTTP health endpoint on `:9090` (`GET /healthz` returns 200 when the FIFO is open, both child processes are running, and Redis is connected).
+
+**Supervisor env vars:**
+
+| Env var | Default | Purpose |
+|---------|---------|---------|
+| `MASTER_PROMPT_MARKER` | `⏵ ` | Regex for Claude Code's ready-for-input prompt |
+| `MASTER_RESPONSE_TIMEOUT` | `1800` | Seconds before declaring the master hung (30 min) |
+| `MASTER_MUTEX_TIMEOUT` | `300` | Seconds before re-queueing a web request that can't get stdin (5 min) |
 
 ### 7. Authentication
 
-**Default:** Mutation endpoints (`POST /api/requests`, `POST /api/threads`) require `Authorization: Bearer <key>` when `WEBUI_API_KEY` is set. If `WEBUI_API_KEY` is not set, a warning is logged on startup and mutations proceed without auth (development mode).
+**Default:** When `WEBUI_API_KEY` is set, **all** `/api/` endpoints require `Authorization: Bearer <key>` — both read and write. The browser UI pages embed the key via a cookie or session token so the polling HTMX requests are authenticated. If `WEBUI_API_KEY` is not set, a warning is logged on startup and all requests proceed without auth (development mode / single-user trusted network).
 
-Read endpoints (`GET /api/*`) and the UI are always public.
+Thread history, task results, and aggregate stats can contain source code, PR details, and error messages. Exposing these without auth in a shared-network environment is a data leak risk.
 
-To disable auth intentionally in dev, explicitly set `WEBUI_API_KEY=` (empty string). This flips the Phase 1/Phase 2 framing from the earlier revision — auth is on by default whenever a key is configured, rather than being a future add-on.
+To disable auth intentionally in dev, explicitly set `WEBUI_API_KEY=` (empty string).
+
+For production deployments on shared networks, place a reverse proxy (nginx, Caddy) with TLS and auth in front of the web UI. The web UI itself is stateless — multiple replicas can run behind a load balancer.
 
 ### 8. Docker Integration
 
@@ -413,6 +449,7 @@ webui:
     - WEBUI_POLL_THREAD_DETAIL=3
     - WEBUI_POLL_WORKERS=5
     - WEBUI_HTMX_SRC=/static/htmx.min.js
+    - WEBUI_THEME=${WEBUI_THEME:-light}
     - WORKSPACE_DIR=${WORKSPACE_DIR:-/workspace}
     - TASKLIB_BACKEND=go
   ports:
@@ -521,6 +558,7 @@ New keys added:
 
 | Key | Type | Purpose |
 |-----|------|---------|
+| `active_tasks` | Hash | Currently executing tasks. Keyed by `task_id`, value is JSON task info. Written by `cmd/worker` (HSET on start, HDEL on completion). Read by `task list` and web UI. Backward-compat with current `worker.py`/`task.py`. |
 | `requests:inbox` | List | Pending web UI requests. The inbox-reader does `BLPOP` on this list. Each value is JSON: `{thread_id, repo, request, submitted_at}`. |
 | `worker:<type>:heartbeat` | String (SETEX, 15s TTL) | Worker liveness. Set by `cmd/worker` on each poll iteration. Read by `GetWorkerStats` to determine online/offline. |
 
@@ -584,7 +622,7 @@ Spin up the full stack. Submit a request via the web UI → verify inbox-reader 
 2. `python3 scripts/test_json_compat.py` passes all byte-for-byte comparisons
 3. `docker compose up -d` starts all services including webui
 4. `curl http://localhost:8000/api/health` returns `{"redis":"ok","workers":{...}}`
-5. `curl -X POST http://localhost:8000/api/requests -H 'Content-Type: application/json' -H 'Authorization: Bearer <key>' -d '{"request":"Say hello"}'` auto-generates a thread_id, atomically writes to inbox + thread history; returns `{"thread_id":"web_<ts>_<rand>","status":"submitted"}`
+5. `curl -X POST http://localhost:8000/api/requests -H 'Content-Type: application/json' -H 'Authorization: Bearer <key>' -d '{"request":"Say hello"}'` auto-generates a thread_id, atomically writes to inbox + thread history; returns `{"thread_id":"web_<ts>_<abcdefghij>","status":"submitted"}`
 6. The master agent picks up the request via inbox-reader → FIFO → supervisor → claude stdin, processes it using the Go `task` CLI, and writes a `type: "response"` message when done
 7. Browser at `http://localhost:8000` shows dashboard with worker cards (online/offline from heartbeat), active threads with response indicators
 8. Thread detail page shows message history updating in real time via HTMX polling, with a response banner when the master finishes
