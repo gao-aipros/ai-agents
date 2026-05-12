@@ -2,7 +2,7 @@
 
 ## Context
 
-The ai-agents system uses a master agent (Claude Code with orchestrator instructions) to plan complex tasks, delegate sub-tasks to worker agents via a Redis task queue, and aggregate results. Currently everything is CLI-only: the user types requests directly into the master container's interactive Claude Code session. The master agent uses `task.py` as a skill (a tool it can invoke) to interact with Redis — enqueuing tasks, checking statuses, reading results, and managing threads.
+The ai-agents system uses a master agent (Claude Code with orchestrator instructions) to plan complex tasks, delegate sub-tasks to worker agents via a Redis task queue, and aggregate results. Currently everything is CLI-only: the user types requests directly into the master container's interactive Claude Code session. The master agent uses `task.py` as a skill (a tool it can invoke) to interact with Redis — enqueuing tasks, checking statuses, reading results, and managing threads. Workers run `worker.py` to consume tasks from Redis and execute agent CLIs.
 
 We need a web console that:
 1. Forwards user requests to the **existing master agent** (the running Claude Code session) — the master remains the sole planner/orchestrator
@@ -11,33 +11,54 @@ We need a web console that:
 
 The web UI is an **addon**, not a replacement. The master agent still does all planning, tool calling, and delegation. The web UI just gives it a browser-based front door and a real-time dashboard.
 
+### Shared `tasklib` — the foundation
+
+Rather than reimplement Redis logic twice (Go for web UI, Python for `task.py` / `worker.py`), extract a shared **Go `tasklib`** package that all three Go binaries use:
+
+```
+tasklib/              # Shared Go library — all Redis CRUD for tasks, threads, workers
+  ├─ tasks.go         # enqueue, status, result, list, wait, cancel, requeue-stale
+  ├─ threads.go       # create, history, state, update, list, cleanup, unlock
+  ├─ workers.go       # worker stats, health, queue depths
+  ├─ inbox.go         # write to requests:inbox
+  └─ *_test.go        # Unit tests with miniredis
+
+cmd/task/main.go      # Go CLI — drop-in replacement for task.py (master agent skill)
+cmd/worker/main.go    # Go worker loop — replacement for worker.py
+cmd/webui/main.go     # Go HTTP server + HTMX frontend
+```
+
+All three binaries are built from the same `go.mod`. The Go `tasklib` produces the exact same Redis key names, JSON shapes, and behavior as the current Python code. Python `task.py` and `worker.py` are **removed** once the Go equivalents are validated.
+
 ## Architecture
 
 ```
 master (Claude Code session)          webui (Go binary, :8000)
   ├─ plans & delegates                  ├─ writes requests to Redis inbox
-  ├─ invokes task.py skill against      ├─ reads Redis for monitoring
-  │   Redis (enqueue, wait, result)     ├─ serves REST API (JSON)
+  ├─ invokes Go task CLI as skill       ├─ reads Redis via tasklib for monitoring
+  │   (cmd/task: enqueue, wait, ...)    ├─ serves REST API (JSON)
   └─ receives requests via:             └─ serves HTMX frontend
       1. interactive CLI (stdin)
-      2. Redis inbox (from web UI)
-       └─ inbox-reader sidecar
+      2. Redis inbox (from web UI)     worker (Go binary)
+       └─ inbox-reader sidecar           ├─ tasklib: BLMOVE from queue
+                                         ├─ exec AGENT_CMD as subprocess
+                                         └─ tasklib: write result back to Redis
 ```
 
 The Go web server has **no LLM client, no tool definitions, no planning logic**. It only:
-- Writes incoming user requests to a Redis inbox list
-- Reads thread/task/worker state from Redis for display
+- Writes incoming user requests to a Redis inbox list (via `tasklib`)
+- Reads thread/task/worker state from Redis for display (via `tasklib`)
 - Serves REST API + HTMX UI
 
 ### Request forwarding
 
 When a user submits a request via the web UI:
 
-1. Web UI writes the request to `requests:inbox` (a Redis list)
+1. Web UI writes the request to `requests:inbox` (a Redis list) via `tasklib`
 2. An `inbox-reader` sidecar in the master container does `BLPOP` on that list, then writes the request text to the master's stdin (the Claude Code session)
-3. The master agent processes the request exactly as if the user typed it — plans, delegates via `task.py` to workers, aggregates results
+3. The master agent processes the request exactly as if the user typed it — plans, delegates via Go `task` CLI to workers, aggregates results
 4. All state (thread messages, task statuses, results) is written to Redis by the master and workers — same Redis keys as today
-5. The web UI polls Redis (via its own REST API) to show live progress to the browser user
+5. The web UI polls Redis (via its own REST API, backed by `tasklib`) to show live progress to the browser user
 
 This preserves the master agent as the single source of truth for planning. The web UI has zero agency — it cannot create tasks, assign workers, or make decisions.
 
@@ -56,11 +77,103 @@ This preserves the master agent as the single source of truth for planning. The 
 | Language | Go 1.22+ |
 | HTTP router | `chi` (go-chi/chi/v5) |
 | Redis client | `go-redis/v9` |
+| CLI framework | `cobra` (for `cmd/task`) |
+| Testing | `miniredis` for tasklib unit tests |
 | Templates | `html/template` (stdlib) |
 | Frontend | HTMX via CDN, no JS build step |
 | CSS | Minimal hand-written, no framework |
 
 No `anthropic-sdk-go` — the Go server doesn't talk to any LLM.
+
+## `tasklib` Package
+
+The shared Go package that all three binaries import. It is the single source of truth for the Redis data model.
+
+### API surface
+
+```go
+package tasklib
+
+// Client wraps *redis.Client and provides all task/thread/worker operations.
+type Client struct { ... }
+
+func NewClient(rdb *redis.Client) *Client
+
+// Tasks (read + write — used by cmd/task, cmd/worker, and cmd/webui)
+func (c *Client) Enqueue(worker, threadID, instruction string) (*Task, error)
+func (c *Client) GetTask(taskID string) (*Task, error)
+func (c *Client) GetTaskResult(taskID string, tail int) (string, error)
+func (c *Client) ListTasks(worker, status, threadID string, limit, offset int) ([]*Task, error)
+func (c *Client) WaitTask(taskID string, timeout time.Duration) (*Task, error)
+func (c *Client) CancelTask(taskID string) error
+func (c *Client) RequeueStale(worker string, olderThan time.Duration) ([]string, error)
+
+// Threads (read + write — used by all three binaries)
+func (c *Client) CreateThread(threadID, repo string) (*Thread, error)
+func (c *Client) GetThread(threadID string) (*Thread, error)
+func (c *Client) ListThreads() ([]*Thread, error)
+func (c *Client) GetThreadHistory(threadID string, tail int) ([]Message, error)
+func (c *Client) UpdateThread(threadID string, fields map[string]string) error
+func (c *Client) CleanupThread(threadID, workspaceDir string) error
+func (c *Client) UnlockThread(threadID string) error
+
+// Workers (read-only — used by cmd/webui and cmd/task for status checks)
+func (c *Client) GetWorkerStats() (map[string]*WorkerInfo, error)
+func (c *Client) GetWorkerInfo(workerType string) (*WorkerInfo, error)
+
+// Inbox (write — used by cmd/webui)
+func (c *Client) PushRequest(threadID, repo, request string) error
+```
+
+### Key design rules
+
+- **Byte-for-byte JSON compatibility** with current Python serialization — workers and master must see identical payloads during the transition
+- **Same Redis key names** as today (`task:<id>:status`, `thread:<id>:messages`, `tasks:queue:<worker>`, etc.)
+- **Tested with `miniredis`** — no real Redis needed in unit tests; full coverage of all CRUD operations including edge cases (NX locks, BLPOP/BLMOVE, TTL expiry)
+- **No dependency on `cmd/` packages** — `tasklib` is pure library code
+
+## `cmd/task` — Go CLI (replaces `scripts/task.py`)
+
+Drop-in replacement for the Python CLI. The master agent invokes it with the same arguments:
+
+```
+task enqueue --worker claude --thread my-thread --instruction "fix the bug"
+task status --id <task_id>
+task result --id <task_id> --tail 100
+task list --worker claude --status done --limit 50
+task wait --id <task_id> --timeout 300
+task cancel --id <task_id>
+task requeue-stale --worker claude --older-than 600
+task unlock --thread <thread_id>
+task thread-create --id <thread_id> --repo owner/repo
+task thread-history --id <thread_id> --tail 50
+task thread-state --id <thread_id>
+task thread-update --id <thread_id> --status complete --design "..."
+task thread-list
+task thread-cleanup --id <thread_id>
+```
+
+Implementation: `cobra` commands that call `tasklib.Client` methods. ~200 lines of CLI glue. The binary is statically compiled (`CGO_ENABLED=0`) and copied into the master container at `/usr/local/bin/task`.
+
+## `cmd/worker` — Go worker loop (replaces `scripts/worker.py`)
+
+Long-running process that:
+
+1. Connects to Redis via `tasklib`
+2. Loops: `BLMOVE tasks:queue:<worker> tasks:processing:<worker>` with timeout
+3. Reads thread history and state via `tasklib`
+4. Builds a prompt from task instruction + thread context
+5. Executes `AGENT_CMD` (from env) as a subprocess with the prompt on stdin
+6. Writes result + exit code back via `tasklib` (`task:<id>:result`, `task:<id>:status`)
+7. Appends result to thread history via `tasklib`
+
+The worker binary takes a single argument: the worker type (`claude`, `copilot`, or `opencode`). It reads `AGENT_CMD` from the environment (set in the Dockerfile, same as today).
+
+Replaces `scripts/worker.py` (~300 lines of Python → ~300 lines of Go). Statically compiled and copied into each worker Docker image at `/usr/local/bin/worker`.
+
+## `cmd/webui` — HTTP server + HTMX frontend
+
+Entry point for the web UI. Detailed in the sections below.
 
 ## Requirements
 
@@ -107,31 +220,31 @@ All endpoints return JSON. Every endpoint also serves HTMX partials when the `HX
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/requests` | Submit a request to the master agent. Body: `{thread_id?, repo?, request}`. Writes to `requests:inbox` list in Redis, appends to thread history. Returns `{thread_id, status: "submitted"}`. |
+| `POST` | `/api/requests` | Submit a request to the master agent. Body: `{thread_id?, repo?, request}`. Calls `tasklib.PushRequest` to write to `requests:inbox`, appends to thread history. Returns `{thread_id, status: "submitted"}`. |
 
 #### Tasks (read-only)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/tasks` | List tasks. Query params: `worker`, `status`, `thread_id`, `limit`, `offset`. |
-| `GET` | `/api/tasks/{task_id}` | Get task detail including full result. |
-| `GET` | `/api/tasks/{task_id}/result` | Get just the result text (supports `?tail=N`). |
+| `GET` | `/api/tasks` | List tasks via `tasklib.ListTasks`. Query params: `worker`, `status`, `thread_id`, `limit`, `offset`. |
+| `GET` | `/api/tasks/{task_id}` | Get task detail via `tasklib.GetTask`. |
+| `GET` | `/api/tasks/{task_id}/result` | Get just the result text via `tasklib.GetTaskResult` (supports `?tail=N`). |
 
 #### Threads (read-only for state, but web UI can create threads)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/threads` | Create a new thread. Body: `{thread_id, repo?}`. |
-| `GET` | `/api/threads` | List all threads with status summaries. |
-| `GET` | `/api/threads/{thread_id}` | Get thread state + recent messages. |
-| `GET` | `/api/threads/{thread_id}/history` | Get full message history (supports `?tail=N`). |
+| `POST` | `/api/threads` | Create a new thread via `tasklib.CreateThread`. Body: `{thread_id, repo?}`. |
+| `GET` | `/api/threads` | List all threads via `tasklib.ListThreads`. |
+| `GET` | `/api/threads/{thread_id}` | Get thread state + recent messages via `tasklib.GetThread`. |
+| `GET` | `/api/threads/{thread_id}/history` | Get full message history via `tasklib.GetThreadHistory` (supports `?tail=N`). |
 
 #### Workers (read-only)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/workers` | List all workers with queue depth, active tasks, health. |
-| `GET` | `/api/workers/{worker_type}` | Detail for one worker type. |
+| `GET` | `/api/workers` | List all workers via `tasklib.GetWorkerStats`. |
+| `GET` | `/api/workers/{worker_type}` | Detail for one worker type via `tasklib.GetWorkerInfo`. |
 
 #### System
 
@@ -155,22 +268,12 @@ The master container needs a lightweight sidecar that bridges the Redis inbox to
 
 ```
 master container:
-  ├─ inbox-reader (shell script or tiny Go binary)  ← NEW
-  │   └─ BLPOP requests:inbox → write to claude stdin
+  ├─ inbox-reader (Go binary, built from cmd/inbox-reader or a --sidecar flag on cmd/webui)
+  │   └─ BLPOP requests:inbox → write request text to claude stdin
   └─ claude (interactive session, ENTRYPOINT)
 ```
 
-The sidecar runs a loop:
-
-```bash
-while true; do
-  redis-cli BLPOP requests:inbox 0 | jq -r '.request' > /proc/1/fd/0
-done
-```
-
-Or in Go: a small goroutine in the webui binary (if run as a sidecar mode) that does `BLPOP` on the inbox and pipes results to stdout, which is connected to Claude's stdin.
-
-The exact mechanism depends on how stdin is plumbed in the container. The Dockerfile will coordinate: run the sidecar with its stdout connected to claude's stdin (e.g., via a pipe or named pipe).
+The sidecar uses `tasklib` to `BLPOP` the inbox list, then writes the request text to the Claude process's stdin. Implemented as a small Go binary (~50 lines) or a mode on the webui binary.
 
 ### 7. Authentication
 
@@ -179,6 +282,16 @@ The exact mechanism depends on how stdin is plumbed in the container. The Docker
 **Phase 2 (future):** Optional `WEBUI_API_KEY` env var — if set, all `/api/` mutation endpoints (`POST /api/requests`, `POST /api/threads`) require `Authorization: Bearer <key>`. Read endpoints and the UI are public.
 
 ### 8. Docker Integration
+
+Updated images (Go binaries replace Python scripts):
+
+| Image | Change |
+|-------|--------|
+| `master-agent` | Replace `scripts/task.py` with Go `task` binary. Add `inbox-reader` binary. |
+| `worker-claude` | Replace `scripts/worker.py` with Go `worker` binary. New `ENTRYPOINT`. |
+| `worker-copilot` | (inherits worker changes from base) |
+| `worker-opencode` | (inherits worker changes from base) |
+| `webui` (new) | Go `webui` binary, templates, static CSS. |
 
 New `webui` service in `docker-compose.yml`:
 
@@ -197,126 +310,132 @@ webui:
   restart: unless-stopped
 ```
 
-Modified `master` service — adds inbox-reader sidecar:
+`master` service is unchanged except the Docker image now contains Go binaries instead of Python scripts.
 
-```yaml
-master:
-  image: ${MASTER_AGENT_IMAGE:-master-agent:latest}
-  stdin_open: true
-  tty: true
-  restart: unless-stopped
-  volumes:
-    - workspace:/workspace
-  environment:
-    REDIS_HOST: redis
-    REDIS_PORT: "6379"
-    TASK_TIMEOUT: "1800"
-    ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
-    GH_TOKEN: ${GH_TOKEN}
-    GITHUB_TOKEN: ${GITHUB_TOKEN}
-  depends_on:
-    redis:
-      condition: service_healthy
-```
+Dockerfiles — the Go binaries are built once in a multi-stage build and copied into the appropriate images:
 
-New Dockerfile at `docker/webui/Dockerfile`:
-- Multi-stage: `golang:latest` builds a static binary (`CGO_ENABLED=0`), then copied into `ai-base`
-- Copies `internal/templates/` and `static/` for template rendering
-- `ENTRYPOINT ["/usr/local/bin/webui"]`
+- `docker/master-agent/Dockerfile` — copies `task` + `inbox-reader` binaries, removes `scripts/task.py`
+- `docker/worker-claude/Dockerfile` — copies `worker` binary, `ENTRYPOINT ["worker", "claude"]`, removes `scripts/worker.py`
+- `docker/webui/Dockerfile` — copies `webui` binary + `internal/templates/` + `static/`
 
 ### 9. File Structure
 
 ```
-webui/
-  go.mod
-  go.sum
-  main.go                       # Entry point: flags, Redis connect, router, server start
-  internal/
-    redis/
-      client.go                 # Redis connection, key name helpers
-      tasks.go                  # Task reads (status, result, list)
-      threads.go                # Thread reads + create (state, history, list)
-      workers.go                # Worker stats reads
-      inbox.go                  # Write to requests:inbox
-      tasks_test.go             # Unit tests with miniredis
-      threads_test.go
-    api/
-      router.go                 # Chi router, middleware (HTMX detection, error recovery)
-      requests.go               # POST /api/requests (write to inbox)
-      tasks.go                  # GET /api/tasks handlers (read-only)
-      threads.go                # GET/POST /api/threads handlers
-      workers.go                # GET /api/workers handlers
-      system.go                 # GET /api/health, /api/stats handlers
-    templates/
-      base.html                 # Layout shell (nav, HTMX CDN, polling)
-      dashboard.html            # Dashboard page
-      threads/
-        list.html               # Thread list
-        detail.html             # Thread detail
-        _state.html             # HTMX partial: state panel
-        _history.html           # HTMX partial: message timeline
-      tasks/
-        list.html               # Task list with filters
-        detail.html             # Task detail
-        _table.html             # HTMX partial: task table rows
-      workers/
-        _cards.html             # HTMX partial: worker status cards
-      requests/
-        _form.html              # HTMX partial: request form + submission response
-  static/
-    style.css                   # Minimal CSS
+go.mod                          # Single Go module for the whole repo
+go.sum
+
+tasklib/                        # Shared library — all Redis CRUD
+  client.go                     # Redis connection, key name helpers, TTL constants
+  tasks.go                      # Task CRUD
+  threads.go                    # Thread CRUD
+  workers.go                    # Worker stats
+  inbox.go                      # Write to requests:inbox
+  tasks_test.go                 # Unit tests with miniredis
+  threads_test.go
+
+cmd/
+  task/
+    main.go                     # CLI (cobra) — drop-in replacement for task.py
+  worker/
+    main.go                     # Worker loop — replacement for worker.py
+  inbox-reader/
+    main.go                     # BLPOP requests:inbox → stdout (plumbed to claude stdin)
+  webui/
+    main.go                     # HTTP server entry point
+    internal/
+      api/
+        router.go               # Chi router, HTMX detection middleware, error recovery
+        requests.go             # POST /api/requests (tasklib.PushRequest)
+        tasks.go                # GET /api/tasks handlers (read-only)
+        threads.go              # GET/POST /api/threads handlers
+        workers.go              # GET /api/workers handlers
+        system.go               # GET /api/health, /api/stats handlers
+      templates/
+        base.html               # Layout shell (nav, HTMX CDN, polling)
+        dashboard.html          # Dashboard page
+        threads/
+          list.html             # Thread list
+          detail.html           # Thread detail
+          _state.html           # HTMX partial: state panel
+          _history.html         # HTMX partial: message timeline
+        tasks/
+          list.html             # Task list with filters
+          detail.html           # Task detail
+          _table.html           # HTMX partial: task table rows
+        workers/
+          _cards.html           # HTMX partial: worker status cards
+        requests/
+          _form.html            # HTMX partial: request form + submission response
+    static/
+      style.css                 # Minimal CSS
 
 docker/
+  master-agent/
+    Dockerfile                  # UPDATED: Go task binary instead of task.py
+  worker-claude/
+    Dockerfile                  # UPDATED: Go worker binary instead of worker.py
   webui/
-    Dockerfile
+    Dockerfile                  # NEW
+
+scripts/                        # REMOVED after Go equivalents validated
+  task.py                       # → replaced by cmd/task
+  worker.py                     # → replaced by cmd/worker
 
 docker-compose.yml              # MODIFIED: add webui service
 ```
 
 ### 10. Redis Data Model
 
-The Go server reads the exact same Redis keys used by `task.py` and `worker.py` today. No migration needed.
+The Go `tasklib` reads and writes the exact same Redis keys used by `task.py` and `worker.py` today. No migration needed.
 
 One new key is added:
 
 | Key | Type | Purpose |
 |-----|------|---------|
-| `requests:inbox` | List | Pending web UI requests. The inbox-reader sidecar does `BLPOP` on this list. Each value is JSON: `{thread_id, repo, request, submitted_at}`. |
+| `requests:inbox` | List | Pending web UI requests. The inbox-reader does `BLPOP` on this list. Each value is JSON: `{thread_id, repo, request, submitted_at}`. |
 
-All other keys are unchanged and read-only from the web UI's perspective.
+All other keys are unchanged.
 
 ## Implementation Plan
 
-### Step 1: Go project scaffold + Redis read layer
+### Step 1: Go module scaffold + `tasklib` package
 
-Create `webui/` with `go.mod`, dependencies (`chi`, `go-redis`, `miniredis`). Implement `internal/redis/` package with read operations for tasks, threads, and workers, plus write operations for the inbox and thread creation. Write unit tests with `miniredis`.
+Create `go.mod` at repo root. Dependencies: `go-redis/v9`, `chi/v5`, `cobra`, `miniredis`. Implement `tasklib/` with full CRUD for tasks, threads, workers, and inbox. Cover all operations with `miniredis` unit tests. The tests must pass against the same key names and JSON shapes the Python code produces today.
 
-### Step 2: REST API handlers
+This is the highest-leverage step — `tasklib` correctness determines correctness of all three binaries.
 
-Build `internal/api/` package with chi router, HTMX detection middleware, and all `/api/` endpoints. Each handler checks `HX-Request` header to return either an HTML partial or JSON. The `POST /api/requests` handler writes to the Redis inbox.
+### Step 2: Go `task` CLI + `worker` binary
 
-### Step 3: HTML templates and CSS
+Build `cmd/task/main.go` — a `cobra` CLI with the same subcommands and flags as `task.py`. Build `cmd/worker/main.go` — the worker loop. Test side-by-side with the existing Python code against a shared Redis instance. Once validated, update Dockerfiles to use Go binaries and remove `scripts/task.py` and `scripts/worker.py`.
 
-Build all Go `html/template` files. Minimal CSS — clean, readable styles, no framework. HTMX attributes for polling (`hx-trigger="every 5s"`) on dashboard and thread detail sections.
+### Step 3: Inbox-reader sidecar
 
-### Step 4: Inbox-reader sidecar + master CLAUDE.md update
+Build `cmd/inbox-reader/main.go` — `BLPOP` on `requests:inbox`, write request text to stdout. Update `docker/master-agent/Dockerfile` to include the binary and plumb its stdout to claude's stdin. Update `docker/master-agent/CLAUDE.md` to tell the master that requests may arrive from the web UI.
 
-Add inbox-reader to the master container — either a small shell script or a `--sidecar` mode in the webui binary. Update `docker/master-agent/CLAUDE.md` to tell the master agent that requests may arrive from the web UI (via the inbox) in addition to interactive CLI. The processing flow is identical regardless of how the request arrives.
+### Step 4: Web UI REST API handlers
 
-### Step 5: Dockerize
+Build `cmd/webui/internal/api/` — chi router, HTMX detection middleware, all `/api/` endpoints backed by `tasklib`. Each handler checks `HX-Request` header to return either an HTML partial or JSON.
 
-Multi-stage Dockerfile for webui. Add `webui` service to `docker-compose.yml`. Update master container entrypoint to run both the inbox-reader and claude (via a wrapper script or supervisor). Update CI (`.github/workflows/build-images.yml`) to build and push `webui` image.
+### Step 5: HTML templates and CSS
 
-### Step 6: End-to-end test
+Build all Go `html/template` files under `cmd/webui/internal/templates/`. Minimal CSS — clean, readable styles, no framework. HTMX attributes for polling (`hx-trigger="every 5s"`) and form submissions.
 
-Spin up the full stack, submit a request via the web UI, verify the inbox-reader delivers it to the master agent, the master plans and delegates to workers, results appear in the thread detail page. Test REST API with `curl`. Verify HTMX polling updates.
+### Step 6: Dockerize
+
+Multi-stage Dockerfiles for all images. Add `webui` service to `docker-compose.yml`. Update CI (`.github/workflows/build-images.yml`) to build the Go binaries and all images.
+
+### Step 7: End-to-end test
+
+Spin up the full stack. Submit a request via the web UI → verify inbox-reader delivers to master → master plans and delegates via Go `task` CLI → Go workers consume, execute, return results → thread detail page shows real-time progress via HTMX polling. Test REST API with `curl`.
 
 ## Verification
 
-1. `docker compose up -d` starts all services including webui
-2. `curl http://localhost:8000/api/health` returns `{"redis":"ok","workers":{...}}`
-3. `curl -X POST http://localhost:8000/api/requests -H 'Content-Type: application/json' -d '{"thread_id":"test","request":"Say hello"}'` writes to the Redis inbox; returns `{"thread_id":"test","status":"submitted"}`
-4. The master agent picks up the request via the inbox-reader, processes it, and results flow back through Redis
-5. Browser at `http://localhost:8000` shows dashboard with worker cards, active threads
-6. Thread detail page at `/threads/test` shows message history updating in real time via HTMX polling, with master planning messages and worker responses
-7. `curl http://localhost:8000/api/tasks` returns JSON matching the UI display
+1. `go test ./tasklib/...` passes all unit tests with `miniredis`
+2. `docker compose up -d` starts all services including webui
+3. `curl http://localhost:8000/api/health` returns `{"redis":"ok","workers":{...}}`
+4. `curl -X POST http://localhost:8000/api/requests -H 'Content-Type: application/json' -d '{"thread_id":"test","request":"Say hello"}'` writes to the Redis inbox; returns `{"thread_id":"test","status":"submitted"}`
+5. The master agent picks up the request via the inbox-reader, processes it using the Go `task` CLI, and results flow back through Redis
+6. Browser at `http://localhost:8000` shows dashboard with worker cards, active threads
+7. Thread detail page at `/threads/test` shows message history updating in real time via HTMX polling, with master planning messages and worker responses
+8. `curl http://localhost:8000/api/tasks` returns JSON matching the UI display
+9. The Go `task` CLI produces identical output to `task.py` for the same Redis state: `task status --id <id>`, `task list`, `task thread-history --id <id>`
