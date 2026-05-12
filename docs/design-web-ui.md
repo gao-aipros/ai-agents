@@ -32,7 +32,7 @@ cmd/worker/main.go    # Go worker loop — replacement for worker.py
 cmd/webui/main.go     # Go HTTP server + HTMX frontend
 ```
 
-All three binaries are built from the same `go.mod`. The Go `tasklib` produces the exact same Redis key names, JSON shapes, and behavior as the current Python code. Python `task.py` and `worker.py` are **kept behind an env toggle** (`TASKLIB_BACKEND=python`) for one release cycle as a fallback, then removed.
+All three binaries are built from the same `go.mod`. The Go `tasklib` produces the exact same Redis key names, JSON shapes, and behavior as the current Python code. Python `task.py` and `worker.py` are **kept behind an env toggle** (`TASKLIB_BACKEND=python`) for one release cycle as a fallback. After Step 8 (end-to-end validation) passes, `TASKLIB_BACKEND=python` and the Python scripts are removed in the following release. The Go binaries become the sole implementation.
 
 ## Architecture
 
@@ -61,7 +61,7 @@ The Go web server has **no LLM client, no tool definitions, no planning logic**.
 When a user submits a request via the web UI:
 
 1. Web UI receives `POST /api/requests` with `{thread_id?, repo?, request}`.
-2. If `thread_id` is omitted, auto-generate one: `web_<unix_seconds>_<random 10-char base36>`. The 10 base36 characters provide ~3.6×10¹⁵ combinations — collision probability is negligible even under heavy concurrent use. `HSETNX` in the Lua script additionally guards against any collision.
+2. If `thread_id` is omitted, auto-generate one: `web_<unix_seconds>_<random 10-char base36 [0-9a-z]>`. The 10 base36 characters provide ~3.6×10¹⁵ combinations — collision probability is negligible even under heavy concurrent use. `HSETNX` in the Lua script additionally guards against any collision.
 3. Execute `tasklib.PushRequestAtomic` — a **Lua script** that atomically:
    - Creates the thread state hash if it doesn't exist (`HSETNX thread:<id>:current_state repo <repo>`)
    - Appends the user request to `thread:<id>:messages` as a JSON message with `role: "user"` and `source: "webui"`
@@ -212,7 +212,7 @@ Workers update a heartbeat key in their poll loop:
 |-----|------|-----|---------|
 | `worker:<type>:heartbeat` | String | 15s | Set by `cmd/worker` via `SETEX` on each poll iteration. The web UI checks for this key to determine online/offline status. If absent or expired, the worker is offline. |
 
-`GetWorkerStats()` reads all three heartbeat keys and reports `online: true/false` for each worker type. Expected detection latency: a dead worker will show as offline within ~15s (TTL expiry) plus up to 5s (next polling cycle). This is acceptable for a monitoring dashboard — it's not a real-time alerting system.
+`GetWorkerStats()` reports `online: true` when either the heartbeat key exists OR the `active_tasks` hash contains entries for this worker type. A worker running a long task (up to 30 minutes) keeps its `active_tasks` entries fresh while the heartbeat TTL is only 15s — the `active_tasks` check provides a secondary liveness signal that prevents false offline indicators during long-running work.
 
 The heartbeat key is per worker **type** (not per instance). Multiple replicas of the same worker type (e.g., 3 `worker-claude` containers) will race on the same key. For now, assume single-instance per worker type. Multi-instance support (instance-specific keys like `worker:<type>:<hostname>:heartbeat` with `SCAN`-based aggregation) is deferred to a future iteration.
 
@@ -248,17 +248,17 @@ Estimated ~350 lines of CLI glue (cobra dispatcher + output formatting + the one
 Long-running process that:
 
 1. Connects to Redis via `tasklib`
-2. Loops:
-   - `SETEX worker:<type>:heartbeat 15 "alive"` — update heartbeat (before BLMOVE, to avoid showing offline while holding a task)
+2. Starts a background **heartbeat goroutine** that runs `SETEX worker:<type>:heartbeat 15 "alive"` every 10 seconds, independently of task processing. This keeps the heartbeat fresh even during long task executions (up to `TASK_TIMEOUT`, default 30 minutes).
+3. Main loop:
    - `BLMOVE tasks:queue:<worker> tasks:processing:<worker>` with 5s timeout
-   - If no task, continue (heartbeat still updated)
-3. `HSET active_tasks <task_id> <task_info_json>` — mark as active (backward-compat with current `active_tasks` hash used by `task.py list`)
-4. Reads thread history and state via `tasklib`
-5. Builds a prompt from task instruction + thread context
-6. Executes `AGENT_CMD` (from env) as a subprocess with the prompt on stdin
-7. Writes result + exit code back via `tasklib` (`task:<id>:result`, `task:<id>:status`)
-8. `HDEL active_tasks <task_id>` — unmark
-9. Appends result to thread history via `tasklib`
+   - If no task, continue
+4. `HSET active_tasks <task_id> <task_info_json>` — mark as active (also serves as a secondary liveness signal: a worker with entries in `active_tasks` is alive regardless of heartbeat)
+5. Reads thread history and state via `tasklib`
+6. Builds a prompt from task instruction + thread context
+7. Executes `AGENT_CMD` (from env) as a subprocess with the prompt on stdin
+8. Writes result + exit code back via `tasklib` (`task:<id>:result`, `task:<id>:status`)
+9. `HDEL active_tasks <task_id>` — unmark
+10. Appends result to thread history via `tasklib`
 
 The worker binary takes a single argument: the worker type (`claude`, `copilot`, or `opencode`). It reads `AGENT_CMD` from the environment (set in the Dockerfile, same as today).
 
@@ -334,7 +334,7 @@ All endpoints return JSON. Every endpoint also serves HTMX partials when the `HX
 | `GET` | `/api/threads` | List all threads via `tasklib.ListThreads`. |
 | `GET` | `/api/threads/{thread_id}` | Get thread state + recent messages via `tasklib.GetThread`. |
 | `GET` | `/api/threads/{thread_id}/history` | Get full message history via `tasklib.GetThreadHistory`. Supports `?tail=N` and offset-based pagination (`?offset=M&limit=N`). |
-| `DELETE` | `/api/threads/{thread_id}/workspace` | Cleanup thread workspace directory (`<WORKSPACE_DIR>/<thread_id>/`). Requires `?confirm=true` query param to prevent accidental invocation. Auth-gated. Calls `os.RemoveAll` on the workspace path. |
+| `DELETE` | `/api/threads/{thread_id}/workspace` | Cleanup thread workspace directory. Validates that the resolved path is within `WORKSPACE_DIR` (rejects `../` traversal with 400). Requires `?confirm=true` query param. Auth-gated. |
 
 #### Workers (read-only)
 
@@ -404,12 +404,13 @@ How it works:
 4. `supervisor` does a `select` on the FIFO, TTY, and claude stdout file descriptors.
 5. Before writing to claude stdin, the supervisor checks `thread:<id>:current_state` via `tasklib` — if the thread status is `"cancelled"`, the request is dropped (a cancel raced with inbox delivery). This closes the race window between `CancelRequest` and the inbox-reader's `BLPOP`. It then monitors claude's stdout for the **prompt marker** — a configurable regex (`MASTER_PROMPT_MARKER`, default matches Claude Code's `"⏵ "` prompt). When the marker appears, the supervisor:
    - Captures the stdout output between request-write and prompt-marker
-   - Strips ANSI escape sequences from captured output (Claude Code emits spinner animations, color codes, etc.)
+   - Strips ANSI escape sequences and carriage-return-overwrites (`\r`) from captured output (Claude Code emits spinner animations, color codes, and line-rewrite progress bars)
    - Writes a `type: "response"` message to the thread history via `tasklib` with the cleaned output
    - Releases the mutex
 6. If the prompt marker is not detected within `MASTER_RESPONSE_TIMEOUT` (default 30 minutes), the supervisor writes a `type: "error"` message and releases the mutex. This timeout is generous because Claude Code tool calls (e.g., `task.py wait --timeout 300`) can take minutes.
-7. To prevent mutex starvation from long interactive CLI sessions, FIFO-side mutex acquisition has a configurable timeout (`MASTER_MUTEX_TIMEOUT`, default 5 minutes). If the mutex can't be acquired within this window, the request is re-queued via `LPUSH` back onto `requests:inbox` with a `retry_after` field (now + 30s). When `retry_after` is set and in the future, the inbox-reader skips the entry (no tight re-pop loop).
+7. To prevent mutex starvation from long interactive CLI sessions, FIFO-side mutex acquisition has a configurable timeout (`MASTER_MUTEX_TIMEOUT`, default 5 minutes). If the mutex can't be acquired within this window, the request is re-queued via `RPUSH` back onto `requests:inbox` (tail of the queue — maintains FIFO ordering) with a `retry_after` field (now + 30s). The inbox-reader `BLPOP`s the item, checks `retry_after`: if in the future, it `RPUSH`es the item back to the tail and `BLPOP`s again (no tight re-pop loop).
 8. On `SIGTERM` (Docker stop), the supervisor forwards the signal to claude, waits for graceful exit, then cleans up the FIFO and exits.
+9. If the supervisor itself crashes (panic, OOM), both `inbox-reader` and `claude` die with it. Docker restarts the container (`restart: unless-stopped`). Pending inbox entries remain in Redis — they're picked up after restart. Stale partial writes in the FIFO are handled by newline framing (incomplete lines without `\n` are discarded on next read start).
 
 The FIFO is created by the Dockerfile:
 
@@ -427,6 +428,9 @@ ENTRYPOINT ["/usr/local/bin/supervisor"]
 | `MASTER_PROMPT_MARKER` | `⏵ ` | Regex for Claude Code's ready-for-input prompt |
 | `MASTER_RESPONSE_TIMEOUT` | `1800` | Seconds before declaring the master hung (30 min) |
 | `MASTER_MUTEX_TIMEOUT` | `300` | Seconds before re-queueing a web request that can't get stdin (5 min) |
+| `MASTER_RESPONSE_MIN_ELAPSED` | `2` | Ignore prompt markers within first N seconds (prevents false match on initial output) |
+| `MASTER_RESPONSE_QUIET_PERIOD` | `3` | Seconds of no stdout growth before a marker is considered valid (prevents mid-output false match) |
+| `MASTER_RESPONSE_MAX_SIZE` | `65536` | Max bytes of captured stdout (64KB). Exceeded content is truncated with `...[truncated]` |
 
 ### 7. Authentication
 
