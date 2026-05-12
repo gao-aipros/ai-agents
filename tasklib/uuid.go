@@ -3,20 +3,16 @@ package tasklib
 import (
 	"crypto/rand"
 	"fmt"
-	"log"
 )
 
 // newUUID generates a UUID v4 string.
-func newUUID() string {
+func newUUID() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		log.Printf("tasklib: crypto/rand.Read failed: %v", err)
-		// Fall back to all-zero; UUID spec allows it, and callers
-		// (Enqueue, PushRequestAtomic) will fail at Redis level if this
-		// collides with an existing key.
+		return "", fmt.Errorf("crypto/rand.Read failed: %w", err)
 	}
 	b[6] = (b[6] & 0x0f) | 0x40 // version 4
 	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
-		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }

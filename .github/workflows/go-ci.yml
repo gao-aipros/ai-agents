@@ -27,5 +27,8 @@ jobs:
       - name: Build (arm64)
         run: GOARCH=arm64 go build ./...
 
-      - name: Test
+      - name: Test (arm64, no race)
+        run: GOARCH=arm64 go test ./... -count=1
+
+      - name: Test (amd64, race)
         run: go test ./... -count=1 -race

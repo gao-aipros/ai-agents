@@ -35,7 +35,10 @@ type PushRequestPayload struct {
 //
 // Uses a Lua script for atomicity. All three operations succeed or fail together.
 func (c *Client) PushRequestAtomic(ctx context.Context, threadID, repo, request string) error {
-	requestID := newUUID()
+	requestID, err := newUUID()
+	if err != nil {
+		return fmt.Errorf("generate request id: %w", err)
+	}
 	now := ts()
 
 	payload := PushRequestPayload{

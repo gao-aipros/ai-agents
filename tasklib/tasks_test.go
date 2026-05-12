@@ -2,6 +2,7 @@ package tasklib
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -137,7 +138,7 @@ func TestListTasks(t *testing.T) {
 		c.rdb.Set(ctx(), TaskKey(info.id, "status"), info.status, 0)
 		c.rdb.Set(ctx(), TaskKey(info.id, "worker"), info.worker, 0)
 		c.rdb.Set(ctx(), TaskKey(info.id, "thread_id"), info.thread, 0)
-		c.rdb.Set(ctx(), TaskKey(info.id, "created_at"), "2025-01-0"+itoa(i+1)+"T00:00:00Z", 0)
+		c.rdb.Set(ctx(), TaskKey(info.id, "created_at"), "2025-01-0"+strconv.Itoa(i+1)+"T00:00:00Z", 0)
 	}
 
 	tasks, err := c.ListTasks(ctx(), "", "", "", 50, 0)
@@ -169,7 +170,7 @@ func TestListTasksLimitAndOffset(t *testing.T) {
 	c, _ := setupTestClient(t)
 
 	for i := 0; i < 10; i++ {
-		id := "t" + itoa(i)
+		id := "t" + strconv.Itoa(i)
 		c.rdb.Set(ctx(), TaskKey(id, "status"), "done", 0)
 		c.rdb.Set(ctx(), TaskKey(id, "worker"), "claude", 0)
 		c.rdb.Set(ctx(), TaskKey(id, "thread_id"), "thr1", 0)
@@ -256,13 +257,13 @@ func TestListTasksWithFilters(t *testing.T) {
 
 	// Populate tasks: 5 claude tasks, then 3 copilot tasks
 	for i := 0; i < 5; i++ {
-		id := "c-" + itoa(i)
+		id := "c-" + strconv.Itoa(i)
 		c.rdb.Set(ctx(), TaskKey(id, "status"), "done", 0)
 		c.rdb.Set(ctx(), TaskKey(id, "worker"), "claude", 0)
 		c.rdb.Set(ctx(), TaskKey(id, "thread_id"), "thr1", 0)
 	}
 	for i := 0; i < 3; i++ {
-		id := "p-" + itoa(i)
+		id := "p-" + strconv.Itoa(i)
 		c.rdb.Set(ctx(), TaskKey(id, "status"), "done", 0)
 		c.rdb.Set(ctx(), TaskKey(id, "worker"), "copilot", 0)
 		c.rdb.Set(ctx(), TaskKey(id, "thread_id"), "thr1", 0)
@@ -817,15 +818,3 @@ func TestCancelRequestNoop(t *testing.T) {
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────
-
-func itoa(i int) string {
-	if i == 0 {
-		return "0"
-	}
-	s := ""
-	for i > 0 {
-		s = string(rune('0'+i%10)) + s
-		i /= 10
-	}
-	return s
-}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -45,7 +46,10 @@ type TaskInfo struct {
 // task.py cmd_enqueue: acquires thread lock, appends to thread history,
 // LPUSHes to queue, initializes per-task keys. Returns the created task.
 func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction string) (*Task, error) {
-	taskID := newUUID()
+	taskID, err := newUUID()
+	if err != nil {
+		return nil, fmt.Errorf("generate task id: %w", err)
+	}
 	now := ts()
 
 	// Acquire thread lock (serialize tasks on the same thread)
@@ -123,7 +127,9 @@ func (c *Client) GetTask(ctx context.Context, taskID string) (*Task, error) {
 		cmds[i] = pipe.Get(ctx, TaskKey(taskID, k))
 	}
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
-		// one or more keys missing — that's ok, they'll be nil strings
+		// Exec only returns redis.Nil when every command in the pipeline
+		// returned nil. Individual key misses are surfaced by the
+		// per-command Result() calls below and are handled there.
 	}
 
 	t := &Task{TaskID: taskID}
@@ -259,6 +265,9 @@ func (c *Client) ListTasks(ctx context.Context, worker, status, threadID string,
 		}
 		rows = append(rows, task)
 	}
+
+	// Sort by task ID for deterministic pagination (matching Python sorted(tasks.keys()))
+	sort.Slice(rows, func(i, j int) bool { return rows[i].TaskID < rows[j].TaskID })
 
 	// Apply offset
 	if offset > 0 && offset < len(rows) {
