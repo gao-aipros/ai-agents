@@ -336,22 +336,28 @@ func (c *Client) WaitTask(ctx context.Context, taskID, threadID string, timeout 
 	}
 }
 
-// CancelTask sets the cancel flag and updates the task status to "cancelled".
-// If the task is currently running, the worker will also check the cancel flag
-// before starting. Cancelling an already-terminated task is a no-op for the
-// status (but still sets the cancel flag for idempotency).
+// CancelTask sets the cancel flag so workers check it before starting.
+// The status is set to "cancelled" only if the task is not already in a
+// terminal state (done/failed/cancelled) — once a task has finished, its
+// result is preserved.
 func (c *Client) CancelTask(ctx context.Context, taskID string) error {
-	exists, err := c.rdb.Exists(ctx, TaskKey(taskID, "status")).Result()
+	current, err := c.rdb.Get(ctx, TaskKey(taskID, "status")).Result()
+	if err == redis.Nil {
+		return fmt.Errorf("task %s not found", taskID)
+	}
 	if err != nil {
 		return err
-	}
-	if exists == 0 {
-		return fmt.Errorf("task %s not found", taskID)
 	}
 
 	pipe := c.rdb.Pipeline()
 	pipe.Set(ctx, TaskKey(taskID, "cancel"), "1", TTLTask)
-	pipe.Set(ctx, TaskKey(taskID, "status"), "cancelled", TTLTask)
+	switch current {
+	case "done", "failed", "cancelled":
+		// Already terminal — don't overwrite the status, just set the
+		// cancel flag for idempotency.
+	default:
+		pipe.Set(ctx, TaskKey(taskID, "status"), "cancelled", TTLTask)
+	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return err
 	}

@@ -215,6 +215,42 @@ func TestCancelTask(t *testing.T) {
 	}
 }
 
+func TestCancelTaskPreservesTerminalStatus(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Cancelling a "done" task should NOT overwrite status
+	c.rdb.Set(ctx(), TaskKey("done-task", "status"), "done", 0)
+	c.rdb.Set(ctx(), TaskKey("done-task", "worker"), "claude", 0)
+	c.rdb.Set(ctx(), TaskKey("done-task", "thread_id"), "thr1", 0)
+	c.rdb.Set(ctx(), TaskKey("done-task", "result"), "important output", 0)
+
+	err := c.CancelTask(ctx(), "done-task")
+	if err != nil {
+		t.Fatalf("CancelTask on done task failed: %v", err)
+	}
+
+	status, _ := c.rdb.Get(ctx(), TaskKey("done-task", "status")).Result()
+	if status != "done" {
+		t.Errorf("expected status 'done' preserved, got '%s'", status)
+	}
+
+	// Cancelling a "failed" task should NOT overwrite status
+	c.rdb.Set(ctx(), TaskKey("fail-task", "status"), "failed", 0)
+	c.CancelTask(ctx(), "fail-task")
+	status, _ = c.rdb.Get(ctx(), TaskKey("fail-task", "status")).Result()
+	if status != "failed" {
+		t.Errorf("expected status 'failed' preserved, got '%s'", status)
+	}
+
+	// Cancelling a "running" task SHOULD set to cancelled
+	c.rdb.Set(ctx(), TaskKey("run-task", "status"), "running", 0)
+	c.CancelTask(ctx(), "run-task")
+	status, _ = c.rdb.Get(ctx(), TaskKey("run-task", "status")).Result()
+	if status != "cancelled" {
+		t.Errorf("expected status 'cancelled' for running task, got '%s'", status)
+	}
+}
+
 func TestListTasksWithFilters(t *testing.T) {
 	c, _ := setupTestClient(t)
 
