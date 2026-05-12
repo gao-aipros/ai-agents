@@ -66,7 +66,7 @@ When a user submits a request via the web UI:
 4. An inbox-reader sidecar in the master container does `BLPOP` on `requests:inbox`, then writes the request text to a **named pipe** (`/tmp/master-inbox.fifo`).
 5. A **supervisor process** in the master container multiplexes stdin from two sources (the named pipe and the interactive TTY) using a mutex — only one source writes to claude's stdin at a time. If the master is mid-response, the inbox-reader waits for the mutex.
 6. The master agent processes the request exactly as if the user typed it — plans, delegates via Go `task` CLI to workers, aggregates results.
-7. When the master finishes, it writes a final message to thread history with `role: "master"` and `type: "response"`. The web UI detects this and displays a **response banner** ("The master agent has responded") on the thread detail page.
+7. When the supervisor detects claude's prompt marker on stdout, it writes a `type: "response"` message to the thread history (see Response detection below).
 8. All state (thread messages, task statuses, results) is written to Redis by the master and workers — same Redis keys as today.
 9. The web UI polls Redis (via its own REST API, backed by `tasklib`) to show live progress to the browser user.
 
@@ -384,13 +384,16 @@ How it works:
 1. `supervisor` spawns both `inbox-reader` and `claude` as child processes. On startup, it checks `/tmp/inbox-reader.pid` for a stale process from a previous (crashed) supervisor, sends `SIGTERM` if found, and removes the PID file before re-creating the FIFO. If `inbox-reader` exits unexpectedly during normal operation, the supervisor respawns it after a 1s backoff.
 2. `inbox-reader` runs a reconnect-on-error loop: `BLPOP requests:inbox 0` wrapped in a retry that reconnects to Redis on `ConnectionError`, identical to `worker.py`'s behavior today.
 3. `supervisor` opens the FIFO with `O_NONBLOCK` so that a stale partial write from a previous (crashed) supervisor instance doesn't block the new supervisor on startup. The supervisor creates and opens the FIFO reader end **before** spawning the inbox-reader, so the inbox-reader's `open(WRONLY)` never blocks on `ENXIO`.
+
+**FIFO message framing:** Requests are written as **newline-delimited JSON** (`<json>\n`). The supervisor accumulates reads into a buffer, splitting on `\n` to get complete messages. This handles partial reads (Linux PIPE_BUF is 4KB and payloads can be ~32.5KB — writes larger than PIPE_BUF are non-atomic).
 4. `supervisor` does a `select` on the FIFO, TTY, and claude stdout file descriptors.
 5. Before writing to claude stdin, the supervisor checks `thread:<id>:current_state` via `tasklib` — if the thread status is `"cancelled"`, the request is dropped (a cancel raced with inbox delivery). This closes the race window between `CancelRequest` and the inbox-reader's `BLPOP`. It then monitors claude's stdout for the **prompt marker** — a configurable regex (`MASTER_PROMPT_MARKER`, default matches Claude Code's `"⏵ "` prompt). When the marker appears, the supervisor:
    - Captures the stdout output between request-write and prompt-marker
-   - Writes a `type: "response"` message to the thread history via `tasklib`
+   - Strips ANSI escape sequences from captured output (Claude Code emits spinner animations, color codes, etc.)
+   - Writes a `type: "response"` message to the thread history via `tasklib` with the cleaned output
    - Releases the mutex
 6. If the prompt marker is not detected within `MASTER_RESPONSE_TIMEOUT` (default 30 minutes), the supervisor writes a `type: "error"` message and releases the mutex. This timeout is generous because Claude Code tool calls (e.g., `task.py wait --timeout 300`) can take minutes.
-7. To prevent mutex starvation from long interactive CLI sessions, FIFO-side mutex acquisition has a configurable timeout (`MASTER_MUTEX_TIMEOUT`, default 5 minutes). If the mutex can't be acquired within this window, the request is re-queued (LPUSH back onto `requests:inbox`).
+7. To prevent mutex starvation from long interactive CLI sessions, FIFO-side mutex acquisition has a configurable timeout (`MASTER_MUTEX_TIMEOUT`, default 5 minutes). If the mutex can't be acquired within this window, the request is re-queued via `LPUSH` back onto `requests:inbox` with a `retry_after` field (now + 30s). When `retry_after` is set and in the future, the inbox-reader skips the entry (no tight re-pop loop).
 8. On `SIGTERM` (Docker stop), the supervisor forwards the signal to claude, waits for graceful exit, then cleans up the FIFO and exits.
 
 The FIFO is created by the Dockerfile:
@@ -554,13 +557,13 @@ docker-compose.yml              # MODIFIED: add webui service, TASKLIB_BACKEND e
 
 The Go `tasklib` reads and writes the exact same Redis keys used by `task.py` and `worker.py` today. No migration needed.
 
-New keys added:
+Keys used by tasklib (all pre-existing except those marked NEW):
 
 | Key | Type | Purpose |
 |-----|------|---------|
-| `active_tasks` | Hash | Currently executing tasks. Keyed by `task_id`, value is JSON task info. Written by `cmd/worker` (HSET on start, HDEL on completion). Read by `task list` and web UI. Backward-compat with current `worker.py`/`task.py`. |
-| `requests:inbox` | List | Pending web UI requests. The inbox-reader does `BLPOP` on this list. Each value is JSON: `{thread_id, repo, request, submitted_at}`. |
-| `worker:<type>:heartbeat` | String (SETEX, 15s TTL) | Worker liveness. Set by `cmd/worker` on each poll iteration. Read by `GetWorkerStats` to determine online/offline. |
+| `active_tasks` | Hash | **Existing.** Currently executing tasks. Keyed by `task_id`, value is JSON task info. Written by `cmd/worker` (HSET on start, HDEL on completion). Read by `task list` and web UI. |
+| `requests:inbox` | List (NEW) | Pending web UI requests. The inbox-reader does `BLPOP` on this list. Each value is JSON: `{thread_id, repo, request, submitted_at}`. |
+| `worker:<type>:heartbeat` | String (NEW, SETEX, 15s TTL) | Worker liveness. Set by `cmd/worker` on each poll iteration. Read by `GetWorkerStats` to determine online/offline. |
 
 Thread message taxonomy — all messages in `thread:<id>:messages` have `role`, `type`, `content`, and `timestamp` fields:
 
@@ -604,7 +607,7 @@ Build `cmd/task/main.go` — a `cobra` CLI with the same subcommands and flags a
 
 Build `cmd/supervisor/main.go` — stdin multiplexer (select loop, mutex, FIFO + TTY → claude stdin). Build `cmd/inbox-reader/main.go` — `BLPOP` on `requests:inbox`, write to `/tmp/master-inbox.fifo`. Update `docker/master-agent/Dockerfile` with `mkfifo` and new `ENTRYPOINT`. Update `docker/master-agent/CLAUDE.md` with:
 - Awareness that requests may arrive from the web UI (via the inbox) in addition to interactive CLI
-- The response convention: write final message with `role: "master"`, `type: "response"`
+- That completion is detected automatically by the supervisor (master does not need to self-report)
 
 ### Step 5: Web UI REST API handlers
 
@@ -620,7 +623,7 @@ Multi-stage Dockerfiles for all images. `webui` uses `gcr.io/distroless/static-d
 
 ### Step 8: End-to-end test
 
-Spin up the full stack. Submit a request via the web UI → verify inbox-reader delivers to supervisor FIFO → supervisor writes to claude stdin → master plans and delegates via Go `task` CLI → Go workers consume, execute, return results → master writes response message → thread detail page shows response banner via HTMX polling. Test REST API with `curl`. Verify auth middleware rejects unauthenticated mutations when `WEBUI_API_KEY` is set.
+Spin up the full stack. Submit a request via the web UI → verify inbox-reader delivers to supervisor FIFO → supervisor writes to claude stdin → master plans and delegates via Go `task` CLI → Go workers consume, execute, return results → supervisor detects prompt marker on claude stdout → supervisor writes `type: "response"` message → thread detail page shows response banner via HTMX polling. Test REST API with `curl`. Verify auth middleware rejects unauthenticated mutations when `WEBUI_API_KEY` is set.
 
 ## Verification
 
