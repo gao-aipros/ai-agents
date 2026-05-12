@@ -203,10 +203,10 @@ func TestCancelTask(t *testing.T) {
 		t.Errorf("expected cancel flag '1', got '%s'", val)
 	}
 
-	// Verify status is set to cancelled (so WaitTask returns immediately)
+	// Status must NOT be changed by CancelTask (matches task.py behavior)
 	status, _ := c.rdb.Get(ctx(), TaskKey("t1", "status")).Result()
-	if status != "cancelled" {
-		t.Errorf("expected status 'cancelled', got '%s'", status)
+	if status != "pending" {
+		t.Errorf("expected status 'pending' preserved, got '%s'", status)
 	}
 
 	// Cancel non-existent task
@@ -216,39 +216,31 @@ func TestCancelTask(t *testing.T) {
 	}
 }
 
-func TestCancelTaskPreservesTerminalStatus(t *testing.T) {
+func TestCancelTaskPreservesAllStatuses(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	// Cancelling a "done" task should NOT overwrite status
-	c.rdb.Set(ctx(), TaskKey("done-task", "status"), "done", 0)
-	c.rdb.Set(ctx(), TaskKey("done-task", "worker"), "claude", 0)
-	c.rdb.Set(ctx(), TaskKey("done-task", "thread_id"), "thr1", 0)
-	c.rdb.Set(ctx(), TaskKey("done-task", "result"), "important output", 0)
+	for _, status := range []string{"pending", "running", "done", "failed", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			taskID := "ct-" + status
+			c.rdb.Set(ctx(), TaskKey(taskID, "status"), status, 0)
 
-	err := c.CancelTask(ctx(), "done-task")
-	if err != nil {
-		t.Fatalf("CancelTask on done task failed: %v", err)
-	}
+			err := c.CancelTask(ctx(), taskID)
+			if err != nil {
+				t.Fatalf("CancelTask on %s failed: %v", status, err)
+			}
 
-	status, _ := c.rdb.Get(ctx(), TaskKey("done-task", "status")).Result()
-	if status != "done" {
-		t.Errorf("expected status 'done' preserved, got '%s'", status)
-	}
+			// Cancel flag should be set
+			flag, _ := c.rdb.Get(ctx(), TaskKey(taskID, "cancel")).Result()
+			if flag != "1" {
+				t.Errorf("expected cancel flag '1' for %s, got '%s'", status, flag)
+			}
 
-	// Cancelling a "failed" task should NOT overwrite status
-	c.rdb.Set(ctx(), TaskKey("fail-task", "status"), "failed", 0)
-	c.CancelTask(ctx(), "fail-task")
-	status, _ = c.rdb.Get(ctx(), TaskKey("fail-task", "status")).Result()
-	if status != "failed" {
-		t.Errorf("expected status 'failed' preserved, got '%s'", status)
-	}
-
-	// Cancelling a "running" task SHOULD set to cancelled
-	c.rdb.Set(ctx(), TaskKey("run-task", "status"), "running", 0)
-	c.CancelTask(ctx(), "run-task")
-	status, _ = c.rdb.Get(ctx(), TaskKey("run-task", "status")).Result()
-	if status != "cancelled" {
-		t.Errorf("expected status 'cancelled' for running task, got '%s'", status)
+			// Status must NOT change
+			current, _ := c.rdb.Get(ctx(), TaskKey(taskID, "status")).Result()
+			if current != status {
+				t.Errorf("expected status '%s' preserved, got '%s'", status, current)
+			}
+		})
 	}
 }
 

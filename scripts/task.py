@@ -14,6 +14,7 @@ import redis
 
 REDIS_HOST = os.environ.get("REDIS_HOST", "redis")
 REDIS_PORT = int(os.environ.get("REDIS_PORT", 6379))
+REDIS_DB = int(os.environ.get("COMPAT_TEST_DB", 0))
 TASK_TIMEOUT = int(os.environ.get("TASK_TIMEOUT", 1800))
 WORKSPACE_DIR = os.environ.get("WORKSPACE_DIR", "/workspace")
 TTL_TASK = 86400       # 24 hours
@@ -24,7 +25,7 @@ WORKERS = ("claude", "copilot", "opencode")
 
 
 def get_redis():
-    return redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+    return redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, decode_responses=True)
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
