@@ -25,6 +25,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Worker poll loop
 COPY scripts/worker.py /usr/local/bin/worker.py
 
+ENV AGENT_CMD="claude -p --dangerously-skip-permissions"
+
 RUN mkdir -p /home/agent/go /home/agent/.claude \
     && chown -R agent:agent /home/agent/go /home/agent/.claude
 COPY --chown=agent:agent docker/worker-claude/CLAUDE.md /home/agent/.claude/CLAUDE.md

@@ -45,6 +45,8 @@ RUN mkdir -p /home/agent/go && chown -R agent:agent /home/agent/go && \
 ENV OPENCODE_PROVIDER=deepseek \
     OPENCODE_MODEL=deepseek-v4-pro
 
+ENV AGENT_CMD="opencode -m ${OPENCODE_PROVIDER}/${OPENCODE_MODEL} run --dangerously-skip-permissions"
+
 # API key — pass at build time (--build-arg) or runtime (-e)
 ARG DEEPSEEK_API_KEY
 ENV DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}

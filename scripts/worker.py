@@ -22,7 +22,7 @@ import redis
 WORKER = os.environ["WORKER_TYPE"]
 QUEUE = f"tasks:queue:{WORKER}"
 PROCESSING = f"tasks:processing:{WORKER}"
-AGENT_CMD = os.environ.get("AGENT_CMD", "claude -p")
+AGENT_CMD = os.path.expandvars(os.environ.get("AGENT_CMD", "claude -p"))
 HISTORY_WINDOW = int(os.environ.get("HISTORY_WINDOW", 10))
 TTL_THREAD = 604800   # 7 days
 TTL_TASK = 86400      # 24 hours

@@ -35,7 +35,6 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       WORKER_TYPE: claude
-      AGENT_CMD: "claude -p"
       TASK_TIMEOUT: "1800"
       HISTORY_WINDOW: "10"
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
@@ -59,7 +58,6 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       WORKER_TYPE: copilot
-      AGENT_CMD: "copilot -p --allow-all"
       TASK_TIMEOUT: "1800"
       HISTORY_WINDOW: "10"
       COPILOT_PROVIDER_API_KEY: ${DEEPSEEK_API_KEY}
@@ -83,7 +81,6 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       WORKER_TYPE: opencode
-      AGENT_CMD: "opencode -m deepseek/deepseek-v4-pro run --dangerously-skip-permissions"
       TASK_TIMEOUT: "1800"
       HISTORY_WINDOW: "10"
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
