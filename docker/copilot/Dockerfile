@@ -35,7 +35,8 @@ ENV COPILOT_PROVIDER_TYPE=anthropic \
     COPILOT_PROVIDER_BASE_URL=https://api.deepseek.com/anthropic \
     COPILOT_MODEL=deepseek-v4-pro[1m] \
     COPILOT_PROVIDER_MAX_PROMPT_TOKENS=840000 \
-    COPILOT_PROVIDER_MAX_OUTPUT_TOKENS=128000
+    COPILOT_PROVIDER_MAX_OUTPUT_TOKENS=128000 \
+    AGENT_CMD="copilot --allow-all -p"
 
 # API key — pass at build time (--build-arg) or runtime (-e)
 ARG COPILOT_PROVIDER_API_KEY
