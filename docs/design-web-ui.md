@@ -71,7 +71,7 @@ When a user submits a request via the web UI:
 2. If `thread_id` is omitted, auto-generate one: `web_<unix_seconds>_<random 10-char base36 [0-9a-z]>`. The 10 base36 characters provide ~3.6×10¹⁵ combinations — collision probability is negligible even under heavy concurrent use. `HSETNX` in the Lua script additionally guards against any collision.
 3. Execute `tasklib.PushRequestAtomic` — a **Lua script** that atomically:
    - Sets the thread state repo field if not already present (`HEXISTS thread:<id>:current_state gh_repo` → `HSET gh_repo <repo>` if missing; maps REST body `repo` to Redis field `gh_repo` for backward-compat with task.py)
-   - Appends the user request to `thread:<id>:messages` as a JSON message with `role: "user"` and `source: "webui"`
+   - Appends the user request to `thread:<id>:messages` as a JSON message with `role: "user"`, `type: "request"`, and `source: "webui"`
    - LPUSHes the request payload onto `requests:inbox`
    All three operations succeed or fail together — no orphan thread shells. A separate `POST /api/threads` endpoint still exists for creating a thread without submitting a request (e.g., pre-configuring repo metadata before the first request).
 4. The web UI responds with `{thread_id, status: "submitted"}` and the browser **redirects** to `/threads/{thread_id}`.
@@ -208,11 +208,11 @@ func (c *Client) UpdateWorkerHeartbeat(workerType, hostname string) error  // SE
 func (c *Client) PushRequestAtomic(threadID, repo, request string) error
 
 // CancelRequest atomically (Lua script):
-//   1. Removes the request from requests:inbox
+//   1. Removes the request from requests:inbox and requests:inbox_processing
 //   2. Sets thread:<id>:current_state status to "cancelled"
-// Used by the web UI. Only works for requests still in the inbox (not yet picked up).
-// For requests already being processed, the thread status update signals the master
-// to abort gracefully (master checks status early in its processing loop).
+// Used by the web UI. Covers both inbox and processing list (race with LMOVE).
+// If the supervisor has already begun processing, it checks thread status before
+// writing to claude stdin and will drop the cancelled request.
 func (c *Client) CancelRequest(threadID string) error
 ```
 
@@ -241,7 +241,7 @@ This supports horizontal worker scaling immediately — no migration needed late
 
 **Orphaned heartbeat cleanup:** Docker restarts change container hostnames, leaving stale keys from previous instances. `GetWorkerStats()` filters `SCAN` results: keys without a TTL (or with TTL < 0) are skipped. Additionally, a periodic cleanup removes keys whose value contains a different instance ID than the current generation.
 
-`GetWorkerStats()` reports `online: true` when either the heartbeat key for that specific hostname exists OR the `active_tasks` hash contains entries that were written by that same hostname (each `active_tasks` entry value includes `"worker_hostname"`). This prevents a crashed instance's stale `active_tasks` entries from showing a different instance as online. A worker running a long task (up to 30 minutes) keeps its `active_tasks` entries fresh while the heartbeat TTL is only 15s.
+`GetWorkerStats()` reports `online: true` when either the heartbeat key for that specific hostname exists OR the `active_tasks` hash contains entries that were written by that same hostname (each `active_tasks` entry value includes `"worker_hostname"`). This prevents a crashed instance's stale `active_tasks` entries from showing a different instance as online. A worker running a long task (up to 30 minutes) keeps its `active_tasks` entries fresh while the heartbeat TTL is only 30s (refreshed every 10s, 20s margin).
 
 **Stale active_tasks cleanup:** A crashed worker leaves orphaned entries in `active_tasks`. A periodic cleanup goroutine in `cmd/webui` (which is always running, unlike a potentially-crashed worker) HDELs entries where the task status key (`task:<id>:status`) is missing or has been `done`/`failed`/`cancelled` for more than 60 seconds. This prevents permanently-false online indicators from crashed workers.
 
@@ -279,7 +279,7 @@ Long-running process that:
 1. Connects to Redis via `tasklib`
 2. Starts a background **heartbeat goroutine** that runs `SETEX worker:<type>:<hostname>:heartbeat 30 1` every 10 seconds (30s TTL with 10s refresh = 20s margin for GC pauses and Redis blips; hostname from `os.Hostname()`, read once at startup), independently of task processing. This keeps the heartbeat fresh even during long task executions (up to `TASK_TIMEOUT`, default 30 minutes).
 3. Main loop:
-   - `BLMOVE tasks:queue:<worker> tasks:processing:<worker>` with 5s timeout
+   - `BLMOVE tasks:queue:<worker> tasks:processing:<worker> RIGHT LEFT` with 5s timeout (direction matches `worker.py`: `src="RIGHT"`, `dest="LEFT"`)
    - If no task, continue
 4. `HSET active_tasks <task_id> <task_info_json>` — mark as active (also serves as a secondary liveness signal: a worker with entries in `active_tasks` is alive regardless of heartbeat)
 5. Reads thread history and state via `tasklib`
@@ -443,7 +443,7 @@ How it works:
 6. If the prompt marker is not detected within `MASTER_RESPONSE_TIMEOUT` (default 30 minutes), the supervisor writes a `type: "error"` message and releases the mutex. This timeout is generous because Claude Code tool calls (e.g., `task.py wait --timeout 300`) can take minutes.
 7. To prevent mutex starvation from long interactive CLI sessions, FIFO-side mutex acquisition has a configurable timeout (`MASTER_MUTEX_TIMEOUT`, default 5 minutes). If the mutex can't be acquired within this window, the request is re-queued via `RPUSH` with a `retry_after` field (now + 30s) and an incremented `retry_count`. After `MASTER_RETRY_MAX` (default 3), the request is abandoned and the web UI receives a `410 Gone` via a status update to the thread. The inbox-reader skips entries with `retry_after > now`, `RPUSH`ing them back to the tail (no tight re-pop loop).
 8. On `SIGTERM` (Docker stop), the supervisor forwards the signal to claude, waits for graceful exit, then cleans up the FIFO and exits.
-9. If the supervisor itself crashes (panic, OOM), both `inbox-reader` and `claude` die with it. Docker restarts the container (`restart: unless-stopped`). Pending inbox entries remain in Redis — they're picked up after restart. Stale partial writes in the FIFO are handled by newline framing (incomplete lines without `\n` are discarded on next read start).
+9. If the supervisor itself crashes (panic, OOM), both `inbox-reader` and `claude` die with it. Docker restarts the container (`restart: unless-stopped`). Pending inbox entries remain in Redis — they're picked up after restart. The supervisor's startup sweep not only restores stranded `requests:inbox_processing` entries but also **DEL**'s any stale `requests:inbox:pending:*` sentinels for threads that already have a `type: "response"` or `type: "error"` message (leftover from a crash mid-completion). To prevent crash loops from repeatedly `LMOVE`ing new requests, the supervisor tracks consecutive crash count via a `supervisor:restart_count` Redis key (TTL 60s) and skips the processing-list sweep if the count exceeds 3.
 
 The FIFO is created by the Dockerfile:
 
@@ -458,7 +458,7 @@ ENTRYPOINT ["/usr/local/bin/supervisor"]
 
 | Env var | Default | Purpose |
 |---------|---------|---------|
-| `MASTER_PROMPT_MARKER` | `⏵ ` | Regex for Claude Code's ready-for-input prompt |
+| `MASTER_PROMPT_MARKER` | `⏵ ` (UTF-8: `\xe2\x8f\xb5 `) | Regex for Claude Code's ready-for-input prompt. Only the FIFO-triggered response path performs marker detection; TTY-initiated input (interactive CLI) does not check for markers. |
 | `MASTER_RESPONSE_TIMEOUT` | `1800` | Seconds before declaring the master hung (30 min) |
 | `MASTER_MUTEX_TIMEOUT` | `300` | Seconds before re-queueing a web request that can't get stdin (5 min) |
 | `MASTER_RESPONSE_MIN_ELAPSED` | `2` | Ignore prompt markers within first N seconds (prevents false match on initial output) |
@@ -638,9 +638,12 @@ Thread message taxonomy — all messages in `thread:<id>:messages` have `role`, 
 | `"master"` | `"tool_call"` | Master agent invoking a tool (task.py) | Dashed border, muted |
 | `"master"` | `"response"` | Final response written by supervisor | Green banner |
 | `"master"` | `"error"` | Error written by supervisor | Red banner |
-| `"worker"` | `"result"` | Worker agent task result | Solid border, worker color-coded |
+| `"worker"` | `"result"` | Worker agent task result (new Go worker) | Solid border, worker color-coded |
+| `"claude"` | `"result"` | Legacy: Python worker role (backward-compat) | Same as `worker` |
+| `"copilot"` | `"result"` | Legacy: Python worker role (backward-compat) | Same as `worker` |
+| `"opencode"` | `"result"` | Legacy: Python worker role (backward-compat) | Same as `worker` |
 
-The web UI renders each type appropriately in the message timeline from day one. Unknown types fall back to plain-text rendering.
+During the `TASKLIB_BACKEND=python` transition period, both old (`role: "claude"`) and new (`role: "worker"`) messages coexist. The web UI rendering maps all four to the same visual treatment. Unknown types fall back to plain-text rendering.
 
 All other keys are unchanged.
 
