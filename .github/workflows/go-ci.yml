@@ -26,9 +26,8 @@ jobs:
 
       - name: Build (arm64)
         run: GOARCH=arm64 go build ./...
-
-      - name: Test (arm64, no race)
-        run: GOARCH=arm64 go test ./... -count=1
+        # ARM64 cross-compilation verified; tests can't run without
+        # a native ARM64 runner or QEMU user-mode emulation.
 
       - name: Test (amd64, race)
         run: go test ./... -count=1 -race
