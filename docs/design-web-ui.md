@@ -88,7 +88,7 @@ When a user submits a request via the web UI:
 
 **What the user sees:**
 - After submission, the browser is on `/threads/{thread_id}` showing the message history
-- A "Waiting for master..." indicator with elapsed timer is visible while the thread is `planning`
+- A "Waiting for master..." indicator with elapsed timer is visible while the thread is `planning` or `initiated` (the current Python `task.py` uses `"initiated"`; the web UI treats both as pending)
 - When the supervisor writes the response, the next poll cycle picks it up and the response banner replaces the waiting indicator
 - The full message timeline (user request → master plan → delegated tasks → worker results → master response) is visible on one scrollable page
 
@@ -181,7 +181,7 @@ func (c *Client) RequeueStale(worker string, olderThan time.Duration) ([]string,
 func (c *Client) CreateThread(threadID, repo string) (*Thread, error)
 func (c *Client) GetThread(threadID string) (*Thread, error)
 func (c *Client) ListThreads() ([]*Thread, error)
-func (c *Client) GetThreadHistory(threadID string, tail int) ([]Message, error)
+func (c *Client) GetThreadHistory(threadID string, offset, limit int) ([]Message, error)
 func (c *Client) UpdateThread(threadID string, fields map[string]string) error
 func (c *Client) LockThread(threadID, taskID string, ttl time.Duration) (bool, error) // SET NX thread:<id>:lock
 func (c *Client) UnlockThread(threadID string) error
@@ -277,7 +277,7 @@ Estimated ~350 lines of CLI glue (cobra dispatcher + output formatting + the one
 Long-running process that:
 
 1. Connects to Redis via `tasklib`
-2. Starts a background **heartbeat goroutine** that runs `SETEX worker:<type>:<hostname>:heartbeat 30 1` every 10 seconds (30s TTL with 10s refresh = 20s margin for GC pauses and Redis blips; hostname from `os.Hostname()`, read once at startup), independently of task processing. This keeps the heartbeat fresh even during long task executions (up to `TASK_TIMEOUT`, default 30 minutes).
+2. Starts a background **heartbeat goroutine** that runs `SETEX worker:<type>:<hostname>:heartbeat 30 1` every 10 seconds (30s TTL, 20s margin). The goroutine also monitors the active subprocess: if `exec(AGENT_CMD)` exceeds `TASK_TIMEOUT` without producing output, the heartbeat stops (deliberately allowing the worker to appear offline, signaling a stuck task to operators)., independently of task processing. This keeps the heartbeat fresh even during long task executions (up to `TASK_TIMEOUT`, default 30 minutes).
 3. Main loop:
    - `BLMOVE tasks:queue:<worker> tasks:processing:<worker> RIGHT LEFT` with 5s timeout (direction matches `worker.py`: `src="RIGHT"`, `dest="LEFT"`)
    - If no task, continue
@@ -345,7 +345,7 @@ All endpoints return JSON. Every endpoint also serves HTMX partials when the `HX
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/requests` | Submit a request to the master agent. Body: `{thread_id?, repo?, request}`. `request` capped at 32KB (HTTP 413 if exceeded). Checks `supervisor:busy` (set by supervisor while processing); returns `503` with `Retry-After` if busy. Returns `429` if inbox depth exceeds `MAX_INBOX_DEPTH` (default 50). Auto-generates `thread_id` if omitted (`web_<ts>_<10 base36 [0-9a-z]>`), then calls `tasklib.PushRequestAtomic`. Returns `{thread_id, status: "submitted"}`. Returns `409 Conflict` if the thread already has a pending inbox entry (enforced via `requests:inbox:pending:<thread_id>` sentinel key with TTL in the Lua script). |
+| `POST` | `/api/requests` | Submit a request to the master agent. Body: `{thread_id?, repo?, request}`. `request` capped at 32KB (HTTP 413 if exceeded). Checks `supervisor:busy` (set by supervisor while processing). The master is single-threaded — only one request can be actively processed at a time. Additional requests queue in `requests:inbox`. Returns `503` with `Retry-After` if busy. Returns `429` if inbox depth exceeds `MAX_INBOX_DEPTH` (default 50). Auto-generates `thread_id` if omitted (`web_<ts>_<10 base36 [0-9a-z]>`), then calls `tasklib.PushRequestAtomic`. Returns `{thread_id, status: "submitted"}`. Returns `409 Conflict` if the thread already has a pending inbox entry (enforced via `requests:inbox:pending:<thread_id>` sentinel key with TTL in the Lua script). |
 | `POST` | `/api/threads/{thread_id}/cancel` | Cancel a pending request. Calls `tasklib.CancelRequest` to remove the request from `requests:inbox` and mark the thread as cancelled. Only works for requests that haven't been picked up by the master yet. |
 
 #### Tasks (read-only)
@@ -364,7 +364,7 @@ All endpoints return JSON. Every endpoint also serves HTMX partials when the `HX
 | `GET` | `/api/threads` | List all threads via `tasklib.ListThreads`. |
 | `GET` | `/api/threads/{thread_id}` | Get thread state + recent messages via `tasklib.GetThread`. |
 | `GET` | `/api/threads/{thread_id}/history` | Get full message history via `tasklib.GetThreadHistory`. Supports `?tail=N` and offset-based pagination (`?offset=M&limit=N`). |
-| `DELETE` | `/api/threads/{thread_id}/workspace` | Cleanup thread workspace directory. Validates path within `WORKSPACE_DIR` (rejects `../` traversal with 400). Refuses if `ListTasks(threadID, status="running")` is non-empty (400: "in-flight tasks"). Requires `?confirm=true`. Auth-gated. Does NOT delete Redis thread/task keys (archival). |
+| `DELETE` | `/api/threads/{thread_id}/workspace` | Cleanup thread workspace directory. Sets `thread:<id>:deleting` sentinel (SET NX, TTL 60s), then checks `ListTasks(threadID, status="running")`. Refuses if non-empty (400). Workers check the sentinel before writing results — skip write if deleting. Requires `?confirm=true`. Auth-gated. Does NOT delete Redis keys. |
 | `POST` | `/api/threads/{thread_id}/keep` | Extend Redis TTL for thread keys (7 more days). Prevents auto-expiry for long-lived threads. Auth-gated. |
 
 #### Workers (read-only)
@@ -473,11 +473,11 @@ ENTRYPOINT ["/usr/local/bin/supervisor"]
 
 Thread history, task results, and aggregate stats can contain source code, PR details, and error messages. Exposing these without auth in a shared-network environment is a data leak risk.
 
-To disable auth intentionally in dev, explicitly set `WEBUI_API_KEY=` (empty string).
+To disable auth intentionally in dev, explicitly set `WEBUI_API_KEY=` (empty string). The compose default is `${WEBUI_API_KEY:-CHANGE_ME}`, which forces explicit configuration — no accidental open deployments.
 
 For production deployments on shared networks, place a reverse proxy (nginx, Caddy) with TLS and auth in front of the web UI. The web UI itself is stateless — multiple replicas can run behind a load balancer.
 
-**CSRF protection:** Mutation endpoints require `Content-Type: application/json` (reject non-JSON with `415`). Since simple cross-origin forms cannot set `Content-Type: application/json`, this is an effective CSRF defense without requiring tokens. Additionally, HTMX sends a custom `HX-Request` header on all AJAX requests — the middleware validates this header is present for mutation endpoints.
+**CSRF protection:** Mutation endpoints require `Content-Type: application/json` (reject non-JSON with `415`). Since simple cross-origin forms cannot set `Content-Type: application/json`, this is an effective CSRF defense without requiring tokens. HTMX sends a custom `HX-Request` header on all AJAX requests which serves as an additional browser-side signal. The middleware accepts requests with **either** `Content-Type: application/json` **or** the `HX-Request` header — API clients (curl, scripts) use the former, browser HTMX uses the latter.
 
 ### 8. Docker Integration
 
