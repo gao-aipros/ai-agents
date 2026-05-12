@@ -1,7 +1,7 @@
 -- cancel_request.lua
 -- Atomically cancels a pending request:
---   1. Removes the request from requests:inbox (where the payload contains the thread_id)
---   2. Removes the request from requests:inbox_processing (in case it was already LMOVEd)
+--   1. Removes the request from requests:inbox (matching on thread_id field)
+--   2. Removes the request from requests:inbox_processing
 --   3. Sets thread:<id>:current_state status to "cancelled"
 --   4. Deletes the pending sentinel
 --
@@ -18,20 +18,20 @@ local pending_sentinel = KEYS[4]
 
 local thread_id = ARGV[1]
 
--- Remove from inbox (scan for entries containing this thread_id)
+-- Remove from inbox by exact thread_id field match
 local inbox_items = redis.call("LRANGE", inbox_key, 0, -1)
 for _, item in ipairs(inbox_items) do
-    -- Payload is JSON: {"request_id":"...", "thread_id":"<id>", ...}
-    -- Simple string match on thread_id within the JSON blob
-    if string.find(item, thread_id) then
+    local ok, decoded = pcall(cjson.decode, item)
+    if ok and decoded["thread_id"] == thread_id then
         redis.call("LREM", inbox_key, 0, item)
     end
 end
 
--- Remove from processing list
+-- Remove from processing list by exact thread_id field match
 local proc_items = redis.call("LRANGE", processing_key, 0, -1)
 for _, item in ipairs(proc_items) do
-    if string.find(item, thread_id) then
+    local ok, decoded = pcall(cjson.decode, item)
+    if ok and decoded["thread_id"] == thread_id then
         redis.call("LREM", processing_key, 0, item)
     end
 end

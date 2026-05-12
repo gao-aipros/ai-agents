@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -83,7 +84,7 @@ func (c *Client) ListThreads(ctx context.Context) ([]*Thread, error) {
 		}
 		for _, key := range keys {
 			// key is "thread:<id>:current_state" — extract thread ID (field [1])
-			parts := splitN(key, ":", 3)
+			parts := strings.SplitN(key, ":", 3)
 			if len(parts) < 2 {
 				continue
 			}
@@ -275,33 +276,12 @@ func stateVal(m map[string]string, key, def string) string {
 	return def
 }
 
-func splitN(s, sep string, n int) []string {
-	result := make([]string, 0, n)
-	for i := 0; i < n-1; i++ {
-		idx := indexOf(s, sep)
-		if idx < 0 {
-			result = append(result, s)
-			return result
-		}
-		result = append(result, s[:idx])
-		s = s[idx+len(sep):]
-	}
-	result = append(result, s)
-	return result
-}
-
-func indexOf(s, sep string) int {
-	for i := 0; i <= len(s)-len(sep); i++ {
-		if s[i:i+len(sep)] == sep {
-			return i
-		}
-	}
-	return -1
-}
-
 // ParseThreadUpdateFields converts CLI flags into update fields (maps design → last_design, pr → gh_pr_number).
 func ParseThreadUpdateFields(status, design, pr string) map[string]string {
-	fields := map[string]string{"status": status}
+	fields := map[string]string{}
+	if status != "" {
+		fields["status"] = status
+	}
 	if design != "" {
 		fields["last_design"] = design
 	}

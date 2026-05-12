@@ -60,12 +60,16 @@ func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction stri
 	}
 
 	// Append instruction to thread history
-	msg, _ := json.Marshal(map[string]interface{}{
+	msg, err := json.Marshal(map[string]interface{}{
 		"role":    "master",
 		"content": instruction,
 		"timestamp": now,
 		"metadata": map[string]string{"task_id": taskID},
 	})
+	if err != nil {
+		c.rdb.Del(ctx, lockKey)
+		return nil, fmt.Errorf("marshal message: %w", err)
+	}
 	if err := c.rdb.RPush(ctx, ThreadMessagesKey(threadID), string(msg)).Err(); err != nil {
 		c.rdb.Del(ctx, lockKey) // best-effort rollback
 		return nil, fmt.Errorf("thread history append: %w", err)
@@ -73,11 +77,15 @@ func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction stri
 	c.rdb.Expire(ctx, ThreadMessagesKey(threadID), TTLThread)
 
 	// Enqueue task
-	payload, _ := json.Marshal(TaskPayload{
+	payload, err := json.Marshal(TaskPayload{
 		TaskID:      taskID,
 		ThreadID:    threadID,
 		Instruction: instruction,
 	})
+	if err != nil {
+		c.rdb.Del(ctx, lockKey)
+		return nil, fmt.Errorf("marshal payload: %w", err)
+	}
 	if err := c.rdb.LPush(ctx, QueueKey(worker), string(payload)).Err(); err != nil {
 		c.rdb.Del(ctx, lockKey)
 		return nil, fmt.Errorf("queue push: %w", err)
@@ -213,9 +221,6 @@ func (c *Client) ListTasks(ctx context.Context, worker, status, threadID string,
 	// Enrich from per-task keys and apply filters
 	var rows []*Task
 	for _, task := range taskMap {
-		if len(rows) >= limit+offset {
-			break
-		}
 		// Fill missing fields from Redis
 		if task.Status == "" {
 			task.Status, _ = c.rdb.Get(ctx, TaskKey(task.TaskID, "status")).Result()
@@ -331,7 +336,10 @@ func (c *Client) WaitTask(ctx context.Context, taskID, threadID string, timeout 
 	}
 }
 
-// CancelTask sets the cancel flag for a task.
+// CancelTask sets the cancel flag and updates the task status to "cancelled".
+// If the task is currently running, the worker will also check the cancel flag
+// before starting. Cancelling an already-terminated task is a no-op for the
+// status (but still sets the cancel flag for idempotency).
 func (c *Client) CancelTask(ctx context.Context, taskID string) error {
 	exists, err := c.rdb.Exists(ctx, TaskKey(taskID, "status")).Result()
 	if err != nil {
@@ -340,7 +348,14 @@ func (c *Client) CancelTask(ctx context.Context, taskID string) error {
 	if exists == 0 {
 		return fmt.Errorf("task %s not found", taskID)
 	}
-	return c.rdb.Set(ctx, TaskKey(taskID, "cancel"), "1", TTLTask).Err()
+
+	pipe := c.rdb.Pipeline()
+	pipe.Set(ctx, TaskKey(taskID, "cancel"), "1", TTLTask)
+	pipe.Set(ctx, TaskKey(taskID, "status"), "cancelled", TTLTask)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return err
+	}
+	return nil
 }
 
 // RequeueStale requeues stale in-flight tasks for a given worker type.

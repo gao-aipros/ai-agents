@@ -2,11 +2,9 @@ package tasklib
 
 import (
 	"context"
-	"crypto/rand"
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"math/big"
 )
 
 // ── embedded Lua scripts ──────────────────────────────────────────────────
@@ -106,18 +104,4 @@ func (c *Client) CancelRequest(ctx context.Context, threadID string) error {
 
 	_, err := c.rdb.Eval(ctx, cancelRequestScript, keys, args...).Result()
 	return err
-}
-
-// ── random helpers ────────────────────────────────────────────────────────
-
-const base36Chars = "0123456789abcdefghijklmnopqrstuvwxyz"
-
-// newRandomBase36 generates a cryptographically random base36 string of the given length.
-func newRandomBase36(length int) string {
-	b := make([]byte, length)
-	for i := range b {
-		n, _ := rand.Int(rand.Reader, big.NewInt(36))
-		b[i] = base36Chars[n.Int64()]
-	}
-	return string(b)
 }

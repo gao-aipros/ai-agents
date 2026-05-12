@@ -202,10 +202,48 @@ func TestCancelTask(t *testing.T) {
 		t.Errorf("expected cancel flag '1', got '%s'", val)
 	}
 
+	// Verify status is set to cancelled (so WaitTask returns immediately)
+	status, _ := c.rdb.Get(ctx(), TaskKey("t1", "status")).Result()
+	if status != "cancelled" {
+		t.Errorf("expected status 'cancelled', got '%s'", status)
+	}
+
 	// Cancel non-existent task
 	err = c.CancelTask(ctx(), "no-such-task")
 	if err == nil {
 		t.Error("expected error for non-existent task")
+	}
+}
+
+func TestListTasksWithFilters(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Populate tasks: 5 claude tasks, then 3 copilot tasks
+	for i := 0; i < 5; i++ {
+		id := "c-" + itoa(i)
+		c.rdb.Set(ctx(), TaskKey(id, "status"), "done", 0)
+		c.rdb.Set(ctx(), TaskKey(id, "worker"), "claude", 0)
+		c.rdb.Set(ctx(), TaskKey(id, "thread_id"), "thr1", 0)
+	}
+	for i := 0; i < 3; i++ {
+		id := "p-" + itoa(i)
+		c.rdb.Set(ctx(), TaskKey(id, "status"), "done", 0)
+		c.rdb.Set(ctx(), TaskKey(id, "worker"), "copilot", 0)
+		c.rdb.Set(ctx(), TaskKey(id, "thread_id"), "thr1", 0)
+	}
+
+	// Filter for copilot tasks with limit 2. The old bug would break early
+	// at len(rows) >= limit+offset before filter checks, causing 0 results
+	// when copilot tasks appeared after claude in map iteration.
+	tasks, _ := c.ListTasks(ctx(), "copilot", "", "", 2, 0)
+	for _, task := range tasks {
+		if task.Worker != "copilot" {
+			t.Errorf("filter failed: expected only copilot tasks, got worker=%s", task.Worker)
+		}
+	}
+	// Should have found 2 copilot tasks (limit=2, out of 3 matching)
+	if len(tasks) != 2 {
+		t.Errorf("expected 2 copilot tasks after limit, got %d", len(tasks))
 	}
 }
 
