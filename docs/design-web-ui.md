@@ -2,22 +2,53 @@
 
 ## Context
 
-The ai-agents system currently has no UI — everything is CLI-only via `task.py`. A master agent plans tasks, delegates to workers via Redis, and aggregates results. To make the system usable day-to-day (and demoable), we need a web console that exposes the same operations via REST API and provides an HTMX-powered browser UI. The REST API also makes the system scriptable from external tools.
+The ai-agents system uses a master agent (Claude Code with orchestrator instructions) to plan complex tasks, delegate sub-tasks to worker agents via a Redis task queue, and aggregate results. Currently everything is CLI-only: `task.py` for task/thread management and an interactive `master` container for orchestration.
+
+We need a web console that:
+1. Is the primary UI for the **master agent** — users submit requests, the master plans and delegates, results appear in the UI
+2. Provides **management/monitoring** of threads, workers, and tasks
+3. Is implemented in **Go** with an HTMX frontend
 
 ## Architecture
 
-Add a new **`webui`** service to `docker-compose.yml`:
+Add a new **`webui`** service to `docker-compose.yml`. The Go web server embeds the master agent (LLM client + tool use), talks directly to Redis, and serves both a REST API and HTMX-powered browser UI on port 8000.
 
 ```
-webui (FROM ai-base, + FastAPI + Jinja2 + HTMX)
-  └─ connects to Redis (read/write)
-  └─ serves REST API on :8000
+webui (FROM ai-base, Go binary)
+  ├─ connects to Redis (read/write)
+  ├─ calls DeepSeek API (Anthropic-compatible) for master agent planning
+  ├─ serves REST API on :8000
   └─ serves HTMX frontend on :8000
 ```
 
-The FastAPI app reuses `task.py`'s Redis logic (refactored into a shared `tasklib.py` so both the CLI and the web server can import it). The UI is server-rendered HTML with HTMX for partial updates — no JavaScript build step.
+The existing `master` container becomes optional — the Go server **is** the master agent interface. If the `master` container is kept, it serves as a CLI fallback.
+
+### How the master agent works in Go
+
+The Go server loads the master orchestrator system prompt (adapted from `docker/master-agent/CLAUDE.md`). When a user submits a request:
+
+1. A thread is created (or reused), status set to `planning`
+2. A goroutine runs the agent loop:
+   - Send system prompt + thread history + user request to DeepSeek LLM (Anthropic Messages API with tool use)
+   - LLM responds with tool calls (`enqueue_task`, `wait_task`, `get_result`, etc.) or a final text response
+   - Tool calls execute against Redis — workers pick up tasks, results flow back
+   - Each tool call and its result are appended to thread history, visible in the UI via HTMX polling
+   - When the LLM produces a final response, thread status is updated
+3. The UI shows live progress by polling thread state and message history
 
 All `/api/` endpoints are proper REST (JSON in/out) and can be called by scripts, CI, or external tools. The same endpoints power the HTMX UI when the `HX-Request` header is present.
+
+## Tech Stack
+
+| Layer | Choice |
+|-------|--------|
+| Language | Go 1.22+ |
+| HTTP router | `chi` (go-chi/chi/v5) |
+| Redis client | `go-redis/v9` |
+| LLM client | `anthropic-sdk-go` (configured for DeepSeek base URL `https://api.deepseek.com/anthropic`) |
+| Templates | `html/template` (stdlib) |
+| Frontend | HTMX via CDN, no JS build step |
+| CSS | Minimal hand-written, no framework |
 
 ## Requirements
 
@@ -29,10 +60,10 @@ A single-page overview showing:
 
 | Section | Content |
 |---------|---------|
-| **Worker status** | 3 cards (Claude, Copilot, OpenCode) showing: online/offline, queue depth, active task count, last heartbeat |
-| **Active threads** | Table: thread ID, status badge, repo, last updated, task count. Click to drill in. |
-| **Recent tasks** | Table: task ID, worker type, thread, status, elapsed time, result snippet. Auto-refreshes every 5s via HTMX polling. |
-| **Quick enqueue** | Inline form: instruction textarea, worker dropdown, thread ID. Enqueues via POST to `/api/tasks`. |
+| **Worker status** | 3 cards (Claude, Copilot, OpenCode) showing: online/offline, queue depth, active task count. Polls every 10s. |
+| **Active threads** | Table: thread ID, status badge, repo, last updated, task count. Click to drill in. Polls every 5s. |
+| **Recent tasks** | Table: task ID, worker type, thread, status, elapsed time. Polls every 5s. |
+| **New request** | Form: thread ID, optional repo, request textarea. Submits to `POST /api/master/request`. |
 
 ### 2. Thread Detail View
 
@@ -40,10 +71,10 @@ A single-page overview showing:
 
 | Section | Content |
 |---------|---------|
-| **State panel** | Current status, repo, PR number, last design, last updated — all inline-editable via HTMX PUT |
-| **Message history** | Chat-like scrollable timeline of all messages (master → worker → result). Color-coded by role. Auto-scrolls to bottom. |
+| **State panel** | Current status, repo, PR number, last design, last updated — inline-editable via HTMX PUT. Polls every 3s when thread is active. |
+| **Message history** | Chat-like scrollable timeline of all messages (user → master → worker → result). Color-coded by role. Auto-scrolls to bottom. Polls every 3s when active. |
 | **Task list** | All tasks for this thread with status icons, click to expand result |
-| **Actions** | Enqueue new task (pre-filled thread), update status, cleanup workspace |
+| **Actions** | Submit follow-up request (pre-filled thread), update status, cleanup workspace, unlock |
 
 ### 3. Task Management
 
@@ -90,6 +121,13 @@ All endpoints return JSON. Every endpoint also serves HTMX partials when the `HX
 | `GET` | `/api/workers` | List all workers with queue depth, active tasks, health. |
 | `GET` | `/api/workers/{worker_type}` | Detail for one worker type. |
 
+#### Master Agent
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/master/request` | Submit a request to the master agent. Body: `{thread_id?, repo?, request}`. Returns `{thread_id, status: "planning"}`. The master agent runs asynchronously: it plans, delegates to workers, waits for results, and aggregates. Progress is visible via thread history. |
+| `GET` | `/api/master/request/{thread_id}` | Get current planning status for a thread. Returns `{status, last_activity}`. |
+
 #### System
 
 | Method | Path | Description |
@@ -104,15 +142,31 @@ HTMX polling with configurable intervals:
 - Thread detail: 3s (when thread is active)
 - Worker status cards: 10s
 
-Each poll hits the existing REST endpoint with `HX-Request` header, returning only the HTML partial for that section. No WebSocket needed — polling via HTMX is adequate for this use case and keeps the architecture simple.
+Each poll hits the existing REST endpoint with `HX-Request` header, returning only the HTML partial for that section. No WebSocket needed.
 
-### 6. Authentication
+### 6. Master Agent Tools
 
-**Phase 1:** No auth — assume the webui runs on localhost or within a trusted network (same as the rest of the Docker setup).
+The Go server defines these tools for the LLM (adapted from `task.py` commands):
+
+| Tool | Description | Maps to |
+|------|-------------|---------|
+| `enqueue_task` | Push a task onto a worker queue | `task.py enqueue` |
+| `wait_task` | Block until a task completes | `task.py wait` |
+| `get_task_result` | Get task output (supports tail) | `task.py result` |
+| `get_task_status` | Get task status and metadata | `task.py status` |
+| `list_tasks` | List/filter tasks | `task.py list` |
+| `cancel_task` | Cancel a pending/running task | `task.py cancel` |
+| `update_thread` | Update thread state | `task.py thread-update` |
+| `get_thread_history` | Read thread message history | `task.py thread-history` |
+| `get_worker_stats` | Get worker health and queue depths | (new) |
+
+### 7. Authentication
+
+**Phase 1:** No auth — assume the webui runs within a trusted network (same as the rest of the Docker setup).
 
 **Phase 2 (future):** Optional `WEBUI_API_KEY` env var — if set, all `/api/` mutation endpoints require `Authorization: Bearer <key>`. Read endpoints and the UI are public.
 
-### 7. Docker Integration
+### 8. Docker Integration
 
 New service in `docker-compose.yml`:
 
@@ -125,8 +179,7 @@ webui:
   environment:
     - REDIS_HOST=redis
     - REDIS_PORT=6379
-    - TASK_TIMEOUT=1800
-    - WORKSPACE_DIR=/workspace
+    - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
     - WEBUI_PORT=8000
   ports:
     - "${WEBUI_PORT:-8000}:8000"
@@ -136,106 +189,97 @@ webui:
 ```
 
 New Dockerfile at `docker/webui/Dockerfile`:
-- `FROM ai-base` (already has Python 3, redis-py, git, gh, jq, curl)
-- Install FastAPI, uvicorn, Jinja2, python-multipart
-- Copy shared `tasklib.py` + webui application code
-- `ENTRYPOINT ["python3", "-m", "uvicorn", "webui.main:app", "--host", "0.0.0.0", "--port", "8000"]`
+- Multi-stage: `golang:latest` builds a static binary (`CGO_ENABLED=0`), then copied into `ai-base` (has git, gh, jq for workspace ops)
+- Copies `internal/templates/` and `static/` for template rendering
+- `ENTRYPOINT ["/usr/local/bin/webui"]`
 
-### 8. Code Refactoring Required
-
-`scripts/task.py` currently has all Redis logic inline (497 lines). This must be extracted into `scripts/tasklib.py` as a `TaskQueue` class so both the CLI and the web API can use it:
-
-```python
-class TaskQueue:
-    def __init__(self, redis_client): ...
-    def enqueue(self, worker, thread_id, instruction) -> dict: ...
-    def status(self, task_id) -> dict: ...
-    def result(self, task_id, tail=None) -> str: ...
-    def list_tasks(self, worker=None, status=None, thread_id=None, limit=50) -> list: ...
-    def wait(self, task_id, timeout=300) -> dict: ...
-    def cancel(self, task_id) -> bool: ...
-    def requeue_stale(self, worker=None, older_than=600) -> list: ...
-    def unlock_thread(self, thread_id) -> bool: ...
-    def thread_create(self, thread_id, repo=None) -> dict: ...
-    def thread_history(self, thread_id, tail=None) -> list: ...
-    def thread_state(self, thread_id) -> dict: ...
-    def thread_update(self, thread_id, **kwargs) -> dict: ...
-    def thread_list(self) -> list: ...
-    def thread_cleanup(self, thread_id) -> bool: ...
-    def worker_stats(self) -> dict: ...
-```
-
-`task.py` becomes a thin argparse wrapper around `TaskQueue`.
-
-### 9. Frontend Pages & Templates
-
-| Template | Purpose |
-|----------|---------|
-| `templates/base.html` | Layout shell (header, nav, main content area). Includes HTMX from CDN. |
-| `templates/dashboard.html` | Dashboard page with polling sections |
-| `templates/threads/list.html` | Thread list |
-| `templates/threads/detail.html` | Full thread detail page |
-| `templates/threads/_state.html` | HTMX partial: thread state panel |
-| `templates/threads/_history.html` | HTMX partial: message timeline |
-| `templates/tasks/list.html` | Task list with filters |
-| `templates/tasks/detail.html` | Single task detail |
-| `templates/tasks/_table.html` | HTMX partial: task table rows |
-| `templates/workers/_cards.html` | HTMX partial: worker status cards |
-| `templates/_quick_enqueue.html` | HTMX partial: enqueue form + result |
-
-### 10. File Structure
+### 9. File Structure
 
 ```
-scripts/
-  tasklib.py              # NEW: shared Redis logic (extracted from task.py)
-  task.py                 # MODIFIED: thin CLI wrapper around tasklib
-  worker.py               # unchanged
-  test_tasklib.py         # NEW: unit tests for tasklib
-  test_task.py            # MODIFIED: updated for refactored CLI
-  test_worker.py          # unchanged
+webui/
+  go.mod
+  go.sum
+  main.go                       # Entry point: flags, Redis connect, router, server start
+  internal/
+    redis/
+      client.go                 # Redis connection, key name helpers, TTL constants
+      tasks.go                  # Task CRUD
+      threads.go                # Thread CRUD
+      workers.go                # Worker stats
+      tasks_test.go             # Unit tests with miniredis
+      threads_test.go
+    master/
+      agent.go                  # LLM agent loop (send → tool calls → iterate → final)
+      tools.go                  # Tool definitions (JSON schema) + Go implementations
+      system_prompt.go          # Master orchestrator system prompt
+    api/
+      router.go                 # Chi router, middleware (HTMX detection, error recovery)
+      tasks.go                  # /api/tasks handlers
+      threads.go                # /api/threads handlers
+      workers.go                # /api/workers handlers
+      system.go                 # /api/health, /api/stats handlers
+      master.go                 # /api/master/request handlers
+    templates/
+      base.html                 # Layout shell (nav, HTMX CDN, polling)
+      dashboard.html            # Dashboard page
+      threads/
+        list.html               # Thread list
+        detail.html             # Thread detail
+        _state.html             # HTMX partial: state panel
+        _history.html           # HTMX partial: message timeline
+      tasks/
+        list.html               # Task list with filters
+        detail.html             # Task detail
+        _table.html             # HTMX partial: task table rows
+      workers/
+        _cards.html             # HTMX partial: worker status cards
+      master/
+        _request_form.html      # HTMX partial: new request form + response
+  static/
+    style.css                   # Minimal CSS
 
-docker/webui/
-  Dockerfile              # NEW
+docker/
   webui/
-    __init__.py
-    main.py               # FastAPI app, routes, lifespan
-    templates/            # Jinja2 templates (HTMX)
-    static/               # minimal CSS
+    Dockerfile
 
-docker-compose.yml        # MODIFIED: add webui service
+docker-compose.yml              # MODIFIED: add webui service, master becomes optional
 ```
+
+### 10. Redis Data Model (unchanged)
+
+The Go server reads and writes the exact same Redis keys used by `task.py` and `worker.py` today. No migration needed. The existing Python CLI and workers continue to work alongside the web UI.
 
 ## Implementation Plan
 
-### Step 1: Extract `tasklib.py` from `task.py`
+### Step 1: Go project scaffold + Redis data layer
 
-Refactor `scripts/task.py` — move all Redis operations into a `TaskQueue` class in `scripts/tasklib.py`. The CLI becomes a thin argparse wrapper. Update existing tests. This is the bulk of the work and must be done first.
+Create `webui/` with `go.mod`, dependencies (`chi`, `go-redis`, `anthropic-sdk-go`, `miniredis`). Implement `internal/redis/` package with all CRUD operations matching current `task.py` behavior. Write unit tests with `miniredis`.
 
-### Step 2: Build FastAPI app
+### Step 2: REST API handlers
 
-Create `docker/webui/webui/main.py` with:
-- Redis connection via lifespan
-- All REST endpoints delegating to `TaskQueue`
-- Jinja2 template rendering for HTMX routes
-- HTMX partial detection via `HX-Request` header
+Build `internal/api/` package with chi router, HTMX detection middleware, and all `/api/` endpoints. Each handler checks `HX-Request` header to return either an HTML partial or JSON.
 
-### Step 3: Create templates and static assets
+### Step 3: Master agent
 
-Build all Jinja2 templates. Minimal CSS (no framework — just clean, readable styles). HTMX attributes for polling and inline edits.
+Implement `internal/master/` — system prompt, 9 tool definitions + Go implementations, and the agent loop using `anthropic-sdk-go`. The loop sends a request to the LLM, executes tool calls against Redis, and iterates until the LLM produces a final response. All progress is written to Redis (thread messages, task state) so the UI reflects it in real time.
 
-### Step 4: Dockerize
+### Step 4: HTML templates and CSS
 
-Create `docker/webui/Dockerfile`. Add `webui` service to `docker-compose.yml`.
+Build all Go `html/template` files. Minimal CSS — clean, readable styles, no framework. HTMX attributes for polling (`hx-trigger="every 5s"`) and inline edits (`hx-put`).
 
-### Step 5: End-to-end test
+### Step 5: Dockerize
 
-Spin up the full stack, enqueue tasks via the UI, verify results appear, test REST API with `curl`, verify HTMX polling updates.
+Multi-stage Dockerfile. Add `webui` service to `docker-compose.yml`. Update CI (`.github/workflows/build-images.yml`) to build and push `webui` image.
+
+### Step 6: End-to-end test
+
+Spin up the full stack, submit a request via the UI, verify the master agent plans and delegates to workers, results appear in the thread detail page. Test REST API with `curl`. Verify HTMX polling updates.
 
 ## Verification
 
 1. `docker compose up -d` starts all services including webui
-2. `curl http://localhost:8000/api/health` returns `{"redis": "ok", "workers": {...}}`
-3. `curl -X POST http://localhost:8000/api/tasks -H 'Content-Type: application/json' -d '{"worker":"claude","thread_id":"test","instruction":"say hello"}'` enqueues a task
-4. Browser at `http://localhost:8000` shows dashboard with worker cards, active threads, and the enqueued task
-5. Thread detail page shows message history updating in real time via HTMX polling
+2. `curl http://localhost:8000/api/health` returns `{"redis":"ok","workers":{...}}`
+3. `curl -X POST http://localhost:8000/api/master/request -H 'Content-Type: application/json' -d '{"thread_id":"test","request":"Say hello"}'` starts the master agent planning loop; returns `{"thread_id":"test","status":"planning"}`
+4. Browser at `http://localhost:8000` shows dashboard with worker cards, active threads
+5. Thread detail page at `/threads/test` shows message history updating in real time via HTMX polling, with master planning messages and worker responses
 6. `curl http://localhost:8000/api/tasks` returns JSON matching the UI display
