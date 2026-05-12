@@ -662,6 +662,160 @@ func TestPushRequestAtomicRepoAlreadySet(t *testing.T) {
 	}
 }
 
+// ── WaitTask tests ────────────────────────────────────────────────────────
+
+func TestWaitTaskImmediateCompletion(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Set up a task that's already done
+	c.rdb.Set(ctx(), TaskKey("w1", "status"), "done", 0)
+	c.rdb.Set(ctx(), TaskKey("w1", "worker"), "claude", 0)
+	c.rdb.Set(ctx(), TaskKey("w1", "thread_id"), "thr1", 0)
+	c.rdb.Set(ctx(), TaskKey("w1", "exit_code"), "0", 0)
+
+	task, err := c.WaitTask(ctx(), "w1", "thr1", 5*time.Second)
+	if err != nil {
+		t.Fatalf("WaitTask failed: %v", err)
+	}
+	if task.Status != "done" {
+		t.Errorf("expected status done, got %s", task.Status)
+	}
+}
+
+func TestWaitTaskTimeout(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.rdb.Set(ctx(), TaskKey("w2", "status"), "running", 0)
+
+	_, err := c.WaitTask(ctx(), "w2", "", 10*time.Millisecond)
+	if err == nil {
+		t.Error("expected timeout error")
+	}
+	// Verify thread lock was released on timeout
+	exists, _ := c.rdb.Exists(ctx(), ThreadLockKey("")).Result()
+	if exists > 0 {
+		t.Error("expected lock to be released on timeout")
+	}
+}
+
+func TestWaitTaskContextCancel(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.rdb.Set(ctx(), TaskKey("w3", "status"), "running", 0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	_, err := c.WaitTask(ctx, "w3", "thr1", 30*time.Second)
+	if err == nil {
+		t.Error("expected context cancellation error")
+	}
+}
+
+func TestWaitTaskNotFound(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	_, err := c.WaitTask(ctx(), "no-such-task", "", 5*time.Second)
+	if err == nil {
+		t.Error("expected error for non-existent task")
+	}
+}
+
+func TestWaitTaskTerminalStates(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	tests := []struct{ status string }{
+		{"done"}, {"failed"}, {"cancelled"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.status, func(t *testing.T) {
+			id := "w-" + tt.status
+			c.rdb.Set(ctx(), TaskKey(id, "status"), tt.status, 0)
+			c.rdb.Set(ctx(), TaskKey(id, "worker"), "claude", 0)
+			c.rdb.Set(ctx(), TaskKey(id, "thread_id"), "thr1", 0)
+
+			task, err := c.WaitTask(ctx(), id, "", 5*time.Second)
+			if err != nil {
+				t.Fatalf("WaitTask for %s failed: %v", tt.status, err)
+			}
+			if task.Status != tt.status {
+				t.Errorf("expected status %s, got %s", tt.status, task.Status)
+			}
+		})
+	}
+}
+
+// ── CancelRequest tests ───────────────────────────────────────────────────
+
+func TestCancelRequest(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Push a request into the inbox
+	err := c.PushRequestAtomic(ctx(), "cr-thread", "owner/repo", "do something")
+	if err != nil {
+		t.Fatalf("PushRequestAtomic failed: %v", err)
+	}
+
+	// Verify it's in the inbox
+	inboxLen := c.rdb.LLen(ctx(), "requests:inbox").Val()
+	if inboxLen != 1 {
+		t.Fatalf("expected 1 inbox entry, got %d", inboxLen)
+	}
+
+	// Cancel it
+	err = c.CancelRequest(ctx(), "cr-thread")
+	if err != nil {
+		t.Fatalf("CancelRequest failed: %v", err)
+	}
+
+	// Inbox should be empty
+	inboxLen = c.rdb.LLen(ctx(), "requests:inbox").Val()
+	if inboxLen != 0 {
+		t.Errorf("expected 0 inbox entries after cancel, got %d", inboxLen)
+	}
+
+	// Thread status should be cancelled
+	th, _ := c.GetThread(ctx(), "cr-thread")
+	if th.Status != "cancelled" {
+		t.Errorf("expected thread status cancelled, got %s", th.Status)
+	}
+}
+
+func TestCancelRequestInProcessing(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Push a request
+	c.PushRequestAtomic(ctx(), "crp-thread", "", "do it")
+
+	// Simulate inbox-reader moving it to processing list
+	item, _ := c.rdb.LMove(ctx(), "requests:inbox", "requests:inbox_processing", "RIGHT", "LEFT").Result()
+	if item == "" {
+		t.Fatal("LMOVE failed")
+	}
+
+	// Cancel should find it in the processing list
+	err := c.CancelRequest(ctx(), "crp-thread")
+	if err != nil {
+		t.Fatalf("CancelRequest failed: %v", err)
+	}
+
+	// Processing list should be empty
+	procLen := c.rdb.LLen(ctx(), "requests:inbox_processing").Val()
+	if procLen != 0 {
+		t.Errorf("expected 0 processing entries after cancel, got %d", procLen)
+	}
+}
+
+func TestCancelRequestNoop(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Cancelling a non-existent request should not error (silent no-op)
+	err := c.CancelRequest(ctx(), "no-such-thread")
+	if err != nil {
+		t.Errorf("CancelRequest on missing thread should not error, got: %v", err)
+	}
+}
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 func itoa(i int) string {
