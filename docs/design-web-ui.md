@@ -11,6 +11,10 @@ We need a web console that:
 
 The web UI is an **addon**, not a replacement. The master agent still does all planning, tool calling, and delegation. The web UI just gives it a browser-based front door and a real-time dashboard.
 
+### Terminology: "thread"
+
+Throughout this design, a **thread** is a master agent conversation session — one user request, the master's planning, all worker tasks spawned for that request, and the final response. It is identified by a `thread_id` and tracked in Redis as `thread:<id>:current_state` and `thread:<id>:messages`. Workers do not have threads; they consume individual tasks from Redis queues, each task referencing the parent `thread_id`.
+
 ### Shared `tasklib` — the foundation
 
 Rather than reimplement Redis logic twice (Go for web UI, Python for `task.py` / `worker.py`), extract a shared **Go `tasklib`** package that all three Go binaries use:
