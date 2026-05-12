@@ -121,7 +121,12 @@ package tasklib
 // Client wraps *redis.Client and provides all task/thread/worker operations.
 type Client struct { ... }
 
-func NewClient(rdb *redis.Client) *Client
+// NewClient creates a new Client. workspaceDir is the shared volume path
+// (default "/workspace" from WORKSPACE_DIR env var).
+func NewClient(rdb *redis.Client, workspaceDir string) *Client
+
+// WorkspaceDir returns the configured workspace directory.
+func (c *Client) WorkspaceDir() string
 
 // Tasks (read + write — used by cmd/task, cmd/worker, and cmd/webui)
 func (c *Client) Enqueue(worker, threadID, instruction string) (*Task, error)
@@ -161,7 +166,8 @@ func (c *Client) PushRequestAtomic(threadID, repo, request string) error
 - **Same Redis key names** as today (`task:<id>:status`, `thread:<id>:messages`, `tasks:queue:<worker>`, etc.).
 - **`miniredis` scope**: Unit tests cover all non-blocking CRUD operations (enqueue, status, result, list, thread CRUD, etc.) and require no real Redis. Blocking commands (`BLPOP`, `BLMOVE`, `WaitTask` polling loop) are tested in a separate integration test suite against a real Redis instance.
 - **No dependency on `cmd/` packages** — `tasklib` is pure library code.
-- **No filesystem operations** — `tasklib` is a pure-Redis library. Workspace cleanup (`thread-cleanup`) lives in `cmd/task` where it can access `/workspace`.
+- **No filesystem operations** — `tasklib` is a pure-Redis library. Workspace cleanup (`thread-cleanup`) lives in `cmd/task` where it can access the workspace directory.
+- **`WORKSPACE_DIR` env var** — default `/workspace`. Read by `tasklib.NewClient` (or passed explicitly by the caller). Used by `cmd/task` for `thread-cleanup` and `cmd/worker` for reading/writing files in the thread workspace. All containers that mount the workspace volume set this env var.
 
 ### Worker heartbeat
 
@@ -194,7 +200,7 @@ task thread-list
 task thread-cleanup --id <thread_id>
 ```
 
-Implementation: `cobra` commands that call `tasklib.Client` methods. `thread-cleanup` additionally calls `os.RemoveAll` on `/workspace/<thread_id>/` — this is the one command that touches the filesystem, and it lives in `cmd/task`, not `tasklib`.
+Implementation: `cobra` commands that call `tasklib.Client` methods. `thread-cleanup` additionally calls `os.RemoveAll` on `<workspaceDir>/<thread_id>/` — this is the one command that touches the filesystem, and it lives in `cmd/task`, not `tasklib`. The workspace directory is read from the `WORKSPACE_DIR` env var (default `/workspace`) and passed to `tasklib.NewClient`.
 
 Estimated ~350 lines of CLI glue (cobra dispatcher + output formatting + the one filesystem operation). The binary is statically compiled (`CGO_ENABLED=0`) and copied into the master container at `/usr/local/bin/task`.
 
@@ -379,6 +385,7 @@ webui:
     - WEBUI_PORT=8000
     - WEBUI_API_KEY=${WEBUI_API_KEY:-}
     - WEBUI_POLL_INTERVAL=5
+    - WORKSPACE_DIR=${WORKSPACE_DIR:-/workspace}
     - TASKLIB_BACKEND=go
   ports:
     - "${WEBUI_PORT:-8000}:8000"
