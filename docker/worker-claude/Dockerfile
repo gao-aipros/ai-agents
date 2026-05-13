@@ -1,15 +1,24 @@
 ARG CLAUDE_IMAGE=claude-code:latest
 
-# Build stage: extract Go toolchain
-FROM golang:latest AS go-build
+# Build stage: compile Go worker binary
+FROM golang:latest AS go-build-worker
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY tasklib/ tasklib/
+COPY cmd/worker/ cmd/worker/
+RUN CGO_ENABLED=0 go build -o /out/worker-go ./cmd/worker/
+
+# Build stage: extract Go toolchain for runtime use by agents
+FROM golang:latest AS go-toolchain
 
 # Final stage
 FROM ${CLAUDE_IMAGE}
 
 USER root
 
-# Go toolchain
-COPY --from=go-build /usr/local/go /usr/local/go
+# Go toolchain (for agent Go development tasks)
+COPY --from=go-toolchain /usr/local/go /usr/local/go
 ENV GOROOT=/usr/local/go \
     GOPATH=/home/agent/go \
     PATH=/usr/local/go/bin:${PATH}
@@ -22,8 +31,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Worker poll loop
+# Go worker binary (TASKLIB_BACKEND=go)
+COPY --from=go-build-worker /out/worker-go /usr/local/bin/worker-go
+
+# Python worker (TASKLIB_BACKEND=python)
 COPY scripts/worker.py /usr/local/bin/worker.py
+
+# Worker entrypoint — toggles backend via TASKLIB_BACKEND env var
+COPY scripts/worker-entrypoint.sh /usr/local/bin/worker-entrypoint.sh
 
 ENV AGENT_CMD="claude -p --dangerously-skip-permissions"
 
@@ -33,4 +48,4 @@ COPY --chown=agent:agent docker/worker-claude/CLAUDE.md /home/agent/.claude/CLAU
 COPY --chown=agent:agent docker/worker-claude/settings.json /home/agent/.claude/settings.json
 
 USER agent
-ENTRYPOINT ["python3", "/usr/local/bin/worker.py"]
+ENTRYPOINT ["/usr/local/bin/worker-entrypoint.sh"]

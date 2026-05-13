@@ -123,6 +123,11 @@ func main() {
 				strings.Contains(err.Error(), "broken pipe") {
 				log.log("warn", "redis connection lost, reconnecting")
 				time.Sleep(1 * time.Second)
+				// Reinitialize the Redis client to establish a fresh connection.
+				rdb = redis.NewClient(&redis.Options{
+					Addr: fmt.Sprintf("%s:%d", redisHost, redisPort),
+				})
+				client = tasklib.NewClient(rdb)
 			}
 			if !running.Load() {
 				break
