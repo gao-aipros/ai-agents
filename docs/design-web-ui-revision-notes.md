@@ -141,3 +141,15 @@ New Redis key: `thread:<id>:last_activity` (Unix timestamp, updated on every req
 8. **Interactive CLI elimination** — Documented as intentional breaking change in Docker Integration table.
 9. **Step consistency** — Already resolved (previous round).
 10. **Task enqueue lock rationale** — Added explanation: sequential execution preserves causal ordering of worker results within a thread.
+
+## Round 4 Review Resolutions (2026-05-13)
+
+Both reviews: LGTM, non-blocking suggestions.
+
+1. **TTL inconsistency** — Already fixed in round 3; Redis table already says `REQUEST_TIMEOUT + 5min (2100s)`.
+2. **Orphaned empty directories** — `cmd/supervisor/` and `cmd/inbox-reader/` flagged for follow-up cleanup PR.
+3. **`tasklib/inbox.go` + `lua/`** — Acknowledged as temporarily inconsistent; Step 1 post-revision work will replace them.
+4. **`thread:<id>:last_activity` not in flow chart** — Added as step 13 in Section 6 flow chart.
+5. **Stream-json `type: "user"` and `type: "system"`** — Added to mapping table: both discarded (system=init metadata, user=tool feedback already in thread history).
+6. **Verification step 6 wording** — Made precise: `{"type":"result","subtype":"success","is_error":false}`.
+7. **`is_error` vs `stop_reason`** — Clarified: handler primarily checks `is_error`, falls back to `subtype`, logs `stop_reason` for observability.

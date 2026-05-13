@@ -120,7 +120,7 @@ This preserves the master agent as the single source of truth for planning. The 
 Response completion is detected by the web UI handler, which parses the `claude -p --output-format stream-json` stdout:
 
 1. `claude -p` with `--output-format stream-json --verbose` emits one JSON object per line on stdout. Messages include `{"type":"system","subtype":"init"}`, `{"type":"assistant","message":{...}}`, and the terminal `{"type":"result","subtype":"success","is_error":false}`.
-2. The handler reads stdout line by line, JSON-decoding each. It watches for the **result message**: `type: "result"` with `subtype: "success"` or `subtype: "error_during_execution"`. The `is_error` field and `stop_reason` field provide explicit success/failure signals.
+2. The handler reads stdout line by line, JSON-decoding each. It watches for the **result message**: `type: "result"` with `subtype: "success"` (and `is_error: false`) or `subtype: "error_during_execution"` (and `is_error: true`). The handler primarily checks `is_error` for success/failure and falls back to `subtype` for Claude-level errors. The `stop_reason` field (`"end_turn"`, `"max_turns"`, etc.) is logged for observability but not used for handler decisions.
 3. On `subtype: "success"`, the handler extracts the `result` field (the final response text) and writes it to `thread:<id>:messages` as a `role: "master"`, `type: "response"` message. The assistant messages (`type: "assistant"`) contain the intermediate output (thinking, tool calls, text) and are written to thread history by default for live progress display (planning, delegating, tool call steps appear in real time in the message timeline). The frontend appends them to the thread detail page as they arrive via polling.
 4. If the claude subprocess exits non-zero before the result message is seen, the handler writes an error message with the captured stderr (exit code + last 4KB of stderr).
 5. If the subprocess doesn't complete within `REQUEST_TIMEOUT` (default 30 minutes), the handler sends SIGTERM, waits 10s, then SIGKILL. It writes an error message:
@@ -452,7 +452,8 @@ POST /api/requests {thread_id?, repo?, request}
        ├─ 9. On completion: SET thread:<id>:complete 1 (7-day TTL), write role:"master" type:"response" to thread:<id>:messages
        ├─ 10. On error/timeout/cancelled: write role:"master" type:"error" to thread:<id>:messages
        ├─ 11. Release request lock: DEL thread:<id>:running
-       └─ 12. Update thread state status
+       ├─ 12. Update thread state status
+       └─ 13. Update thread:<id>:last_activity (for session cleanup)
 ```
 
 **Missing session fallback:** If `thread:<id>:session_id` exists in Redis but the corresponding session JSON file is missing from `~/.claude/` (deleted by TTL cleanup or volume wipe), `claude -p --resume <uuid>` will error. The handler detects this by checking stderr for "No conversation found" and falls back to generating a fresh session UUID + `--session-id`, logging a warning. The thread state and message history in Redis are unaffected.
@@ -637,7 +638,7 @@ Keys used by tasklib (all pre-existing except those marked NEW):
 | Key | Type | Purpose |
 |-----|------|---------|
 | `active_tasks` | Hash | **Existing.** Currently executing tasks. Keyed by `task_id`, value is JSON task info. Written by `cmd/worker` (HSET on start, HDEL on completion). Read by `task list` and web UI. |
-| `thread:<id>:running` | String (NEW, SET NX) | Per-thread lock preventing concurrent `claude -p` invocations. Value is the request ID. TTL = `REQUEST_TIMEOUT` (default 1800s). Released by handler on completion/error/timeout. Web UI checks this key to show "Waiting for master..." indicator. |
+| `thread:<id>:running` | String (NEW, SET NX) | Per-thread lock preventing concurrent `claude -p` invocations. Value is the request ID. TTL = `REQUEST_TIMEOUT + 5min` (default 2100s — exceeds Go context timeout to prevent lock expiry before subprocess kill). Released by handler on completion/error/timeout. Web UI checks this key to show "Waiting for master..." indicator. |
 | `thread:<id>:complete` | String (NEW, 7-day TTL) | Set by web UI handler when `type: "result"` is received. Provides a fast check for the dashboard ("Ready for review" indicator) without parsing full message history. TTL aligns with the thread lifecycle — expires alongside thread keys. |
 | `thread:<id>:session_id` | String (NEW, 7-day TTL) | Claude session UUID for `--session-id` / `--resume`. Generated on first request, reused for follow-ups. TTL aligns with thread lifecycle. |
 | `thread:<id>:last_activity` | String (NEW, 7-day TTL) | Unix timestamp updated on every request. Used by the session cleanup goroutine to find threads inactive > 24h. TTL aligns with thread lifecycle. |
@@ -653,6 +654,8 @@ The background goroutine translates `claude -p` stream-json output into Redis th
 | `{"type":"assistant","content":[...,{"type":"tool_use",...}]}` (contains tool_use block) | `"tool_call"` | Contains a tool invocation (Bash, Read, Edit) |
 | `{"type":"result","subtype":"success"}` | `"response"` | Final completion — extract `result` field |
 | `{"type":"result","subtype":"error_during_execution"}` | `"error"` | Claude-level error |
+| `{"type":"system","subtype":"init"}` | (discarded) | Initialization metadata — no actionable content for timeline |
+| `{"type":"user","message":{"role":"user","content":[...]}}` | (discarded) | Tool result feedback into the conversation — worker results are already written to thread history via `tasklib`, so this is redundant |
 
 The `"delegate"` type is set by the master agent via `task enqueue` (the task instruction is written to thread history with `type: "delegate"` as a side effect of enqueue), not derived from stream-json. All messages have `role: "master"` except worker results which have `role: "worker"`.
 
@@ -755,7 +758,7 @@ Spin up the full stack. Submit a request via the web UI → handler acquires thr
 3. `docker compose up -d` starts all services (master serves the web UI on port 8000)
 4. `curl http://localhost:8000/api/health` returns `{"redis":"ok","workers":{...}}`
 5. `curl -X POST http://localhost:8000/api/requests -H 'Content-Type: application/json' -H 'Authorization: Bearer <key>' -d '{"request":"Say hello"}'` auto-generates a thread_id, spawns `claude -p`, and returns `{"thread_id":"web_<ts>_<abcdefghij>","status":"submitted"}`
-6. The handler detects `{"type":"result"}` on claude stdout and writes a `type: "response"` message to thread history
+6. The handler detects `{"type":"result","subtype":"success","is_error":false}` on claude stdout and writes a `type: "response"` message to thread history
 7. Browser at `http://localhost:8000` shows dashboard with worker cards (online/offline from heartbeat), active threads with response indicators
 8. Thread detail page shows message history updating in real time via HTMX polling, with a response banner when the master finishes
 9. `curl http://localhost:8000/api/tasks` returns JSON matching the UI display
