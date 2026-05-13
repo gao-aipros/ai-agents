@@ -56,7 +56,9 @@ func removeSessionFile(sessionID string) {
 		}
 		sessionFile := filepath.Join(projectsDir, entry.Name(), sessionID+".json")
 		// Remove directly — avoid TOCTOU between Stat and Remove.
-		if err := os.Remove(sessionFile); err == nil || os.IsNotExist(err) {
+		// Only return when the file was actually found and removed;
+		// continue to other directories on ENOENT.
+		if err := os.Remove(sessionFile); err == nil {
 			return
 		}
 	}
@@ -74,6 +76,9 @@ func serverError(w http.ResponseWriter, msg string, err error) {
 
 // cleanupContext returns a context for deferred Redis operations that must
 // complete regardless of the HTTP request lifecycle (lock release, etc.).
+// Uses context.Background() directly — ReleaseRequestLock is a Redis DEL
+// which is near-instant. A timeout would require a cancel function that
+// cannot be deferred cleanly in a one-liner.
 func cleanupContext() context.Context {
 	return context.Background()
 }

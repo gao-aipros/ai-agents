@@ -140,6 +140,11 @@ func (tr *threadsResource) history(w http.ResponseWriter, r *http.Request) {
 func (tr *threadsResource) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	threadID := r.PathValue("thread_id")
 
+	if !request.ValidThreadID(threadID) {
+		Error(w, http.StatusBadRequest, "invalid thread_id")
+		return
+	}
+
 	if r.URL.Query().Get("confirm") != "true" {
 		Error(w, http.StatusBadRequest, "require ?confirm=true")
 		return

@@ -41,6 +41,9 @@ func (rs *requestsResource) submit(w http.ResponseWriter, r *http.Request) {
 	threadID := req.ThreadID
 	if threadID == "" {
 		threadID = generateThreadID()
+	} else if !request.ValidThreadID(threadID) {
+		Error(w, http.StatusBadRequest, "invalid thread_id")
+		return
 	}
 
 	result, err := rs.handler.Submit(r.Context(), threadID, req.Request, req.Repo)
