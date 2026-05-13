@@ -5,7 +5,7 @@
 The ai-agents system uses a master agent (Claude Code with orchestrator instructions) to plan complex tasks, delegate sub-tasks to worker agents via a Redis task queue, and aggregate results. Currently everything is CLI-only: the user types requests directly into the master container's interactive Claude Code session. The master agent uses `task.py` as a skill (a tool it can invoke) to interact with Redis — enqueuing tasks, checking statuses, reading results, and managing threads. Workers run `worker.py` to consume tasks from Redis and execute agent CLIs.
 
 We need a web console that:
-1. Forwards user requests to the **existing master agent** (the running Claude Code session) — the master remains the sole planner/orchestrator
+1. Forwards user requests by spawning `claude -p` as a one-shot subprocess per request — the master agent remains the sole planner/orchestrator
 2. Provides **monitoring** of threads, workers, and tasks by reading Redis state
 3. Is implemented in **Go** with an HTMX frontend
 
@@ -28,10 +28,12 @@ Rather than reimplement Redis logic twice (Go for web UI, Python for `task.py` /
 
 ```
 tasklib/              # Shared Go library — all Redis CRUD for tasks, threads, workers
+  ├─ client.go        # Redis connection, key name helpers, TTL constants
   ├─ tasks.go         # enqueue, status, result, list, wait, cancel, requeue-stale
-  ├─ threads.go       # create, history, state, update, list, unlock
+  ├─ threads.go       # create, history, state, update, list, lock, unlock
   ├─ workers.go       # worker stats, heartbeat, queue depths
-  ├─ inbox.go         # atomic PushRequest (Lua script: inbox write + history append)
+  ├─ inbox.go         # (TO REPLACE) old FIFO-based PushRequestAtomic → new request lock/session methods
+  ├─ uuid.go          # UUID generation for thread IDs and request IDs
   └─ *_test.go        # Unit tests with miniredis (non-blocking CRUD only)
 
 cmd/task/main.go      # Go CLI — drop-in replacement for task.py (master agent skill)
@@ -44,22 +46,36 @@ All three binaries are built from the same `go.mod`. The Go `tasklib` produces t
 ## Architecture
 
 ```
-master (Claude Code session)          webui (Go binary, :8000)
-  ├─ plans & delegates                  ├─ writes requests to Redis inbox
-  ├─ invokes Go task CLI as skill       │   (atomic Lua: inbox + thread history)
-  │   (cmd/task: enqueue, wait, ...)    ├─ reads Redis via tasklib for monitoring
-  └─ receives requests via:             ├─ serves REST API (JSON)
-      1. interactive CLI (stdin)        └─ serves HTMX frontend
-      2. Redis inbox (from web UI)
-       └─ supervisor process           worker (Go binary)
-           multiplexes stdin             ├─ tasklib: BLMOVE from queue
-           via named pipe                ├─ heartbeat: SETEX worker:<type>:<hostname>:heartbeat
-           + mutex lock                  ├─ exec AGENT_CMD as subprocess
-                                         └─ tasklib: write result back to Redis
+                          webui (Go binary, :8000)
+                            ├─ receives POST /api/requests
+                            ├─ acquires thread lock (SET NX thread:<id>:running)
+                            ├─ spawns: claude -p --session-id <uuid>
+                            │     --output-format stream-json --verbose
+                            │     "user request"
+                            ├─ parses stdout JSON lines
+                            │     → detects {"type":"result"} = completion
+                            ├─ writes response to thread:<id>:messages
+                            ├─ releases thread lock
+                            ├─ reads Redis via tasklib for monitoring
+                            ├─ serves REST API (JSON)
+                            └─ serves HTMX frontend
+
+claude -p (one-shot per request)
+  ├─ plans & delegates
+  ├─ invokes Go task CLI as tool
+  │   (cmd/task: enqueue, wait, ...)
+  ├─ task wait blocks within -p tool loop
+  └─ exits when done (session persists via --session-id)
+
+worker (Go binary)
+  ├─ tasklib: BLMOVE from queue
+  ├─ heartbeat: SETEX worker:<type>:<hostname>:heartbeat
+  ├─ exec AGENT_CMD as subprocess
+  └─ tasklib: write result back to Redis
 ```
 
 The Go web server has **no LLM client, no tool definitions, no planning logic**. It only:
-- Writes incoming user requests to a Redis inbox list (via `tasklib.PushRequestAtomic`)
+- Spawns `claude -p` as a subprocess per user request (one-shot invocation)
 - Reads thread/task/worker state from Redis for display (via `tasklib`)
 - Serves REST API + HTMX UI
 
@@ -68,57 +84,55 @@ The Go web server has **no LLM client, no tool definitions, no planning logic**.
 When a user submits a request via the web UI:
 
 1. Web UI receives `POST /api/requests` with `{thread_id?, repo?, request}`.
-2. If `thread_id` is omitted, auto-generate one: `web_<unix_seconds>_<random 10-char base36 [0-9a-z]>`. The 10 base36 characters provide ~3.6×10¹⁵ combinations — collision probability is negligible even under heavy concurrent use. `HSETNX` in the Lua script additionally guards against any collision.
-3. Execute `tasklib.PushRequestAtomic` — a **Lua script** that atomically:
-   - Sets the thread state repo field if not already present (`HEXISTS thread:<id>:current_state gh_repo` → `HSET gh_repo <repo>` if missing; maps REST body `repo` to Redis field `gh_repo` for backward-compat with task.py)
-   - Appends the user request to `thread:<id>:messages` as a JSON message with `role: "user"`, `type: "request"`, and `source: "webui"`
-   - LPUSHes the request payload onto `requests:inbox`
-   All three operations succeed or fail together — no orphan thread shells. A separate `POST /api/threads` endpoint still exists for creating a thread without submitting a request (e.g., pre-configuring repo metadata before the first request).
-4. The web UI responds with `{thread_id, status: "submitted"}` and the browser **redirects** to `/threads/{thread_id}`.
-5. Meanwhile, the inbox-reader does `LMOVE requests:inbox requests:inbox_processing RIGHT LEFT` (consuming oldest-first since web UI `LPUSH`es to head; FIFO ordering), writes the request text to a **named pipe** (`/tmp/master-inbox.fifo`), then `LREM requests:inbox_processing`. On startup, any stranded entries in `requests:inbox_processing` are restored to `requests:inbox`.
-6. The **supervisor** writes the request to claude's stdin. The master agent processes it exactly as if the user typed it — plans, delegates via Go `task` CLI to workers, aggregates results.
-7. The supervisor watches claude's stdout for the prompt marker. When detected, it writes a `type: "response"` message (with ANSI-stripped output) to `thread:<id>:messages` via `tasklib`.
-8. The thread detail page at `/threads/{thread_id}` **polls** every 3s (via HTMX, hitting `GET /api/threads/{thread_id}/history`). When the poll picks up a `type: "response"` message, a styled **response banner** appears at the top of the message timeline showing the master's answer.
+2. If `thread_id` is omitted, auto-generate one: `web_<unix_seconds>_<random 10-char base36 [0-9a-z]>`. The 10 base36 characters provide ~3.6×10¹⁵ combinations — collision probability is negligible even under heavy concurrent use.
+3. The handler writes the thread shell (repo, initial state) and the user request message to Redis via `tasklib`. A separate `POST /api/threads` endpoint still exists for creating a thread without submitting a request (e.g., pre-configuring repo metadata before the first request).
+4. The handler acquires a per-thread lock (`SET NX thread:<id>:running <request_id>` with TTL `REQUEST_TIMEOUT`, default 30 minutes). If the lock is already held, the handler returns `409 Conflict` — only one `claude -p` invocation per thread at a time.
+5. The handler generates (or reads) the thread's session UUID, stores it in `thread:<id>:session_id`, and spawns `claude -p` as a subprocess in a **background goroutine**:
+   ```
+   claude --dangerously-skip-permissions --bare -p \
+     --session-id <session_uuid> \
+     --output-format stream-json --verbose \
+     "<user request>"
+   ```
+6. The handler **returns immediately** with `{thread_id, status: "submitted"}` and the browser **redirects** to `/threads/{thread_id}`. The `claude -p` subprocess runs asynchronously.
+7. In the background goroutine, the handler reads claude's stdout line by line, parsing each as JSON. It watches for the **completion message**: `{"type":"result","subtype":"success","is_error":false}`. On detection, the handler extracts the `result` field, sets `thread:<id>:complete 1` (Redis), and writes a `role: "master"`, `type: "response"` message to `thread:<id>:messages` via `tasklib`.
+8. If the claude subprocess exits non-zero before the completion message, the handler writes an error message: `{"role": "master", "type": "error", "content": "Master agent failed: <exit code> — <last stderr>"}`. If the subprocess exceeds `REQUEST_TIMEOUT`, it is killed (SIGTERM, then SIGKILL after 10s) and an error message is written.
+9. The background goroutine releases the thread lock (`DEL thread:<id>:running`).
+10. The thread detail page at `/threads/{thread_id}` **polls** every 3s (via HTMX, hitting `GET /api/threads/{thread_id}/history`). When the poll picks up a `type: "response"` message, a styled **response banner** appears at the top of the message timeline showing the master's answer.
 
 **What is kept (persisted in Redis):**
 - The user's original request — stored in `thread:<id>:messages` as a `role: "user"` message
-- All intermediate master messages (plan, delegate, tool_call) — same list
-- The final response — stored as a `role: "master"`, `type: "response"` message by the supervisor
+- All intermediate master messages (plan, delegate, tool_call) — written by the master agent via `tasklib` during the `-p` invocation
+- The final response — stored as a `role: "master"`, `type: "response"` message by the handler after the subprocess completes
 - Thread state (`thread:<id>:current_state`) — status, repo, design, PR number
+- Thread session ID (`thread:<id>:session_id`) — Claude session UUID for `--resume` on follow-up requests
 
 **What the user sees:**
 - After submission, the browser is on `/threads/{thread_id}` showing the message history
-- A "Waiting for master..." indicator with elapsed timer is visible while the thread is `planning` or `initiated` (the current Python `task.py` uses `"initiated"`; the web UI treats both as pending)
-- When the supervisor writes the response, the next poll cycle picks it up and the response banner replaces the waiting indicator
+- A "Waiting for master..." indicator with elapsed timer is visible while `thread:<id>:running` exists and no `type: "response"` message has been written
+- When the handler writes the response, the next poll cycle picks it up and the response banner replaces the waiting indicator
 - The full message timeline (user request → master plan → delegated tasks → worker results → master response) is visible on one scrollable page
 
 This preserves the master agent as the single source of truth for planning. The web UI has zero agency — it cannot create tasks, assign workers, or make decisions.
 
-### Response detection (supervisor-managed)
+### Response detection (handler-managed)
 
-Response completion is detected by the **supervisor**, not by relying on the LLM to self-report. When the supervisor writes a request to claude's stdin, it also monitors claude's **stdout** for the completion signal:
+Response completion is detected by the web UI handler, which parses the `claude -p --output-format stream-json` stdout:
 
-1. After the request text is written to claude stdin, the supervisor watches claude stdout for the **prompt marker** — the string that Claude Code emits when it's ready for the next input (e.g., `"⏵ "` or a configurable regex).
-2. When the prompt marker appears on stdout, claude is done responding. The supervisor writes a JSON message to the thread history via `tasklib`:
-   ```json
-   {"role": "master", "type": "response", "content": "<captured from claude stdout>", "timestamp": "<iso8601>"}
-   ```
-3. The supervisor captures claude's stdout output during the response window (between request write and prompt marker) and stores it as the response content.
-4. If the claude child process exits non-zero before the prompt marker is seen, the supervisor writes an error message with the captured stderr (exit code + last 4KB of stderr). This catches crashes, fatals, and API errors.
-5. If no prompt marker is detected and claude hasn't exited within `MASTER_RESPONSE_TIMEOUT` (default 30 minutes, configurable), the supervisor writes an error message:
+1. `claude -p` with `--output-format stream-json --verbose` emits one JSON object per line on stdout. Messages include `{"type":"system","subtype":"init"}`, `{"type":"assistant","message":{...}}`, and the terminal `{"type":"result","subtype":"success","is_error":false}`.
+2. The handler reads stdout line by line, JSON-decoding each. It watches for the **result message**: `type: "result"` with `subtype: "success"` or `subtype: "error_during_execution"`. The `is_error` field and `stop_reason` field provide explicit success/failure signals.
+3. On `subtype: "success"`, the handler extracts the `result` field (the final response text) and writes it to `thread:<id>:messages` as a `role: "master"`, `type: "response"` message. The assistant messages (`type: "assistant"`) contain the intermediate output (thinking, tool calls, text) and can optionally be written to thread history for live progress display.
+4. If the claude subprocess exits non-zero before the result message is seen, the handler writes an error message with the captured stderr (exit code + last 4KB of stderr).
+5. If the subprocess doesn't complete within `REQUEST_TIMEOUT` (default 30 minutes), the handler sends SIGTERM, waits 10s, then SIGKILL. It writes an error message:
    ```json
    {"role": "master", "type": "error", "content": "Master agent timed out after 30m", "timestamp": "<iso8601>"}
    ```
 
-The master agent's CLAUDE.md still documents the expected workflow (plan → delegate → aggregate → respond), but the web UI doesn't depend on the LLM correctly formatting a JSON message. The supervisor is the authoritative source for "done / error / timeout."
+The web UI's thread detail page polls for messages with `type: "response"` or `type: "error"` and displays them in a styled banner (green for response, red for error). Threads with a pending `thread:<id>:running` lock and no response message yet show a "Waiting for master..." indicator with an elapsed timer.
 
-The web UI's thread detail page polls for messages with `type: "response"` or `type: "error"` and displays them in a styled banner (green for response, red for error). Threads with a pending request and no supervisor-written response yet show a "Waiting for master..." indicator with an elapsed timer.
+**Multi-turn interaction:** Follow-up requests to the same thread use `claude -p --resume <session_uuid>`. Claude Code restores the full conversation context from the persisted session file. The handler uses the session UUID stored in `thread:<id>:session_id`.
 
-**Primary completion signal:** The master agent's CLAUDE.md instructs it to `SET thread:<id>:complete 1` as the **final step** before returning control. The supervisor **primarily** detects completion via this Redis key (polled alongside stdout). Prompt-marker detection on stdout is a **backup timeout mechanism**: if `MASTER_RESPONSE_TIMEOUT` elapses with no `thread:<id>:complete` key, the supervisor checks for the prompt marker as a fallback. This inverts the earlier design — the explicit Redis key is authoritative; prompt-marker regex is the backup. The supervisor also sets the 7-day TTL on thread keys when it writes the response message, since the supervisor is co-located with the master and always running when completions occur (vs. the web UI which might be down).
-
-**Multi-turn interaction:** Claude Code can ask clarifying questions mid-session. When it does, the supervisor captures the question, the prompt marker triggers response detection, and the web UI shows the question. The user can submit a follow-up to the same thread. If the master hangs waiting for input, `MASTER_RESPONSE_TIMEOUT` handles the timeout.
-
-**ANSI handling:** The supervisor strips carriage returns and escape sequences for clean inline display. For diffs and colored code blocks that lose meaning when stripped, the raw ANSI output is preserved in `<WORKSPACE_DIR>/<thread_id>/.response.raw` alongside the cleaned version. The web UI offers a "View raw output" toggle.
+**Session storage:** `~/.claude/projects/<workspace>/` stores session JSON files. This directory is on a shared Docker volume so sessions persist across `claude -p` invocations within the same container. Session cleanup is handled by deleting the session file when a thread is completed or cancelled.
 
 ### Thread creation (bootstrap only)
 
@@ -126,10 +140,10 @@ The web UI's thread detail page polls for messages with `type: "response"` or `t
 
 ### What the web UI does NOT do
 
-- Does NOT call the LLM
+- Does NOT call the LLM directly (it spawns `claude -p` as an opaque subprocess)
 - Does NOT define tools for the master agent
 - Does NOT enqueue tasks, wait on tasks, or cancel tasks directly
-- Does NOT update thread state (beyond creating an empty thread)
+- Does NOT update thread state (beyond creating an empty thread and writing response/error messages)
 - Does NOT make planning decisions
 
 ## Tech Stack
@@ -199,22 +213,21 @@ func (c *Client) GetWorkerStats() (map[string]*WorkerInfo, error)
 func (c *Client) GetWorkerInfo(workerType string) (*WorkerInfo, error)
 func (c *Client) UpdateWorkerHeartbeat(workerType, hostname string) error  // SETEX worker:<type>:<hostname>:heartbeat 30 1
 
-// Inbox (atomic write — used by cmd/webui)
-// PushRequestAtomic wraps three operations in a Lua script for atomicity:
-//   1. HEXISTS thread:<id>:current_state gh_repo → if missing, HSET gh_repo <repo>
-//      (REST body field "repo" maps to Redis hash field "gh_repo" — backward-compat with task.py)
-//   2. RPUSH thread:<id>:messages <user-request-json>
-//   3. LPUSH requests:inbox <request-payload-json>
-func (c *Client) PushRequestAtomic(threadID, repo, request string) error
+// Request execution (used by cmd/webui — spawn claude -p per request)
+// AcquireRequestLock sets thread:<id>:running with TTL, NX semantics.
+// Returns true if lock acquired, false if thread already has a running request.
+// Distinct from LockThread (thread:<id>:lock) which serializes task enqueue within a thread.
+func (c *Client) AcquireRequestLock(threadID, requestID string, ttl time.Duration) (bool, error)
+// ReleaseRequestLock deletes the thread:<id>:running lock key.
+func (c *Client) ReleaseRequestLock(threadID string) error
 
-// CancelRequest atomically (Lua script):
-//   1. Removes the request from requests:inbox and requests:inbox_processing
-//   2. Sets thread:<id>:current_state status to "cancelled"
-// Used by the web UI. Covers both inbox and processing list (race with LMOVE).
-// If the supervisor has already begun processing, it checks thread status before
-// writing to claude stdin and will drop the cancelled request.
-func (c *Client) CancelRequest(threadID string) error
-```
+// Session tracking (used by cmd/webui — persist claude session UUID per thread)
+func (c *Client) SetThreadSessionID(threadID, sessionID string) error
+func (c *Client) GetThreadSessionID(threadID string) (string, error)
+
+// CancelRequest sets thread:<id>:current_state status to "cancelled".
+// If a claude -p is running for this thread, the REQUEST_TIMEOUT will kill it.
+func (c *Client) CancelRequest(threadID string) error```
 
 ### Key design rules
 
@@ -323,7 +336,7 @@ A single-page overview showing:
 | **State panel** | Current status, repo, PR number, last design, last updated. Read-only (state is managed by the master agent). |
 | **Message history** | Chat-like scrollable timeline of all messages (user → master → worker → result). Color-coded by role. Auto-scrolls to bottom. |
 | **Task list** | All tasks for this thread with status icons, click to expand result |
-| **Actions** | If thread has a pending request (status `planning`), show "Cancel request" button. Submits `POST /api/threads/{id}/cancel`. Only cancels the inbox entry — already-enqueued tasks continue to completion but the master won't process further. |
+| **Actions** | If thread has a pending request (`thread:<id>:running` exists), show "Cancel request" button. Submits `POST /api/threads/{id}/cancel`. Sets thread status to `cancelled` — the running `claude -p` subprocess will be killed via context timeout. Already-enqueued tasks continue to completion. |
 
 ### 3. Task Management
 
@@ -345,8 +358,8 @@ All endpoints return JSON. Every endpoint also serves HTMX partials when the `HX
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/requests` | Submit a request to the master agent. Body: `{thread_id?, repo?, request}`. `request` capped at 32KB (HTTP 413 if exceeded). Checks `supervisor:busy` (set by supervisor while processing). The master is single-threaded — only one request can be actively processed at a time. Additional requests queue in `requests:inbox`. Returns `503` with `Retry-After` if busy. Returns `429` if inbox depth exceeds `MAX_INBOX_DEPTH` (default 50). Auto-generates `thread_id` if omitted (`web_<ts>_<10 base36 [0-9a-z]>`), then calls `tasklib.PushRequestAtomic`. Returns `{thread_id, status: "submitted"}`. Returns `409 Conflict` if the thread already has a pending inbox entry (enforced via `requests:inbox:pending:<thread_id>` sentinel key with TTL in the Lua script). |
-| `POST` | `/api/threads/{thread_id}/cancel` | Cancel a pending request. Calls `tasklib.CancelRequest` to remove the request from `requests:inbox` and mark the thread as cancelled. Only works for requests that haven't been picked up by the master yet. |
+| `POST` | `/api/requests` | Submit a request to the master agent. Body: `{thread_id?, repo?, request}`. `request` capped at 32KB (HTTP 413 if exceeded). Acquires per-thread lock (`SET NX thread:<id>:running`) — only one active request per thread. Returns `409 Conflict` if thread is already processing. Returns `503` with `Retry-After` if global concurrency limit reached (`MAX_CONCURRENT_REQUESTS`, default 5). Auto-generates `thread_id` if omitted (`web_<ts>_<10 base36 [0-9a-z]>`). Spawns `claude -p --session-id <uuid> --output-format stream-json` as subprocess. Returns `{thread_id, status: "submitted"}`. |
+| `POST` | `/api/threads/{thread_id}/cancel` | Cancel a pending or running request. Sets thread status to `cancelled`. If a `claude -p` subprocess is running for this thread, it will be killed via its context timeout. |
 
 #### Tasks (read-only)
 
@@ -398,74 +411,71 @@ Each poll hits the existing REST endpoint with `HX-Request` header, returning on
 
 **Scaling:** For deployments with many concurrent users, the thread detail page can optionally use Redis Pub/Sub (`tasklib.SubscribeToThread(threadID)`) to receive real-time updates instead of polling. The active thread detail endpoint supports a `?stream=true` query param that returns a Server-Sent Events (SSE) stream of thread messages. Polling remains the default for simplicity.
 
-### 6. Inbox Reader + Supervisor
+### 6. Request Handler (claude -p subprocess)
 
-The master container runs a **supervisor process** (PID 1) that manages all child processes and multiplexes stdin into the Claude Code session:
+The web UI handler spawns `claude -p` as a one-shot subprocess per user request. No persistent Claude process, no FIFO, no stdin multiplexing.
 
 ```
-master container (ENTRYPOINT: supervisor):
-  supervisor (Go binary, PID 1)
-    ├─ connects to Redis via tasklib (for writing response/error messages)
-    ├─ spawns inbox-reader as child process (restarts on exit)
-    ├─ spawns claude as child process
-    ├─ opens named pipe /tmp/master-inbox.fifo (O_RDONLY | O_NONBLOCK)
-    ├─ opens /dev/tty for interactive CLI input
-    ├─ pipes claude stdout for prompt-marker detection
-    ├─ select loop:
-    │   ├─ reads from FIFO → acquires stdin-mutex → writes to claude stdin
-    │   │   → monitors stdout for prompt marker (MASTER_PROMPT_MARKER regex)
-    │   │   → on marker: writes type:"response" to thread via tasklib → releases mutex
-    │   │   → on timeout (MASTER_RESPONSE_TIMEOUT, default 30m): writes type:"error"
-    │   └─ reads from TTY  → acquires stdin-mutex → writes to claude stdin
-    │       → monitors stdout for prompt marker → releases mutex
-    └─ signal handling:
-        ├─ SIGTERM/SIGINT → forward to claude → wait for exit → cleanup FIFO → exit
-        └─ inbox-reader exit → log warning → respawn after 1s backoff
+POST /api/requests {thread_id?, repo?, request}
+       │
+       ▼
+  handler (Go, in cmd/webui)
+       │
+       ├─ 1. Create thread if new (tasklib.CreateThread)
+       ├─ 2. Write user request to thread:<id>:messages
+       ├─ 3. Acquire request lock: SET NX thread:<id>:running <request_id>
+       │      (TTL = REQUEST_TIMEOUT, default 30 min)
+       │      → 409 Conflict if already locked
+       ├─ 4. Generate/store session UUID (thread:<id>:session_id)
+       ├─ 5. Spawn subprocess in background goroutine:
+       │      claude --dangerously-skip-permissions --bare -p \
+       │        --session-id <session_uuid> \
+       │        --output-format stream-json --verbose \
+       │        "<user request>"
+       ├─ 6. Return {thread_id, status: "submitted"} immediately
+       │      (browser redirects to /threads/{thread_id})
+       │
+       └─ [async goroutine continues below]
 
-  inbox-reader (Go binary, spawned by supervisor)
-    └─ LMOVE requests:inbox requests:inbox_processing → writes to FIFO → LREM requests:inbox_processing
-       (reconnect-on-error loop; startup sweep restores stranded processing entries)
+  background goroutine:
+       │
+       ├─ 7. Read stdout line-by-line, JSON-decode each
+       │      → {"type":"assistant"} — intermediate (optional: write to thread history)
+       │      → {"type":"result","subtype":"success"} — DONE
+       │      → {"type":"result","subtype":"error_during_execution"} — FAILED
+       ├─ 8. On completion: SET thread:<id>:complete 1, write role:"master" type:"response" to thread:<id>:messages
+       ├─ 9. On error/timeout: write role:"master" type:"error" to thread:<id>:messages
+       ├─ 10. Release request lock: DEL thread:<id>:running
+       └─ 11. Update thread state status
 ```
 
-How it works:
+**Session persistence:**
 
-1. `supervisor` spawns both `inbox-reader` and `claude` as child processes. On startup, it checks `/tmp/inbox-reader.pid` for a stale process from a previous (crashed) supervisor, sends `SIGTERM` if found, and removes the PID file before re-creating the FIFO. If `inbox-reader` exits unexpectedly during normal operation, the supervisor respawns it after a 1s backoff.
-2. `inbox-reader` runs a reconnect-on-error loop with a **reliable queue pattern**: `LMOVE requests:inbox requests:inbox_processing 0 0` (atomically moves to processing list), writes to the FIFO, then `LREM requests:inbox_processing`. On startup, a sweep restores any stranded `requests:inbox_processing` entries back to `requests:inbox` (covers crash-after-LMOVE).
-3. `supervisor` opens the FIFO with `O_NONBLOCK`. On startup, it drains any leftover bytes from the FIFO (a short read loop that discards partial data from a previous crashed instance) before entering the select loop. This prevents a partial newline-delimited message from being mis-parsed as valid. The supervisor creates and opens the FIFO reader end **before** spawning the inbox-reader, so the inbox-reader's `open(WRONLY)` never blocks on `ENXIO`.
+- First request for a thread: generate a new session UUID (`uuid.NewV4()`), store in `thread:<id>:session_id` (Redis), pass `--session-id <uuid>` to `claude -p`.
+- Follow-up requests: read `thread:<id>:session_id` from Redis, pass `--resume <uuid>` to `claude -p` instead of `--session-id`.
+- `~/.claude/projects/<workspace>/` is on a shared Docker volume — session files persist across `-p` invocations within the same container.
+- On thread completion or cancellation, delete the session file to free disk space.
 
-**FIFO message framing:** Requests are written as **newline-delimited JSON** (`<json>\n`) with a unique `request_id` field (UUIDv4). The supervisor accumulates reads into a buffer, splitting on `\n` to get complete messages. This handles partial reads (Linux PIPE_BUF is 4KB and payloads can be ~32.5KB — writes larger than PIPE_BUF are non-atomic). The supervisor deduplicates by `request_id` within a 1-hour window — if the startup sweep restores a stranded `requests:inbox_processing` entry that was already partially delivered, the duplicate is silently dropped. If the inbox-reader is down and the FIFO has no writer, `read()` returns `ENXIO` — the supervisor removes the FIFO fd from the select set and adds it back once the inbox-reader respawns (avoiding 100% CPU spin-loop).
+**Concurrency:**
 
-**retry_after delayed scheduling:** Skipped inbox entries (with `retry_after > now`) are moved to a separate `requests:delayed` list via `LMOVE`. A 10-second periodic sweep from the inbox-reader checks `requests:delayed` and `LMOVE`s expired entries back to `requests:inbox`. This avoids the infinite re-pop loop that would occur if the skipped entry were immediately `LMOVE`d back.
-4. `supervisor` does a `select` on FIFO, TTY, and claude stdout file descriptors, with a periodic wake-up (1s timer) to `waitpid(-1, WNOHANG)` to reap **any** zombie child process (PID 1 responsibility — prevents process table exhaustion). This also detects claude exiting mid-request before the prompt marker.
-5. Before writing to claude stdin, the supervisor checks `thread:<id>:current_state` via `tasklib` — if the thread status is `"cancelled"`, the request is dropped (a cancel raced with inbox delivery). This closes the race window between `CancelRequest` and the inbox-reader's `LMOVE`. It then monitors claude's stdout for the **prompt marker** — a configurable regex (`MASTER_PROMPT_MARKER`, default matches Claude Code's `"⏵ "` prompt). When the marker appears, the supervisor:
-   - Captures the stdout output between request-write and prompt-marker
-   - Strips ANSI escape sequences and carriage-return-overwrites (`\r`) from captured output (Claude Code emits spinner animations, color codes, and line-rewrite progress bars)
-   - Writes a `type: "response"` message to the thread history via `tasklib` with the cleaned output
-   - Releases the mutex
-6. If the prompt marker is not detected within `MASTER_RESPONSE_TIMEOUT` (default 30 minutes), the supervisor writes a `type: "error"` message and releases the mutex. This timeout is generous because Claude Code tool calls (e.g., `task.py wait --timeout 300`) can take minutes.
-7. To prevent mutex starvation from long interactive CLI sessions, FIFO-side mutex acquisition has a configurable timeout (`MASTER_MUTEX_TIMEOUT`, default 5 minutes). If the mutex can't be acquired within this window, the request is re-queued via `RPUSH` with a `retry_after` field (now + 30s) and an incremented `retry_count`. After `MASTER_RETRY_MAX` (default 3), the request is abandoned and the web UI receives a `410 Gone` via a status update to the thread. The inbox-reader skips entries with `retry_after > now`, `RPUSH`ing them back to the tail (no tight re-pop loop).
-8. On `SIGTERM` (Docker stop), the supervisor forwards the signal to claude, waits for graceful exit, then cleans up the FIFO and exits.
-9. If the supervisor itself crashes (panic, OOM), both `inbox-reader` and `claude` die with it. Docker restarts the container (`restart: unless-stopped`). Pending inbox entries remain in Redis — they're picked up after restart. The supervisor's startup sweep not only restores stranded `requests:inbox_processing` entries but also **DEL**'s any stale `requests:inbox:pending:*` sentinels for threads that already have a `type: "response"` or `type: "error"` message (leftover from a crash mid-completion). To prevent crash loops from repeatedly `LMOVE`ing new requests, the supervisor's first Redis operation on startup is `INCR supervisor:restart_count` + `EXPIRE supervisor:restart_count 60` (atomically increments the crash counter before any other work). If the count exceeds 3, the processing-list sweep and inbox-reader spawn are skipped — the supervisor enters a safe idle state.
+- Only one `claude -p` invocation per thread at a time, enforced by `SET NX thread:<id>:running`.
+- Different threads can run concurrently (multiple `claude -p` subprocesses managed by the Go HTTP server).
+- Global concurrency limit via `MAX_CONCURRENT_REQUESTS` (default 5) — beyond this, `POST /api/requests` returns `503 Service Unavailable` with `Retry-After`.
 
-The FIFO is created by the Dockerfile:
+**Timeout and cleanup:**
 
-```dockerfile
-RUN mkfifo /tmp/master-inbox.fifo
-ENTRYPOINT ["/usr/local/bin/supervisor"]
-```
+- `REQUEST_TIMEOUT` (default 30 minutes) — handler kills the subprocess (SIGTERM, 10s grace, SIGKILL) and writes an error message.
+- `REQUEST_SHUTDOWN_GRACE` (default 60s) — on server shutdown, in-flight subprocesses are given this grace period before being killed.
 
-**Readiness probe:** The supervisor serves a minimal HTTP health endpoint on `:9090` (`GET /healthz` returns 200 when the FIFO is open, both child processes are running, and Redis is connected).
-
-**Supervisor env vars:**
+**Handler env vars:**
 
 | Env var | Default | Purpose |
 |---------|---------|---------|
-| `MASTER_PROMPT_MARKER` | `⏵ ` (UTF-8: `\xe2\x8f\xb5 `) | Regex for Claude Code's ready-for-input prompt. Only the FIFO-triggered response path performs marker detection; TTY-initiated input (interactive CLI) does not check for markers. |
-| `MASTER_RESPONSE_TIMEOUT` | `1800` | Seconds before declaring the master hung (30 min) |
-| `MASTER_MUTEX_TIMEOUT` | `300` | Seconds before re-queueing a web request that can't get stdin (5 min) |
-| `MASTER_RESPONSE_MIN_ELAPSED` | `2` | Ignore prompt markers within first N seconds (prevents false match on initial output) |
-| `MASTER_RESPONSE_QUIET_PERIOD` | `3` | Seconds of no stdout growth before a marker is considered valid (prevents mid-output false match) |
-| `MASTER_RESPONSE_MAX_SIZE` | `65536` | Max inline bytes of captured stdout (64KB). Exceeded content is written to `<WORKSPACE_DIR>/<thread_id>/.response.txt` and the thread message contains `{"file": "<path>"}` instead of inline content. The web UI serves the file on demand. |
+| `REQUEST_TIMEOUT` | `1800` | Seconds before killing a stuck `claude -p` (30 min) |
+| `MAX_CONCURRENT_REQUESTS` | `5` | Max concurrent `claude -p` subprocesses |
+| `REQUEST_SHUTDOWN_GRACE` | `60` | Seconds to wait for in-flight requests on shutdown |
+| `CLAUDE_PATH` | `/usr/local/bin/claude` | Path to claude binary |
+| `CLAUDE_SESSIONS_DIR` | `/home/agent/.claude` | Shared volume path for session persistence |
 
 ### 7. Authentication
 
@@ -485,17 +495,16 @@ Updated images (Go binaries replace Python scripts):
 
 | Image | Change |
 |-------|--------|
-| `master-agent` | Replace `scripts/task.py` with Go `task` binary. Add `supervisor` + `inbox-reader` binaries. Python fallback via `TASKLIB_BACKEND=python`. |
-| `worker-claude` | New `ENTRYPOINT ["worker", "claude"]`. Copies Go `worker` binary into `docker/worker-claude/`. |
+| `master-agent` | Copies `webui` + `task` binaries. `ENTRYPOINT ["webui"]` — the web UI server spawns `claude -p` as a subprocess within the same container. `FROM claude-code` so the `claude` binary is present. |
+| `worker-claude` | `ENTRYPOINT ["worker", "claude"]`. Copies Go `worker` binary into `docker/worker-claude/`. |
 | `copilot` | Copies Go `worker` binary into existing `docker/copilot/` image. `ENTRYPOINT ["worker", "copilot"]` replaces `worker.py`. |
 | `opencode` | Copies Go `worker` binary into existing `docker/opencode/` image. `ENTRYPOINT ["worker", "opencode"]` replaces `worker.py`. |
-| `webui` (new) | Go `webui` binary, templates, static CSS, vendored HTMX. Base image: `gcr.io/distroless/static-debian12` (minimal, shell-less — set `DEBUG=true` build arg to use `ai-base` instead for `docker exec` access). |
 
-New `webui` service in `docker-compose.yml`:
+Updated `master` service in `docker-compose.yml`:
 
 ```yaml
-webui:
-  image: ${WEBUI_IMAGE:-webui:latest}
+master:
+  image: ${MASTER_AGENT_IMAGE:-master-agent:latest}
   depends_on:
     redis:
       condition: service_healthy
@@ -509,36 +518,28 @@ webui:
     - WEBUI_POLL_WORKERS=5
     - WEBUI_HTMX_SRC=/static/htmx.min.js
     - WEBUI_THEME=${WEBUI_THEME:-light}
-    - WORKSPACE_DIR=${WORKSPACE_DIR:-/workspace}
-    - TASKLIB_BACKEND=go
+    - WORKSPACE_DIR=/workspace
+    - CLAUDE_PATH=/usr/local/bin/claude
+    - CLAUDE_SESSIONS_DIR=/home/agent/.claude
+    - REQUEST_TIMEOUT=1800
+    - MAX_CONCURRENT_REQUESTS=5
+    - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
+    - GH_TOKEN=${GH_TOKEN}
+    - GITHUB_TOKEN=${GITHUB_TOKEN}
   volumes:
     - workspace:/workspace
+    - claude_sessions:/home/agent/.claude
   ports:
     - "${WEBUI_PORT:-8000}:8000"
   restart: unless-stopped
 ```
 
-The workspace volume mount enables the web UI to serve oversized response files (`.response.txt`) written by the supervisor.
-
-Master service gains a healthcheck targeting the supervisor's readiness probe:
-
-```yaml
-master:
-  # ... existing config ...
-  healthcheck:
-    test: ["CMD", "curl", "-f", "http://localhost:9090/healthz"]
-    interval: 10s
-    timeout: 2s
-    retries: 3
-```
-
-`master` and `worker` services also gain `TASKLIB_BACKEND=go` with fallback to `python`. This allows a one-line env change to revert to the Python code if a Go `tasklib` edge case surfaces in production.
+**New volume `claude_sessions`** — persists Claude session files (`~/.claude/projects/`) across `claude -p` invocations, enabling `--resume` for multi-turn threads. Mounted on the `master` container where both `webui` and `claude -p` run.
 
 Dockerfiles:
 
-- `docker/master-agent/Dockerfile` — copies `task` + `supervisor` + `inbox-reader` binaries; `RUN mkfifo /tmp/master-inbox.fifo`; `ENTRYPOINT ["/usr/local/bin/supervisor"]`
+- `docker/master-agent/Dockerfile` — `FROM claude-code:latest`; copies `webui` binary (Go build), `task` binary, `templates/`, `static/`; `ENTRYPOINT ["/usr/local/bin/webui"]`
 - `docker/worker-claude/Dockerfile` — copies `worker` binary; `ENTRYPOINT ["worker", "claude"]`
-- `docker/webui/Dockerfile` — multi-stage: Go build, then `FROM gcr.io/distroless/static-debian12` (or `FROM ai-base:latest` when `DEBUG=true`); copies `webui` binary + `templates/` + `static/` (including vendored `htmx.min.js`)
 
 ### 9. File Structure
 
@@ -551,10 +552,9 @@ tasklib/                        # Shared library — all Redis CRUD (pure Redis,
   tasks.go                      # Task CRUD
   threads.go                    # Thread CRUD (no cleanup — that lives in cmd/task)
   workers.go                    # Worker stats + heartbeat
-  inbox.go                      # PushRequestAtomic (Lua script)
-  lua/
-    push_request.lua            # Atomic inbox write + thread history append + dedup
-    cancel_request.lua          # Atomic inbox removal + thread status → cancelled
+  uuid.go                       # UUID generation for thread/request IDs
+  inbox.go                      # → TO REPLACE: old PushRequestAtomic → AcquireRequestLock + session methods
+  lua/                          # → TO REMOVE: old FIFO Lua scripts (push_request.lua, cancel_request.lua)
   tasks_test.go                 # Unit tests with miniredis (non-blocking CRUD only)
   threads_test.go
   tasks_integration_test.go     # Integration tests with real Redis (blocking cmds + JSON compat)
@@ -564,20 +564,18 @@ cmd/
     main.go                     # CLI (cobra) — drop-in replacement for task.py (~350 lines)
   worker/
     main.go                     # Worker loop — replacement for worker.py (~300 lines)
-  supervisor/
-    main.go                     # Stdin multiplexer (FIFO + TTY → claude stdin, mutex-guarded)
-  inbox-reader/
-    main.go                     # LMOVE requests:inbox → FIFO write → LREM
   webui/
     main.go                     # HTTP server entry point
     internal/
       api/
         router.go               # Chi router, HTMX detection middleware, auth middleware, error recovery
-        requests.go             # POST /api/requests (auto-gen thread, tasklib.PushRequestAtomic)
+        requests.go             # POST /api/requests (thread lock, spawn claude -p, parse stream-json)
         tasks.go                # GET /api/tasks handlers (read-only)
         threads.go              # GET/POST /api/threads + POST /api/threads/{id}/cancel handlers
         workers.go              # GET /api/workers handlers
         system.go               # GET /api/health, /api/stats handlers
+      request/
+        handler.go              # claude -p subprocess manager (spawn, stdout parse, timeout)
       templates/
         base.html               # Layout shell (nav, vendored HTMX, polling config)
         dashboard.html          # Dashboard page
@@ -600,18 +598,16 @@ cmd/
 
 docker/
   master-agent/
-    Dockerfile                  # UPDATED: Go binaries + supervisor, mkfifo, Python fallback
+    Dockerfile                  # FROM claude-code; copies webui + task binaries + templates/ + static/
   worker-claude/
-    Dockerfile                  # UPDATED: Go worker binary, Python fallback
-  webui/
-    Dockerfile                  # NEW: multi-stage, distroless base
+    Dockerfile                  # Go worker binary
 
-scripts/                        # Kept behind TASKLIB_BACKEND=python toggle for one release cycle
-  task.py                       # → replaced by cmd/task when TASKLIB_BACKEND=go
-  worker.py                     # → replaced by cmd/worker when TASKLIB_BACKEND=go
-  test_json_compat.py           # NEW: side-by-side integration tests (Go vs Python output)
+scripts/                        # Python originals (reference for JSON compat tests)
+  task.py
+  worker.py
+  test_json_compat.py           # Side-by-side integration tests (Go vs Python output)
 
-docker-compose.yml              # MODIFIED: add webui service, TASKLIB_BACKEND env on all services
+docker-compose.yml              # MODIFIED: master service runs webui, claude_sessions volume
 ```
 
 ### 10. Redis Data Model
@@ -623,11 +619,9 @@ Keys used by tasklib (all pre-existing except those marked NEW):
 | Key | Type | Purpose |
 |-----|------|---------|
 | `active_tasks` | Hash | **Existing.** Currently executing tasks. Keyed by `task_id`, value is JSON task info. Written by `cmd/worker` (HSET on start, HDEL on completion). Read by `task list` and web UI. |
-| `requests:inbox` | List (NEW) | Pending web UI requests. Inbox-reader moves to `requests:inbox_processing` atomically via `LMOVE`. |
-| `requests:inbox_processing` | List (NEW) | Requests being written to the FIFO. Stranded entries restored to inbox on startup. |
-| `requests:inbox:pending:<thread_id>` | String (NEW, SET NX) | Sentinel preventing duplicate inbox entries. Deleted by supervisor when request is fully processed (not solely TTL-based — cleared on completion so follow-ups aren't blocked for 10m). |
-| `supervisor:busy` | String (NEW, TTL 1800s) | Set by supervisor while claude is actively processing, refreshed every 60s. Auto-clears on TTL expiry if supervisor crashes. Web UI checks via Lua script that also tests `thread:<id>:complete` — a stale `supervisor:busy` with a completed thread doesn't block. |
-| `thread:<id>:complete` | String (NEW) | Set by master agent on completion. Dual-signal with prompt marker for completion detection. |
+| `thread:<id>:running` | String (NEW, SET NX) | Per-thread lock preventing concurrent `claude -p` invocations. Value is the request ID. TTL = `REQUEST_TIMEOUT` (default 1800s). Released by handler on completion/error/timeout. Web UI checks this key to show "Waiting for master..." indicator. |
+| `thread:<id>:complete` | String (NEW) | Set by web UI handler when `type: "result"` is received. Marks the thread as having a completed response. |
+| `thread:<id>:session_id` | String (NEW) | Claude session UUID for `--session-id` / `--resume`. Generated on first request, reused for follow-ups. |
 | `worker:<type>:<hostname>:heartbeat` | String (NEW, SETEX, 30s TTL) | Per-instance worker liveness. Value `1`. Set by background goroutine every 10s (20s margin). Read by `GetWorkerStats` via `SCAN worker:*:heartbeat`. Docker hostname changes on restart → old keys age out via TTL. |
 
 Thread message taxonomy — all messages in `thread:<id>:messages` have `role`, `type`, `content`, and `timestamp` fields:
@@ -637,9 +631,9 @@ Thread message taxonomy — all messages in `thread:<id>:messages` have `role`, 
 | `"user"` | `"request"` | Request from web UI or CLI | Plain text bubble |
 | `"master"` | `"plan"` | Master agent planning output | Dashed border, muted |
 | `"master"` | `"delegate"` | Master agent delegating a task | Dashed border, muted |
-| `"master"` | `"tool_call"` | Master agent invoking a tool (task.py) | Dashed border, muted |
-| `"master"` | `"response"` | Final response written by supervisor | Green banner |
-| `"master"` | `"error"` | Error written by supervisor | Red banner |
+| `"master"` | `"tool_call"` | Master agent invoking the Go task CLI | Dashed border, muted |
+| `"master"` | `"response"` | Final response written by web UI handler | Green banner |
+| `"master"` | `"error"` | Error written by web UI handler | Red banner |
 | `"worker"` | `"result"` | Worker agent task result | Solid border, worker color-coded. `worker_type` field (`"claude"`/`"copilot"`/`"opencode"`) preserved in message JSON for filtering. |
 | `"claude"` | `"result"` | Legacy: Python worker role (backward-compat) | Same as `worker` |
 | `"copilot"` | `"result"` | Legacy: Python worker role (backward-compat) | Same as `worker` |
@@ -649,17 +643,17 @@ During the `TASKLIB_BACKEND=python` transition period, both old (`role: "claude"
 
 All other keys are unchanged.
 
-**Thread lifecycle:** `tasklib` preserves the existing TTL behavior from `task.py` (tasks are created with `TTL_TASK`, threads with `TTL_THREAD`). On thread completion (status `complete` or `cancelled`), the web UI handler sets an **additional** 7-day TTL as a safety net — the existing TTLs already provide baseline cleanup. A `POST /api/threads/{id}/keep` endpoint extends the TTL. Expired keys are cleaned up automatically by Redis. A startup goroutine in the web UI finds orphaned threads (picked up by inbox-reader but no response after `MASTER_RESPONSE_TIMEOUT`) and applies TTL to them as well.
+**Thread lifecycle:** `tasklib` preserves the existing TTL behavior from `task.py` (tasks are created with `TTL_TASK`, threads with `TTL_THREAD`). On thread completion (status `complete` or `cancelled`), the web UI handler sets an **additional** 7-day TTL as a safety net — the existing TTLs already provide baseline cleanup. A `POST /api/threads/{id}/keep` endpoint extends the TTL. Expired keys are cleaned up automatically by Redis. A startup goroutine in the web UI finds threads with a `thread:<id>:running` lock but no response after `REQUEST_TIMEOUT` and marks them as timed out.
 
 ## Implementation Plan
 
 ### Step 0: Pre-implementation validation
 
-Before any code is written, validate two architectural assumptions:
+Validated 2026-05-12 against `ghcr.io/noodle05/claude-code:latest` (v2.1.126). Full findings in `docs/design-web-ui-revision-notes.md`.
 
-1. **Prompt marker behavior:** Run Claude Code in a container with a multi-turn task (delegate → wait → result → delegate → aggregate) and capture stdout. Confirm that Claude Code's prompt marker (`⏵ `) only appears at final completion, not between tool invocations. **Also test with non-TTY stdin** (`echo "instruction" | claude` vs `claude` with TTY) — Claude Code may suppress the prompt marker entirely when stdin is a pipe. If so, wrap claude via `unbuffer` or `script -qc` to provide a pseudo-TTY.
+1. **`claude -p --output-format stream-json`** — Validated. `-p` mode supports complex multi-step tool use (`num_turns: 3+`) within a single invocation. `stream-json` produces unambiguous `{"type":"result","subtype":"success"}` completion messages. `--session-id` + `--resume` + shared `~/.claude` volume provides session persistence across invocations. This approach replaces the originally-planned FIFO/supervisor/prompt-marker architecture.
 
-2. **Blocking command behavior:** Verify `LMOVE` and `BLMOVE` are available in the target Redis version (6.2+). Verify `SETEX` / `SET ... EX` semantics.
+2. **Redis blocking commands** — Validated. Redis 7-alpine supports `LMOVE`, `BLMOVE` (since 6.2), `SETEX`, `SET...EX`. `go-redis/v9` is the client library.
 
 ### Deployment milestones
 
@@ -669,37 +663,46 @@ To reduce risk, the implementation is grouped into three deployable milestones. 
 |-----------|-------|-------------|--------|
 | M1: tasklib | 1, 2 | Go `tasklib` package + JSON compat tests (validated, not yet used in prod) | N/A (test-only) |
 | M2: CLI + worker | 3 | Go `task` + `worker` binaries behind `TASKLIB_BACKEND=go` toggle alongside Python | Set `TASKLIB_BACKEND=python` |
-| M3: web UI | 4, 5, 6, 7 | Supervisor + inbox-reader + web UI, full stack | `docker compose down webui` |
+| M3: web UI | 4, 5, 6, 7 | Request handler + web UI, full stack | Revert master-agent image |
 
 ### Step 1: Go module scaffold + `tasklib` package
 
-Create `go.mod` at repo root. Dependencies: `go-redis/v9`, `chi/v5`, `cobra`, `miniredis`. Implement `tasklib/` with full CRUD for tasks, threads, workers, heartbeat, and the `PushRequestAtomic` Lua script. Cover all non-blocking operations with `miniredis` unit tests.
+> **Status: DONE** (PRs #15, #16). Scope: `tasks.go`, `threads.go`, `workers.go`, `client.go`, `uuid.go`, unit tests with `miniredis`.
 
-This is the highest-leverage step — `tasklib` correctness determines correctness of all three binaries.
+**Post-revision work needed:** The current `tasklib/inbox.go` implements the old FIFO-based `PushRequestAtomic` and `CancelRequest`. This file must be replaced with the new request-execution methods:
+
+- `AcquireRequestLock(threadID, requestID, ttl)` / `ReleaseRequestLock(threadID)` — request-level lock (`thread:<id>:running`)
+- `SetThreadSessionID(threadID, sessionID)` / `GetThreadSessionID(threadID)` — session UUID persistence
+- `CancelRequest(threadID)` — simplified: sets thread status to `cancelled` only (no inbox list manipulation)
+
+Remove `tasklib/lua/push_request.lua` and `tasklib/lua/cancel_request.lua` (FIFO-era Lua scripts). Add `miniredis` unit tests for the new methods.
 
 ### Step 2: Side-by-side JSON compatibility test suite
 
-Write `scripts/test_json_compat.py` — an integration test that:
-1. Spins up a real Redis instance
-2. Runs each operation through both the Python code and the Go `tasklib` with identical inputs
-3. Compares the Redis keys produced byte-for-byte
-4. Compares JSON output (stdout) field-for-field
-
-This gates the removal of Python. All tests must pass identically before proceeding to Step 3.
+> **Status: DONE** (PR #16). Covers all task/worker CRUD operations. No changes needed — the new request-execution methods have no Python equivalent to test against.
 
 ### Step 3: Go `task` CLI + `worker` binary
 
-Build `cmd/task/main.go` — a `cobra` CLI with the same subcommands and flags as `task.py`. Build `cmd/worker/main.go` — the worker loop with heartbeat. Both read `TASKLIB_BACKEND` env var; when set to `python`, they exec the Python scripts instead. Default is `go`. Update Dockerfiles to include Go binaries while keeping Python scripts as fallback.
+> **Status: DONE** (PR #16). `cmd/task/main.go` is a `cobra` CLI with the same subcommands and flags as `task.py`. `cmd/worker/main.go` is the worker loop with heartbeat. No changes needed — the `task` CLI is invoked by `claude -p` exactly as before; the new tasklib methods are called directly by `cmd/webui`, not through the CLI.
 
-### Step 4: Supervisor + inbox-reader
+### Step 4: Request handler (claude -p subprocess manager)
 
-Build `cmd/supervisor/main.go` — stdin multiplexer (select loop, mutex, FIFO + TTY → claude stdin). Build `cmd/inbox-reader/main.go` — `LMOVE requests:inbox requests:inbox_processing RIGHT LEFT` → FIFO write → `LREM`. Update `docker/master-agent/Dockerfile` with `mkfifo` and new `ENTRYPOINT`. Update `docker/master-agent/CLAUDE.md` with:
-- Awareness that requests may arrive from the web UI (via the inbox) in addition to interactive CLI
-- That completion is detected automatically by the supervisor (master does not need to self-report)
+Build `cmd/webui/internal/request/handler.go` — Go subprocess manager that:
+- Spawns `claude --dangerously-skip-permissions --bare -p --session-id <uuid> --output-format stream-json --verbose "<prompt>"` in a background goroutine
+- Returns immediately after spawn (handler is non-blocking)
+- Reads claude stdout line-by-line in the background goroutine, JSON-decodes each
+- Detects `{"type":"result","subtype":"success"}` as completion → sets `thread:<id>:complete 1`
+- Handles timeout via `context.WithTimeout` (SIGTERM, 10s grace, SIGKILL)
+- Writes response/error messages to `thread:<id>:messages` via `tasklib`
+- Manages request lock (`AcquireRequestLock` / `ReleaseRequestLock` — `thread:<id>:running`)
+- Manages session UUID (`SetThreadSessionID` / `GetThreadSessionID`) for `--resume` on follow-ups
+- Global concurrency cap via semaphore channel (`MAX_CONCURRENT_REQUESTS`, default 5)
+
+Add `claude_sessions` volume to `docker-compose.yml` for session persistence. Update `docker/master-agent/CLAUDE.md` to document the `-p`-based workflow and the `--resume` follow-up path.
 
 ### Step 5: Web UI REST API handlers
 
-Build `cmd/webui/internal/api/` — chi router, auth middleware (bearer token when `WEBUI_API_KEY` is set), HTMX detection middleware, all `/api/` endpoints backed by `tasklib`. Each handler checks `HX-Request` header to return either an HTML partial or JSON. `POST /api/requests` handles auto-generation of `thread_id` when omitted.
+Build `cmd/webui/internal/api/` — chi router, auth middleware (bearer token when `WEBUI_API_KEY` is set), HTMX detection middleware, all `/api/` endpoints backed by `tasklib`. Each handler checks `HX-Request` header to return either an HTML partial or JSON. `POST /api/requests` handles auto-generation of `thread_id` when omitted, acquires thread lock, and spawns `claude -p` via the request handler.
 
 ### Step 6: HTML templates and CSS
 
@@ -707,22 +710,22 @@ Build all Go `html/template` files under `cmd/webui/internal/templates/`. Minima
 
 ### Step 7: Dockerize
 
-Multi-stage Dockerfiles for all images. `webui` uses `gcr.io/distroless/static-debian12`. Add `webui` service to `docker-compose.yml`. `TASKLIB_BACKEND=go` on all services. Update CI (`.github/workflows/build-images.yml`) to build the Go binaries and all images.
+Multi-stage Dockerfiles for all images. `master-agent` uses `FROM claude-code:latest` and copies `webui` + `task` binaries and templates/static. Add `claude_sessions` volume to `docker-compose.yml`. Update CI (`.github/workflows/build-images.yml`) to build the Go binaries and all images.
 
 ### Step 8: End-to-end test
 
-Spin up the full stack. Submit a request via the web UI → verify inbox-reader delivers to supervisor FIFO → supervisor writes to claude stdin → master plans and delegates via Go `task` CLI → Go workers consume, execute, return results → supervisor detects prompt marker on claude stdout → supervisor writes `type: "response"` message → thread detail page shows response banner via HTMX polling. Test REST API with `curl`. Verify auth middleware rejects unauthenticated mutations when `WEBUI_API_KEY` is set.
+Spin up the full stack. Submit a request via the web UI → handler acquires thread lock → handler spawns `claude -p --session-id <uuid> --output-format stream-json` → master plans and delegates via Go `task` CLI → Go workers consume, execute, return results → handler detects `{"type":"result"}` on stdout → handler writes `type: "response"` message → handler releases thread lock → thread detail page shows response banner via HTMX polling. Test follow-up request via `--resume` to verify session persistence. Test REST API with `curl`. Verify auth middleware rejects unauthenticated mutations when `WEBUI_API_KEY` is set.
 
 ## Verification
 
 1. `go test ./tasklib/...` passes all unit tests with `miniredis`
 2. `python3 scripts/test_json_compat.py` passes all byte-for-byte comparisons
-3. `docker compose up -d` starts all services including webui
+3. `docker compose up -d` starts all services (master serves the web UI on port 8000)
 4. `curl http://localhost:8000/api/health` returns `{"redis":"ok","workers":{...}}`
-5. `curl -X POST http://localhost:8000/api/requests -H 'Content-Type: application/json' -H 'Authorization: Bearer <key>' -d '{"request":"Say hello"}'` auto-generates a thread_id, atomically writes to inbox + thread history; returns `{"thread_id":"web_<ts>_<abcdefghij>","status":"submitted"}`
-6. The master agent picks up the request via inbox-reader → FIFO → supervisor → claude stdin, processes it using the Go `task` CLI, and writes a `type: "response"` message when done
+5. `curl -X POST http://localhost:8000/api/requests -H 'Content-Type: application/json' -H 'Authorization: Bearer <key>' -d '{"request":"Say hello"}'` auto-generates a thread_id, spawns `claude -p`, and returns `{"thread_id":"web_<ts>_<abcdefghij>","status":"submitted"}`
+6. The handler detects `{"type":"result"}` on claude stdout and writes a `type: "response"` message to thread history
 7. Browser at `http://localhost:8000` shows dashboard with worker cards (online/offline from heartbeat), active threads with response indicators
 8. Thread detail page shows message history updating in real time via HTMX polling, with a response banner when the master finishes
 9. `curl http://localhost:8000/api/tasks` returns JSON matching the UI display
 10. The Go `task` CLI produces identical output to `task.py` for the same Redis state
-11. Setting `TASKLIB_BACKEND=python` on the master container falls back to `task.py` with identical behavior
+11. Follow-up request to the same thread uses `--resume <session_uuid>` and preserves conversation context
