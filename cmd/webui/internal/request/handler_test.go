@@ -531,11 +531,15 @@ func TestSubmit_StoresSessionID(t *testing.T) {
 func TestCancel_RemovesRegistration(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
-	// Use /bin/true (always exists, exits immediately).
-	handler.cfg.ClaudePath = "/bin/true"
+	// Write a fake claude that sleeps before exiting, so the background
+	// goroutine stays alive long enough to verify cancel registration.
+	// /bin/true can complete before Submit returns on fast/single-core
+	// machines (ARM64 runners).
+	handler.cfg.ClaudePath = filepath.Join(handler.cfg.WorkspaceDir, "fake-slow")
+	os.WriteFile(handler.cfg.ClaudePath, []byte("#!/bin/bash\necho '{\"type\":\"system\",\"subtype\":\"init\"}'\nexec sleep 30\n"), 0755)
 
 	ctx := context.Background()
-	_, err := handler.Submit(ctx, "cancel-reg-thread", "Quick request", "")
+	_, err := handler.Submit(ctx, "cancel-reg-thread", "Slow request", "")
 	if err != nil {
 		t.Fatalf("Submit failed: %v", err)
 	}
@@ -548,8 +552,22 @@ func TestCancel_RemovesRegistration(t *testing.T) {
 		t.Error("cancel func should be registered right after Submit")
 	}
 
-	// Wait for the goroutine to finish so it doesn't interfere with later tests
-	waitForNotification(notify, 5*time.Second)
+	// Cancel the running subprocess and wait for cleanup
+	if err := handler.Cancel("cancel-reg-thread"); err != nil {
+		t.Fatalf("Cancel failed: %v", err)
+	}
+	_, ok := waitForNotification(notify, 5*time.Second)
+	if !ok {
+		t.Fatal("timeout waiting for cancellation cleanup")
+	}
+
+	// Verify cleanup
+	handler.mu.Lock()
+	_, stillExists := handler.cancels["cancel-reg-thread"]
+	handler.mu.Unlock()
+	if stillExists {
+		t.Error("cancel func should be removed after completion")
+	}
 	_ = ctx
 }
 

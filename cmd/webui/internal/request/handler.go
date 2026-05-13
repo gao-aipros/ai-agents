@@ -86,6 +86,10 @@ type SubmitResult struct {
 // Returns an error if the thread is already processing a request (409),
 // the global concurrency limit is reached (503), or setup fails.
 func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string) (*SubmitResult, error) {
+	if !validThreadID(threadID) {
+		return nil, fmt.Errorf("invalid thread_id: %q", threadID)
+	}
+
 	requestID := mustUUID()
 
 	// Check global concurrency limit
@@ -159,9 +163,10 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 		}
 	}
 
-	// Build claude -p command
+	// Build claude -p command. -p consumes the next argument as the prompt,
+	// so it must come after all other flags and be followed by the prompt text.
 	args := []string{
-		"--dangerously-skip-permissions", "--bare", "-p",
+		"--dangerously-skip-permissions", "--bare",
 		"--output-format", "stream-json", "--verbose",
 	}
 	if useResume {
@@ -169,7 +174,7 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 	} else {
 		args = append(args, "--session-id", sessionID)
 	}
-	args = append(args, userRequest)
+	args = append(args, "-p", userRequest)
 
 	// Create a context for the subprocess lifecycle
 	procCtx, cancel := context.WithTimeout(context.Background(), h.cfg.RequestTimeout)
@@ -273,7 +278,10 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 
 	cmd := exec.CommandContext(ctx, h.cfg.ClaudePath, args...)
 	cmd.Dir = filepath.Join(h.cfg.WorkspaceDir, threadID)
-	os.MkdirAll(cmd.Dir, 0755)
+	if err := os.MkdirAll(cmd.Dir, 0755); err != nil {
+		h.writeErrorMessage(ctx, threadID, fmt.Sprintf("failed to create workspace dir: %v", err))
+		return
+	}
 
 	// Set CLAUDE_CONFIG_DIR so session files land in the shared volume
 	cmd.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+h.cfg.ClaudeSessionsDir)
@@ -296,7 +304,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 	}
 
 	// Check for cancellation before processing output
-	if h.isCancelled(ctx, threadID) {
+	if h.isCancelled(ctx) {
 		return
 	}
 
@@ -326,7 +334,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 	scanner.Buffer(make([]byte, 64*1024), 64*1024) // 64KB line buffer
 
 	for scanner.Scan() {
-		if h.isCancelled(ctx, threadID) {
+		if h.isCancelled(ctx) {
 			// Process was cancelled — claude will be killed by context
 			break
 		}
@@ -383,7 +391,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 			errContent = "Request cancelled"
 		}
 
-		if !h.isCancelled(ctx, threadID) {
+		if !h.isCancelled(ctx) {
 			h.writeErrorMessage(ctx, threadID, errContent)
 		} else {
 			h.writeErrorMessage(ctx, threadID, "Request cancelled")
@@ -464,12 +472,16 @@ func (h *Handler) writeErrorMessage(ctx context.Context, threadID, content strin
 	})
 }
 
-func (h *Handler) isCancelled(ctx context.Context, threadID string) bool {
-	status, err := h.client.GetThread(ctx, threadID)
-	if err != nil {
+func (h *Handler) isCancelled(ctx context.Context) bool {
+	return ctx.Err() != nil
+}
+
+// validThreadID rejects thread IDs containing path traversal sequences.
+func validThreadID(id string) bool {
+	if id == "" {
 		return false
 	}
-	return status.Status == "cancelled" || ctx.Err() != nil
+	return !strings.Contains(id, "..") && !strings.ContainsAny(id, "/\\")
 }
 
 // ── stream-json parsing ───────────────────────────────────────────────────

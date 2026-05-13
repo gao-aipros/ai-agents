@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math/big"
 	"net/http"
 	"os"
+	"strings"
 	"os/signal"
 	"syscall"
 	"time"
@@ -73,7 +73,7 @@ func main() {
 
 	// Submit request
 	mux.HandleFunc("POST /api/requests", func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Content-Type") != "application/json" {
+		if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
 			writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "Content-Type must be application/json"})
 			return
 		}
@@ -230,19 +230,11 @@ func withLogging(next http.Handler) http.Handler {
 }
 
 func generateThreadID() string {
-	return fmt.Sprintf("web_%d_%s", time.Now().Unix(), randomBase36(10))
-}
-
-func randomBase36(n int) string {
+	b := make([]byte, 10)
+	rand.Read(b)
 	const chars = "0123456789abcdefghijklmnopqrstuvwxyz"
-	b := make([]byte, n)
 	for i := range b {
-		idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
-		if err != nil {
-			b[i] = '0'
-		} else {
-			b[i] = chars[idx.Int64()]
-		}
+		b[i] = chars[int(b[i])%len(chars)]
 	}
-	return string(b)
+	return fmt.Sprintf("web_%d_%s", time.Now().Unix(), string(b))
 }
