@@ -13,8 +13,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN curl -fsSL https://gh.io/copilot-install | bash
 
-# Build stage: extract Go toolchain
-FROM golang:latest AS go-build
+# Build stage: compile Go worker binary
+FROM golang:latest AS go-build-worker
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY tasklib/ tasklib/
+COPY cmd/worker/ cmd/worker/
+RUN CGO_ENABLED=0 go build -o /out/worker-go ./cmd/worker/
+
+# Build stage: extract Go toolchain for runtime use by agents
+FROM golang:latest AS go-toolchain
 
 # Final stage
 FROM ${BASE_IMAGE}
@@ -24,8 +33,8 @@ USER root
 # Copilot CLI
 COPY --from=copilot-build /usr/local/bin/copilot /usr/local/bin/copilot
 
-# Go toolchain
-COPY --from=go-build /usr/local/go /usr/local/go
+# Go toolchain (for agent Go development tasks)
+COPY --from=go-toolchain /usr/local/go /usr/local/go
 ENV GOROOT=/usr/local/go \
     GOPATH=/home/agent/go \
     PATH=/usr/local/go/bin:${PATH}
@@ -52,11 +61,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN mkdir -p /home/agent/go && chown -R agent:agent /home/agent/go
 
+# Go worker binary (TASKLIB_BACKEND=go)
+COPY --from=go-build-worker /out/worker-go /usr/local/bin/worker-go
+
+# Python worker (TASKLIB_BACKEND=python)
+COPY scripts/worker.py /usr/local/bin/worker.py
+
+# Worker entrypoint — toggles backend via TASKLIB_BACKEND env var
+COPY scripts/worker-entrypoint.sh /usr/local/bin/worker-entrypoint.sh
+
 # Copilot custom instructions (stored in home, copied to workspace at runtime)
 COPY --chown=agent:agent docker/copilot/AGENTS.md /home/agent/AGENTS.md
 
-# Worker poll loop
-COPY scripts/worker.py /usr/local/bin/worker.py
-
 USER agent
-ENTRYPOINT ["python3", "/usr/local/bin/worker.py"]
+ENTRYPOINT ["/usr/local/bin/worker-entrypoint.sh"]

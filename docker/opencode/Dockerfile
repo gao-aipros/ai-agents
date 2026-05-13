@@ -13,8 +13,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path
 
-# Build stage: extract Go toolchain
-FROM golang:latest AS go-build
+# Build stage: compile Go worker binary
+FROM golang:latest AS go-build-worker
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY tasklib/ tasklib/
+COPY cmd/worker/ cmd/worker/
+RUN CGO_ENABLED=0 go build -o /out/worker-go ./cmd/worker/
+
+# Build stage: extract Go toolchain for runtime use by agents
+FROM golang:latest AS go-toolchain
 
 # Final stage
 FROM ${BASE_IMAGE}
@@ -24,8 +33,8 @@ USER root
 # OpenCode CLI
 COPY --from=opencode-build /root/.opencode/bin/opencode /usr/local/bin/opencode
 
-# Go toolchain
-COPY --from=go-build /usr/local/go /usr/local/go
+# Go toolchain (for agent Go development tasks)
+COPY --from=go-toolchain /usr/local/go /usr/local/go
 ENV GOROOT=/usr/local/go \
     GOPATH=/home/agent/go \
     PATH=/usr/local/go/bin:${PATH}
@@ -55,10 +64,16 @@ ENV DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
 COPY --chown=agent:agent docker/opencode/AGENTS.md /home/agent/AGENTS.md
 COPY --chown=agent:agent docker/opencode/opencode.json /home/agent/.config/opencode/opencode.json
 
-# Worker poll loop
+# Go worker binary (TASKLIB_BACKEND=go)
+COPY --from=go-build-worker /out/worker-go /usr/local/bin/worker-go
+
+# Python worker (TASKLIB_BACKEND=python)
 COPY scripts/worker.py /usr/local/bin/worker.py
+
+# Worker entrypoint — toggles backend via TASKLIB_BACKEND env var
+COPY scripts/worker-entrypoint.sh /usr/local/bin/worker-entrypoint.sh
 
 USER agent
 RUN opencode models --refresh
 
-ENTRYPOINT ["python3", "/usr/local/bin/worker.py"]
+ENTRYPOINT ["/usr/local/bin/worker-entrypoint.sh"]
