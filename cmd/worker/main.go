@@ -86,13 +86,13 @@ func main() {
 }
 
 // workerPayload is the deserialized task from the queue.
-// Includes optional fields that the Python worker also reads (history_window, timeout).
+// Optional fields use pointers to distinguish "absent" from "zero".
 type workerPayload struct {
 	TaskID        string `json:"task_id"`
 	ThreadID      string `json:"thread_id"`
 	Instruction   string `json:"instruction"`
-	HistoryWindow int    `json:"history_window,omitempty"`
-	Timeout       int    `json:"timeout,omitempty"`
+	HistoryWindow *int   `json:"history_window,omitempty"`
+	Timeout       *int   `json:"timeout,omitempty"`
 }
 
 func processTask(ctx context.Context, client *tasklib.Client, rdb *redis.Client, taskJSON, workerType, agentCmd string, taskTimeout, historyWindow int, workspaceDir string) {
@@ -109,13 +109,13 @@ func processTask(ctx context.Context, client *tasklib.Client, rdb *redis.Client,
 
 	logJSON("info", "task dequeued", "task_id", taskID, "thread_id", threadID)
 
-	window := payload.HistoryWindow
-	if window <= 0 {
-		window = historyWindow
+	window := historyWindow
+	if payload.HistoryWindow != nil {
+		window = *payload.HistoryWindow
 	}
-	timeout := payload.Timeout
-	if timeout <= 0 {
-		timeout = taskTimeout
+	timeout := taskTimeout
+	if payload.Timeout != nil {
+		timeout = *payload.Timeout
 	}
 
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
