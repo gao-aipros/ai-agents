@@ -86,7 +86,7 @@ When a user submits a request via the web UI:
 1. Web UI receives `POST /api/requests` with `{thread_id?, repo?, request}`.
 2. If `thread_id` is omitted, auto-generate one: `web_<unix_seconds>_<random 10-char base36 [0-9a-z]>`. The 10 base36 characters provide ~3.6×10¹⁵ combinations — collision probability is negligible even under heavy concurrent use.
 3. The handler writes the thread shell (repo, initial state) and the user request as a `role: "user"`, `type: "request"` message to Redis via `tasklib`. A separate `POST /api/threads` endpoint exists for bootstrap-only thread creation (shell without a request). The session UUID is NOT generated at thread creation — it is generated on the first request (step 5).
-4. The handler acquires a per-thread lock (`SET NX thread:<id>:running <request_id>` with TTL `REQUEST_TIMEOUT`, default 30 minutes). If the lock is already held, the handler returns `409 Conflict` — only one `claude -p` invocation per thread at a time.
+4. The handler acquires a per-thread lock (`SET NX thread:<id>:running <request_id>` with TTL `REQUEST_TIMEOUT + 5 minutes` (35 min — Redis TTL is longer than the Go context timeout to prevent lock expiry before subprocess kill)). If the lock is already held, the handler returns `409 Conflict` — only one `claude -p` invocation per thread at a time.
 5. The handler checks `thread:<id>:session_id`. If absent (first request for this thread), it generates a new session UUID (`uuid.NewV4()`) and stores it. If present (follow-up request), it reads the existing UUID. It then spawns `claude -p` as a subprocess in a **background goroutine**:
    ```
    claude --dangerously-skip-permissions --bare -p \
@@ -226,7 +226,8 @@ func (c *Client) SetThreadSessionID(threadID, sessionID string) error
 func (c *Client) GetThreadSessionID(threadID string) (string, error)
 
 // CancelRequest sets thread:<id>:current_state status to "cancelled".
-// If a claude -p is running for this thread, the REQUEST_TIMEOUT will kill it.
+// The handler immediately calls cancel() on the subprocess context (SIGTERM, 10s grace, SIGKILL).
+// The background goroutine detects cancellation, writes an error message, and releases the lock.
 func (c *Client) CancelRequest(threadID string) error```
 
 ### Key design rules
@@ -426,7 +427,8 @@ POST /api/requests {thread_id?, repo?, request}
        ├─ 1. Create thread if new (tasklib.CreateThread)
        ├─ 2. Write user request to thread:<id>:messages
        ├─ 3. Acquire request lock: SET NX thread:<id>:running <request_id>
-       │      (TTL = REQUEST_TIMEOUT, default 30 min)
+       │      (TTL = REQUEST_TIMEOUT + 5 min, i.e. 35 min — provides a 5-min margin
+       │       over the Go context timeout to prevent lock expiry before process kill)
        │      → 409 Conflict if already locked
        ├─ 4. Generate/store session UUID (thread:<id>:session_id)
        ├─ 5. Spawn subprocess in background goroutine:
@@ -442,14 +444,15 @@ POST /api/requests {thread_id?, repo?, request}
   background goroutine (with defer recover):
        │      (panic recovery: logs error, releases lock, kills subprocess, writes error to thread)
        │
-       ├─ 7. Read stdout line-by-line, JSON-decode each
+       ├─ 7. Check thread:<id>:current_state status → abort if "cancelled"
+       ├─ 8. Read stdout line-by-line, JSON-decode each
        │      → {"type":"assistant"} — intermediate: write to thread history for live progress display
        │      → {"type":"result","subtype":"success"} — DONE
        │      → {"type":"result","subtype":"error_during_execution"} — FAILED
-       ├─ 8. On completion: SET thread:<id>:complete 1 (7-day TTL), write role:"master" type:"response" to thread:<id>:messages
-       ├─ 9. On error/timeout: write role:"master" type:"error" to thread:<id>:messages
-       ├─ 10. Release request lock: DEL thread:<id>:running
-       └─ 11. Update thread state status
+       ├─ 9. On completion: SET thread:<id>:complete 1 (7-day TTL), write role:"master" type:"response" to thread:<id>:messages
+       ├─ 10. On error/timeout/cancelled: write role:"master" type:"error" to thread:<id>:messages
+       ├─ 11. Release request lock: DEL thread:<id>:running
+       └─ 12. Update thread state status
 ```
 
 **Missing session fallback:** If `thread:<id>:session_id` exists in Redis but the corresponding session JSON file is missing from `~/.claude/` (deleted by TTL cleanup or volume wipe), `claude -p --resume <uuid>` will error. The handler detects this by checking stderr for "No conversation found" and falls back to generating a fresh session UUID + `--session-id`, logging a warning. The thread state and message history in Redis are unaffected.
@@ -465,13 +468,13 @@ POST /api/requests {thread_id?, repo?, request}
 
 - Only one `claude -p` invocation per thread at a time, enforced by `SET NX thread:<id>:running`.
 - Different threads can run concurrently (multiple `claude -p` subprocesses managed by the Go HTTP server).
-- Global concurrency limit via `MAX_CONCURRENT_REQUESTS` (default 5) — beyond this, `POST /api/requests` returns `503 Service Unavailable` with `Retry-After`. There is intentionally no Redis-backed request queue — the `503 + Retry-After` pattern is the documented backpressure mechanism. The HTMX frontend can retry automatically with `hx-retarget` on 503.
+- Global concurrency limit via `MAX_CONCURRENT_REQUESTS` (default 5) — beyond this, `POST /api/requests` returns `503 Service Unavailable` with `Retry-After`. There is intentionally no Redis-backed request queue — the `503 + Retry-After` pattern is the documented backpressure mechanism. The HTMX frontend handles 503 via an `htmx:responseError` event listener that retries after the `Retry-After` delay (exponential backoff: 5s, 10s, 20s). Alternatively, the form submission can poll for thread creation success via a redirect-based approach.
 
 **Lock taxonomy — two distinct Redis locks:**
 
 | Lock | Redis key | Purpose | Scope |
 |------|-----------|---------|-------|
-| Task lock | `thread:<id>:lock` | Serializes `task enqueue` within a thread. Only one task can be enqueued per thread at a time (acquired by `cmd/task enqueue`, released by `cmd/task wait` on completion or `cmd/task unlock` on timeout). Prevents concurrent worker tasks from racing on the same thread's state/workspace. | Per-thread, per-task |
+| Task lock | `thread:<id>:lock` | Serializes `task enqueue` within a thread. Only one task can be enqueued per thread at a time (acquired by `cmd/task enqueue`, released by `cmd/task wait` on completion or `cmd/task unlock` on timeout). Prevents concurrent worker tasks from racing on the same thread's state/workspace. Holding the lock across the full task lifecycle (enqueue → wait → result) means new tasks on the same thread block until the current one completes — intentional: sequential execution preserves causal ordering of worker results within a thread. | Per-thread, per-task |
 | Request lock | `thread:<id>:running` | Prevents concurrent `claude -p` invocations for the same thread. Acquired by the web UI handler before spawning, released by the background goroutine on completion/error/timeout. | Per-thread, per-request |
 
 **`--dangerously-skip-permissions` justification:** This flag bypasses Claude Code's interactive permission prompts (file reads, bash commands, network access). It is safe because: (a) the `claude -p` subprocess runs inside a Docker container with bounded filesystem access (`/workspace` volume only), (b) the container has no network exposure beyond Redis and the GitHub API (both intentional), and (c) the master orchestrator operates on code checked out within the container, not the host filesystem.
@@ -511,7 +514,7 @@ Updated images (Go binaries replace Python scripts):
 
 | Image | Change |
 |-------|--------|
-| `master-agent` | Copies `webui` + `task` binaries. `ENTRYPOINT ["webui"]` — the web UI server spawns `claude -p` as a subprocess within the same container. `FROM claude-code` so the `claude` binary is present. |
+| `master-agent` | Copies `webui` + `task` binaries. `ENTRYPOINT ["webui"]` — the web UI server spawns `claude -p` as a subprocess within the same container. `FROM claude-code` so the `claude` binary is present. **Breaking change:** Interactive CLI access (`docker exec -it master claude`) is removed — the web UI (or `curl POST /api/requests`) is the sole entry point. |
 | `worker-claude` | `ENTRYPOINT ["worker", "claude"]`. Copies Go `worker` binary into `docker/worker-claude/`. |
 | `copilot` | Copies Go `worker` binary into existing `docker/copilot/` image. `ENTRYPOINT ["worker", "copilot"]` replaces `worker.py`. |
 | `opencode` | Copies Go `worker` binary into existing `docker/opencode/` image. `ENTRYPOINT ["worker", "opencode"]` replaces `worker.py`. |
@@ -636,9 +639,22 @@ Keys used by tasklib (all pre-existing except those marked NEW):
 | `active_tasks` | Hash | **Existing.** Currently executing tasks. Keyed by `task_id`, value is JSON task info. Written by `cmd/worker` (HSET on start, HDEL on completion). Read by `task list` and web UI. |
 | `thread:<id>:running` | String (NEW, SET NX) | Per-thread lock preventing concurrent `claude -p` invocations. Value is the request ID. TTL = `REQUEST_TIMEOUT` (default 1800s). Released by handler on completion/error/timeout. Web UI checks this key to show "Waiting for master..." indicator. |
 | `thread:<id>:complete` | String (NEW, 7-day TTL) | Set by web UI handler when `type: "result"` is received. Provides a fast check for the dashboard ("Ready for review" indicator) without parsing full message history. TTL aligns with the thread lifecycle — expires alongside thread keys. |
-| `thread:<id>:session_id` | String (NEW) | Claude session UUID for `--session-id` / `--resume`. Generated on first request, reused for follow-ups. |
-| `thread:<id>:last_activity` | String (NEW) | Unix timestamp updated on every request. Used by the session cleanup goroutine to find threads inactive > 24h. |
+| `thread:<id>:session_id` | String (NEW, 7-day TTL) | Claude session UUID for `--session-id` / `--resume`. Generated on first request, reused for follow-ups. TTL aligns with thread lifecycle. |
+| `thread:<id>:last_activity` | String (NEW, 7-day TTL) | Unix timestamp updated on every request. Used by the session cleanup goroutine to find threads inactive > 24h. TTL aligns with thread lifecycle. |
 | `worker:<type>:<hostname>:heartbeat` | String (NEW, SETEX, 30s TTL) | Per-instance worker liveness. Value `1`. Set by background goroutine every 10s (20s margin). Read by `GetWorkerStats` via `SCAN worker:*:heartbeat`. Docker hostname changes on restart → old keys age out via TTL. |
+
+Stream-json to thread message mapping:
+
+The background goroutine translates `claude -p` stream-json output into Redis thread messages:
+
+| stream-json content | Thread message `type` | Rule |
+|---------------------|----------------------|------|
+| `{"type":"assistant","content":[{"type":"text",...}]}` (text-only, no tool_use) | `"plan"` | Text content without tool calls → planning/thinking output |
+| `{"type":"assistant","content":[...,{"type":"tool_use",...}]}` (contains tool_use block) | `"tool_call"` | Contains a tool invocation (Bash, Read, Edit) |
+| `{"type":"result","subtype":"success"}` | `"response"` | Final completion — extract `result` field |
+| `{"type":"result","subtype":"error_during_execution"}` | `"error"` | Claude-level error |
+
+The `"delegate"` type is set by the master agent via `task enqueue` (the task instruction is written to thread history with `type: "delegate"` as a side effect of enqueue), not derived from stream-json. All messages have `role: "master"` except worker results which have `role: "worker"`.
 
 Thread message taxonomy — all messages in `thread:<id>:messages` have `role`, `type`, `content`, and `timestamp` fields:
 

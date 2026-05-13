@@ -61,11 +61,11 @@ For human-in-the-loop phases (review plan before implementation):
 
 ```
 # Phase 1: Plan
-claude -p --session-id <A> "Plan the fix"
+claude --dangerously-skip-permissions --bare -p --session-id <A> --output-format stream-json --verbose "Plan the fix"
   → saves plan to thread state via task thread-update
 
 # Phase 2: Implement (new session, fresh context)
-claude -p --session-id <B> \
+claude --dangerously-skip-permissions --bare -p --session-id <B> --output-format stream-json --verbose \
   "Read thread design from thread state. Delegate implementation."
 ```
 
@@ -127,3 +127,17 @@ Orphaned directories to remove: `cmd/supervisor/`, `cmd/inbox-reader/` (empty, o
 10. **Step numbering** — Clarified step 3: bootstrap-only thread creation, user request written as `role: "user"` message.
 
 New Redis key: `thread:<id>:last_activity` (Unix timestamp, updated on every request).
+
+
+## Round 3 Review Resolutions (2026-05-13)
+
+1. **CancelRequest comment stale** — Updated to reflect immediate cancel() call, not REQUEST_TIMEOUT.
+2. **Missing TTLs** — Added 7-day TTL to `thread:<id>:session_id` and `thread:<id>:last_activity` in Redis Data Model table.
+3. **Session-splitting example flags** — Added `--dangerously-skip-permissions --bare --output-format stream-json --verbose` to both examples.
+4. **hx-retarget does NOT handle 503** — Replaced with correct `htmx:responseError` event listener approach (exponential backoff).
+5. **Cancel race** — Background goroutine now checks `thread:<id>:current_state` status at startup and aborts if "cancelled".
+6. **Lock TTL vs context timeout mismatch** — Redis lock TTL is now `REQUEST_TIMEOUT + 5 min` (35 min default) to prevent lock expiry before subprocess kill.
+7. **Stream-json → thread message mapping** — Added mapping table: text-only assistant → "plan", tool_use → "tool_call", result → "response"/"error".
+8. **Interactive CLI elimination** — Documented as intentional breaking change in Docker Integration table.
+9. **Step consistency** — Already resolved (previous round).
+10. **Task enqueue lock rationale** — Added explanation: sequential execution preserves causal ordering of worker results within a thread.
