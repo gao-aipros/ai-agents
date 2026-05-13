@@ -9,7 +9,18 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.goarch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            runner: ubuntu-latest
+          - goarch: arm64
+            runner: ubuntu-24.04-arm
+
+    runs-on: ${{ matrix.runner }}
+
     services:
       redis:
         image: redis:7-alpine
@@ -21,6 +32,9 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+    env:
+      GOARCH: ${{ matrix.goarch }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +42,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.26.3"
+          cache: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -40,16 +55,8 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Build (amd64)
-        run: go build ./...
-
-      - name: Build (arm64)
-        run: GOARCH=arm64 go build ./...
-        # ARM64 cross-compilation verified; tests can't run without
-        # a native ARM64 runner or QEMU user-mode emulation.
-
-      - name: Test (amd64, race)
-        run: go test ./... -count=1 -race
+      - name: Test
+        run: go test ./... -count=1 ${{ matrix.goarch == 'amd64' && '-race' || '' }}
 
       - name: Build Go task CLI for compat test
         run: go build -o /tmp/task ./cmd/task/

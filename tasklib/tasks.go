@@ -46,7 +46,7 @@ type TaskInfo struct {
 // task.py cmd_enqueue: acquires thread lock, appends to thread history,
 // LPUSHes to queue, initializes per-task keys. Returns the created task.
 func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction string) (*Task, error) {
-	taskID, err := newUUID()
+	taskID, err := NewUUID()
 	if err != nil {
 		return nil, fmt.Errorf("generate task id: %w", err)
 	}
