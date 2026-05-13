@@ -296,27 +296,27 @@ def test_status():
     print("\n-- status --")
     ok = True
 
-    # Create task via enqueue, then check status of SAME task
+    # Python: enqueue + status on its own task
     flush()
     py_out, _, _ = run_py(["enqueue", "--worker", "claude", "--thread", "thr-s", "--instruction", "test"])
     py_id = json.loads(py_out)["task_id"]
-
-    flush()
-    _, _, _ = run_go(["enqueue", "--worker", "claude", "--thread", "thr-s", "--instruction", "test"])
-
-    # Now both Python and Go can status their own tasks
     py_out2, py_err2, py_exit2 = run_py(["status", "--id", py_id])
-    go_out2, go_err2, go_exit2 = run_go(["status", "--id", py_id])
+
+    # Go: enqueue + status on its own task
+    flush()
+    go_out, _, _ = run_go(["enqueue", "--worker", "claude", "--thread", "thr-s", "--instruction", "test"])
+    go_id = json.loads(go_out)["task_id"]
+    go_out2, go_err2, go_exit2 = run_go(["status", "--id", go_id])
 
     if not compare_output(py_out2, go_out2, py_err2, go_err2, py_exit2, go_exit2, "status"):
         ok = False
 
     # Redis comparison
     flush()
-    py_out3, _, _ = run_py(["enqueue", "--worker", "claude", "--thread", "thr-s2", "--instruction", "test"])
+    run_py(["enqueue", "--worker", "claude", "--thread", "thr-s2", "--instruction", "test"])
     py_snap = snapshot()
     flush()
-    go_out3, _, _ = run_go(["enqueue", "--worker", "claude", "--thread", "thr-s2", "--instruction", "test"])
+    run_go(["enqueue", "--worker", "claude", "--thread", "thr-s2", "--instruction", "test"])
     go_snap = snapshot()
     if not compare_redis(py_snap, go_snap, "status (redis)"):
         ok = False

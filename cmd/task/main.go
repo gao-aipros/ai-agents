@@ -279,7 +279,7 @@ func cmdResult(cmd *cobra.Command, args []string) error {
 				result = strings.Join(lines[len(lines)-resultTail:], "\n")
 			}
 		}
-		// resultTail == -1 and flag was changed → shouldn't happen, but treat as full
+		// resultTail < 0 and flag was changed → treat as full
 	}
 	fmt.Println(result)
 	return nil
@@ -417,7 +417,11 @@ func cmdWait(cmd *cobra.Command, args []string) error {
 	c := getClient()
 	ctx := context.Background()
 
-	task, err := c.WaitTask(ctx, waitID, "", time.Duration(waitTimeout)*time.Second)
+	// Read thread_id from the task so the lock can be released on timeout
+	// (matching task.py's finally block that reads thread_id from Redis).
+	threadID, _ := c.RDB().Get(ctx, tasklib.TaskKey(waitID, "thread_id")).Result()
+
+	task, err := c.WaitTask(ctx, waitID, threadID, time.Duration(waitTimeout)*time.Second)
 	if err != nil {
 		die(err.Error())
 	}
