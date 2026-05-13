@@ -324,10 +324,14 @@ func (c *Client) WaitTask(ctx context.Context, taskID, threadID string, timeout 
 					t.CompletedAt = val
 				}
 			}
+			// Release thread lock on completion (matching task.py finally block)
+			if threadID != "" {
+				c.rdb.Del(ctx, ThreadLockKey(threadID))
+			}
 			return t, nil
 		}
 		if time.Now().After(deadline) {
-			// Release thread lock on timeout (same as task.py finally block)
+			// Release thread lock on timeout
 			if threadID != "" {
 				c.rdb.Del(ctx, ThreadLockKey(threadID))
 			}
