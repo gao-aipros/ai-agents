@@ -112,3 +112,18 @@ Issues raised by reviewer and how they were addressed:
 | 4-8 | Not started | No code | No change |
 
 Orphaned directories to remove: `cmd/supervisor/`, `cmd/inbox-reader/` (empty, old design).
+
+## Round 2 Review Resolutions (2026-05-13)
+
+1. **Shell injection** — Added explicit note: Go's `exec.Command` uses `execve` directly, no shell. Do NOT use `sh -c`.
+2. **Live progress default** — Changed `type: "assistant"` messages from "optional" to written to thread history by default for real-time display.
+3. **Stdout memory** — Added 64KB cap on non-result stdout buffering.
+4. **Missing session fallback** — Handler detects "No conversation found" on stderr, falls back to fresh `--session-id` + warning log.
+5. **Cancellation latency** — `POST /api/threads/{id}/cancel` now immediately calls `cancel()` on the subprocess context, not relying on REQUEST_TIMEOUT.
+6. **Session cleanup** — Changed from filesystem scan to Redis-backed: `thread:<id>:last_activity` key enables O(1) lookup of inactive threads.
+7. **`thread:<id>:complete` purpose** — Clarified: enables fast dashboard "Ready for review" indicator without parsing message history.
+8. **TTL consistency** — Made 7-day TTL explicit in both the flow description (step 7) and Section 6 flow chart (step 8).
+9. **Panic recovery** — Added `defer recover()` in background goroutine: logs error, releases lock, kills subprocess, writes error message.
+10. **Step numbering** — Clarified step 3: bootstrap-only thread creation, user request written as `role: "user"` message.
+
+New Redis key: `thread:<id>:last_activity` (Unix timestamp, updated on every request).
