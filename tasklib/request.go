@@ -15,6 +15,9 @@ func (c *Client) AcquireRequestLock(ctx context.Context, threadID, requestID str
 }
 
 // ReleaseRequestLock deletes the thread:<id>:running lock key.
+// Safe to call without verifying the requestID because the lock TTL (REQUEST_TIMEOUT+5min)
+// exceeds the Go context timeout (REQUEST_TIMEOUT), so the lock cannot expire and be
+// re-acquired before the owning goroutine releases it.
 func (c *Client) ReleaseRequestLock(ctx context.Context, threadID string) error {
 	return c.rdb.Del(ctx, ThreadRunningKey(threadID)).Err()
 }
@@ -34,8 +37,9 @@ func (c *Client) GetThreadSessionID(ctx context.Context, threadID string) (strin
 	return val, err
 }
 
-// CancelRequest sets the thread status to cancelled and cleans up the request lock.
-// The web UI handler is responsible for calling cancel() on the subprocess context.
+// CancelRequest sets the thread status to cancelled.
+// The web UI handler is responsible for calling cancel() on the subprocess context;
+// the background goroutine releases the request lock after context cancellation.
 func (c *Client) CancelRequest(ctx context.Context, threadID string) error {
 	key := ThreadStateKey(threadID)
 	exists, err := c.rdb.Exists(ctx, key).Result()

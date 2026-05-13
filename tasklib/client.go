@@ -11,7 +11,7 @@ import (
 const (
 	TTLTask   = 86400 * time.Second  // 24 hours
 	TTLThread = 604800 * time.Second // 7 days
-	LockTTL   = 2100 * time.Second   // TASK_TIMEOUT(1800) + 300
+	LockTTL   = 2100 * time.Second   // REQUEST_TIMEOUT(1800) + 300s margin
 )
 
 // Valid worker types — must match task.py WORKERS.
