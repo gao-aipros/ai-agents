@@ -72,6 +72,12 @@ func New(client *tasklib.Client, cfg Config) *Handler {
 	}
 }
 
+// SetClaudePath sets the path to the claude binary. Used in tests to
+// point at a fake shell script.
+func (h *Handler) SetClaudePath(path string) {
+	h.cfg.ClaudePath = path
+}
+
 // SubmitResult is returned by Submit after successfully spawning claude -p.
 type SubmitResult struct {
 	ThreadID  string `json:"thread_id"`
@@ -87,7 +93,7 @@ type SubmitResult struct {
 // Returns an error if the thread is already processing a request (409),
 // the global concurrency limit is reached (503), or setup fails.
 func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string) (*SubmitResult, error) {
-	if !validThreadID(threadID) {
+	if !ValidThreadID(threadID) {
 		return nil, fmt.Errorf("invalid thread_id: %q", threadID)
 	}
 
@@ -498,12 +504,13 @@ func (h *Handler) isCancelled(ctx context.Context) bool {
 	return ctx.Err() != nil
 }
 
-// validThreadID rejects thread IDs containing path traversal sequences.
-func validThreadID(id string) bool {
+// ValidThreadID rejects thread IDs containing path traversal sequences
+// or colons (which would break Redis key parsing in ListThreads).
+func ValidThreadID(id string) bool {
 	if id == "" {
 		return false
 	}
-	return !strings.Contains(id, "..") && !strings.ContainsAny(id, "/\\")
+	return !strings.Contains(id, "..") && !strings.ContainsAny(id, "/\\:")
 }
 
 // ── stream-json parsing ───────────────────────────────────────────────────
