@@ -53,7 +53,7 @@ var (
 	tclID              string
 )
 
-func getClient() *tasklib.Client {
+var getClient = func() *tasklib.Client {
 	rdb := redis.NewClient(&redis.Options{
 		Addr: fmt.Sprintf("%s:%d", redisHost, redisPort),
 		DB:   redisDB,
@@ -61,7 +61,7 @@ func getClient() *tasklib.Client {
 	return tasklib.NewClient(rdb)
 }
 
-func die(msg string) {
+var die = func(msg string) {
 	fmt.Fprintf(os.Stderr, "ERROR: %s\n", msg)
 	os.Exit(1)
 }

@@ -1,6 +1,11 @@
 # Agent binaries
 docker/*/bin/
 
+# Go compiled binaries
+/task
+/worker
+*.test
+
 # Runtime workspace
 workspace/
 
