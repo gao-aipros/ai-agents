@@ -125,8 +125,7 @@ func main() {
 				time.Sleep(1 * time.Second)
 				// Reinitialize the Redis client to establish a fresh connection.
 				rdb = redis.NewClient(&redis.Options{
-					Addr:       fmt.Sprintf("%s:%d", redisHost, redisPort),
-					MaxRetries: 3,
+					Addr: fmt.Sprintf("%s:%d", redisHost, redisPort),
 				})
 				client = tasklib.NewClient(rdb)
 			}
