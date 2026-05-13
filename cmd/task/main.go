@@ -279,7 +279,7 @@ func cmdResult(cmd *cobra.Command, args []string) error {
 				result = strings.Join(lines[len(lines)-resultTail:], "\n")
 			}
 		}
-		// resultTail < 0 and flag was changed → treat as full
+		// resultTail < 0 means invalid input; treat as full
 	}
 	fmt.Println(result)
 	return nil
