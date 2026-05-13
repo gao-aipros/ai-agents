@@ -15,6 +15,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/noodle05/ai-agents/cmd/webui/internal/env"
 	"github.com/noodle05/ai-agents/cmd/webui/internal/request"
 	"github.com/noodle05/ai-agents/tasklib"
 )
@@ -24,11 +25,11 @@ func main() {
 	log.SetPrefix("[webui] ")
 
 	cfg := request.DefaultConfig()
-	port := envDefault("WEBUI_PORT", "8000")
+	port := env.String("WEBUI_PORT", "8000")
 
 	// Redis connection
-	redisHost := envDefault("REDIS_HOST", "redis")
-	redisPort := envDefault("REDIS_PORT", "6379")
+	redisHost := env.String("REDIS_HOST", "redis")
+	redisPort := env.String("REDIS_PORT", "6379")
 	rdb := redis.NewClient(&redis.Options{
 		Addr: fmt.Sprintf("%s:%s", redisHost, redisPort),
 	})
@@ -244,20 +245,4 @@ func randomBase36(n int) string {
 		}
 	}
 	return string(b)
-}
-
-func envDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
-func envIntDefault(key string, def int) int {
-	if v := os.Getenv(key); v != "" {
-		var n int
-		fmt.Sscanf(v, "%d", &n)
-		return n
-	}
-	return def
 }

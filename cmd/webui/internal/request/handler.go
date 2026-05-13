@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/noodle05/ai-agents/cmd/webui/internal/env"
 	"github.com/noodle05/ai-agents/tasklib"
 )
 
@@ -33,12 +34,12 @@ type Config struct {
 // DefaultConfig returns a Config with defaults from environment variables.
 func DefaultConfig() Config {
 	return Config{
-		ClaudePath:        envDefault("CLAUDE_PATH", "/usr/local/bin/claude"),
-		ClaudeSessionsDir: envDefault("CLAUDE_SESSIONS_DIR", "/home/agent/.claude"),
-		RequestTimeout:    time.Duration(envIntDefault("REQUEST_TIMEOUT", 1800)) * time.Second,
-		MaxConcurrent:     envIntDefault("MAX_CONCURRENT_REQUESTS", 5),
-		ShutdownGrace:     time.Duration(envIntDefault("REQUEST_SHUTDOWN_GRACE", 60)) * time.Second,
-		WorkspaceDir:      envDefault("WORKSPACE_DIR", "/workspace"),
+		ClaudePath:        env.String("CLAUDE_PATH", "/usr/local/bin/claude"),
+		ClaudeSessionsDir: env.String("CLAUDE_SESSIONS_DIR", "/home/agent/.claude"),
+		RequestTimeout:    time.Duration(env.Int("REQUEST_TIMEOUT", 1800)) * time.Second,
+		MaxConcurrent:     env.Int("MAX_CONCURRENT_REQUESTS", 5),
+		ShutdownGrace:     time.Duration(env.Int("REQUEST_SHUTDOWN_GRACE", 60)) * time.Second,
+		WorkspaceDir:      env.String("WORKSPACE_DIR", "/workspace"),
 	}
 }
 
@@ -299,19 +300,24 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		return
 	}
 
-	// Read stdout line by line, parse stream-json
+	// Read stdout line by line, parse stream-json.
+	// stderr is collected in a background goroutine for error reporting.
+	var stderrMu sync.Mutex
 	var lastStderr strings.Builder
 	go func() {
 		scanner := bufio.NewScanner(stderr)
-		scanner.Buffer(make([]byte, 4096), 4096)
+		scanner.Buffer(make([]byte, 64*1024), 64*1024)
 		for scanner.Scan() {
+			stderrMu.Lock()
 			lastStderr.WriteString(scanner.Text())
 			lastStderr.WriteByte('\n')
-			// Keep only the last 4KB of stderr
+			// Keep only the last 4KB
 			if lastStderr.Len() > 4096 {
-				excess := lastStderr.Len() - 4096
-				lastStderr.WriteString(lastStderr.String()[:excess])
+				s := lastStderr.String()
+				lastStderr.Reset()
+				lastStderr.WriteString(s[len(s)-4096:])
 			}
+			stderrMu.Unlock()
 		}
 	}()
 
@@ -364,7 +370,9 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 
 	if !completed {
 		// Subprocess exited without emitting a result message
+		stderrMu.Lock()
 		errContent := lastStderr.String()
+		stderrMu.Unlock()
 		if errContent == "" {
 			errContent = "claude exited without emitting a result message"
 		}
@@ -557,20 +565,4 @@ func mustUUID() string {
 		return fmt.Sprintf("fallback_%d", time.Now().UnixNano())
 	}
 	return id
-}
-
-func envDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
-func envIntDefault(key string, def int) int {
-	if v := os.Getenv(key); v != "" {
-		var n int
-		fmt.Sscanf(v, "%d", &n)
-		return n
-	}
-	return def
 }
