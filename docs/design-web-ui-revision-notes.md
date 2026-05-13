@@ -84,3 +84,31 @@ Delete session A's files after phase 1 completes.
 **Item 1 (Prompt marker):** NOT MET — but the approach that needed it was wrong. The `stream-json` path is simpler and more reliable.
 
 **Item 2 (Redis commands):** MET — Redis 7 supports all required commands.
+
+## PR Review Resolutions (2026-05-13)
+
+Issues raised by reviewer and how they were addressed:
+
+1. **Session cleanup vs. follow-up contradiction** — Changed from "delete on completion" to TTL-based cleanup (24h after last activity, periodic background goroutine). Follow-ups work within the grace window.
+2. **`thread:<id>:complete` has no TTL** — Added 7-day TTL to align with thread lifecycle.
+3. **Session UUID generation ambiguity** — Clarified: UUID is generated on first request (step 5), NOT at `POST /api/threads` creation time.
+4. **`--dangerously-skip-permissions` justification** — Added lock taxonomy table and justification paragraph: safe because container-bounded filesystem, limited network exposure, no host access.
+5. **Stale `thread:<id>:running` after crash** — Added startup sweep: immediately reaps any lock key whose request ID doesn't correspond to a running subprocess PID.
+6. **No request queue / 503 burst handling** — Documented `503 + Retry-After` as intentional backpressure pattern. No Redis queue needed for single-user scenario.
+7. **Session file cleanup mechanism** — Clarified: periodic background goroutine in web UI server via `os.Remove`.
+8. **Thread lock vs task lock confusion** — Added lock taxonomy table distinguishing `thread:<id>:lock` (task serialization) from `thread:<id>:running` (request serialization).
+9. **Merged master+webui scaling tradeoff** — Acknowledged: master-agent is intentionally single-instance. For higher throughput, add a lightweight HTTP frontend.
+10. **`inbox.go` → `request.go`** — Renamed in both Shared tasklib and File Structure sections. Removed `lua/` directory.
+11. **Timeout edge case for long workflows** — Noted that REQUEST_TIMEOUT should be tuned per-deployment. Future: refresh timeout on intermediate output.
+12. **"Clear session" button** — Added `POST /api/threads/{id}/reset-session` endpoint and "Reset session" action on Thread Detail View.
+
+### Step consistency audit
+
+| Step | Design claim | Actual code | Resolution |
+|------|-------------|-------------|------------|
+| 1 | Done, needs post-revision | inbox.go + lua/ still present | Acknowledged — post-revision work needed |
+| 2 | Done | test_json_compat.py exists | No change |
+| 3 | "DONE" for both task + worker | cmd/worker/ is empty | Fixed: marked worker as NOT STARTED |
+| 4-8 | Not started | No code | No change |
+
+Orphaned directories to remove: `cmd/supervisor/`, `cmd/inbox-reader/` (empty, old design).

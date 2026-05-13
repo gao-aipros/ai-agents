@@ -32,7 +32,7 @@ tasklib/              # Shared Go library — all Redis CRUD for tasks, threads,
   ├─ tasks.go         # enqueue, status, result, list, wait, cancel, requeue-stale
   ├─ threads.go       # create, history, state, update, list, lock, unlock
   ├─ workers.go       # worker stats, heartbeat, queue depths
-  ├─ inbox.go         # (TO REPLACE) old FIFO-based PushRequestAtomic → new request lock/session methods
+  ├─ request.go       # (replaces inbox.go) AcquireRequestLock, ReleaseRequestLock, session ID, CancelRequest
   ├─ uuid.go          # UUID generation for thread IDs and request IDs
   └─ *_test.go        # Unit tests with miniredis (non-blocking CRUD only)
 
@@ -85,9 +85,9 @@ When a user submits a request via the web UI:
 
 1. Web UI receives `POST /api/requests` with `{thread_id?, repo?, request}`.
 2. If `thread_id` is omitted, auto-generate one: `web_<unix_seconds>_<random 10-char base36 [0-9a-z]>`. The 10 base36 characters provide ~3.6×10¹⁵ combinations — collision probability is negligible even under heavy concurrent use.
-3. The handler writes the thread shell (repo, initial state) and the user request message to Redis via `tasklib`. A separate `POST /api/threads` endpoint still exists for creating a thread without submitting a request (e.g., pre-configuring repo metadata before the first request).
+3. The handler writes the thread shell (repo, initial state) and the user request message to Redis via `tasklib`. A separate `POST /api/threads` endpoint still exists for creating a thread without submitting a request (e.g., pre-configuring repo metadata before the first request). The session UUID is NOT generated at thread creation — it is generated on the first request (step 5).
 4. The handler acquires a per-thread lock (`SET NX thread:<id>:running <request_id>` with TTL `REQUEST_TIMEOUT`, default 30 minutes). If the lock is already held, the handler returns `409 Conflict` — only one `claude -p` invocation per thread at a time.
-5. The handler generates (or reads) the thread's session UUID, stores it in `thread:<id>:session_id`, and spawns `claude -p` as a subprocess in a **background goroutine**:
+5. The handler checks `thread:<id>:session_id`. If absent (first request for this thread), it generates a new session UUID (`uuid.NewV4()`) and stores it. If present (follow-up request), it reads the existing UUID. It then spawns `claude -p` as a subprocess in a **background goroutine**:
    ```
    claude --dangerously-skip-permissions --bare -p \
      --session-id <session_uuid> \
@@ -132,7 +132,7 @@ The web UI's thread detail page polls for messages with `type: "response"` or `t
 
 **Multi-turn interaction:** Follow-up requests to the same thread use `claude -p --resume <session_uuid>`. Claude Code restores the full conversation context from the persisted session file. The handler uses the session UUID stored in `thread:<id>:session_id`.
 
-**Session storage:** `~/.claude/projects/<workspace>/` stores session JSON files. This directory is on a shared Docker volume so sessions persist across `claude -p` invocations within the same container. Session cleanup is handled by deleting the session file when a thread is completed or cancelled.
+**Session storage:** `~/.claude/projects/<workspace>/` stores session JSON files. This directory is on a shared Docker volume so sessions persist across `claude -p` invocations within the same container. Session cleanup uses TTL-based expiration: files are deleted by a periodic background goroutine in the web UI server (via `os.Remove`) 24 hours after the thread's last activity. This keeps a grace window for `--resume` follow-ups without accumulating unbounded disk usage.
 
 ### Thread creation (bootstrap only)
 
@@ -337,6 +337,7 @@ A single-page overview showing:
 | **Message history** | Chat-like scrollable timeline of all messages (user → master → worker → result). Color-coded by role. Auto-scrolls to bottom. |
 | **Task list** | All tasks for this thread with status icons, click to expand result |
 | **Actions** | If thread has a pending request (`thread:<id>:running` exists), show "Cancel request" button. Submits `POST /api/threads/{id}/cancel`. Sets thread status to `cancelled` — the running `claude -p` subprocess will be killed via context timeout. Already-enqueued tasks continue to completion. |
+| **Reset session** | "Clear session" button deletes the thread's Claude session file and removes `thread:<id>:session_id`. The next request generates a fresh session UUID, effectively starting a new conversation while preserving the thread's tasks, workspace, and state. Useful when the conversation context needs a reset without losing thread history. Submits `POST /api/threads/{id}/reset-session`. |
 
 ### 3. Task Management
 
@@ -379,6 +380,7 @@ All endpoints return JSON. Every endpoint also serves HTMX partials when the `HX
 | `GET` | `/api/threads/{thread_id}/history` | Get full message history via `tasklib.GetThreadHistory`. Supports `?tail=N` and offset-based pagination (`?offset=M&limit=N`). |
 | `DELETE` | `/api/threads/{thread_id}/workspace` | Cleanup thread workspace directory. Sets `thread:<id>:deleting` sentinel (SET NX, TTL 60s), then checks `ListTasks(threadID, status="running")`. Refuses if non-empty (400). Workers check the sentinel before writing results — skip write if deleting. Requires `?confirm=true`. Auth-gated. Does NOT delete Redis keys. |
 | `POST` | `/api/threads/{thread_id}/keep` | Extend Redis TTL for thread keys (7 more days). Prevents auto-expiry for long-lived threads. Auth-gated. |
+| `POST` | `/api/threads/{thread_id}/reset-session` | Delete the thread's Claude session file (`os.Remove` on the session JSON) and clear `thread:<id>:session_id` in Redis. The next request generates a fresh session UUID, starting a new conversation while preserving all thread state, tasks, and workspace. Auth-gated. |
 
 #### Workers (read-only)
 
@@ -454,17 +456,26 @@ POST /api/requests {thread_id?, repo?, request}
 - First request for a thread: generate a new session UUID (`uuid.NewV4()`), store in `thread:<id>:session_id` (Redis), pass `--session-id <uuid>` to `claude -p`.
 - Follow-up requests: read `thread:<id>:session_id` from Redis, pass `--resume <uuid>` to `claude -p` instead of `--session-id`.
 - `~/.claude/projects/<workspace>/` is on a shared Docker volume — session files persist across `-p` invocations within the same container.
-- On thread completion or cancellation, delete the session file to free disk space.
+- Session files are cleaned up by a periodic background goroutine (24h TTL after thread's last activity), not immediately on completion, so `--resume` follow-ups still work.
 
 **Concurrency:**
 
 - Only one `claude -p` invocation per thread at a time, enforced by `SET NX thread:<id>:running`.
 - Different threads can run concurrently (multiple `claude -p` subprocesses managed by the Go HTTP server).
-- Global concurrency limit via `MAX_CONCURRENT_REQUESTS` (default 5) — beyond this, `POST /api/requests` returns `503 Service Unavailable` with `Retry-After`.
+- Global concurrency limit via `MAX_CONCURRENT_REQUESTS` (default 5) — beyond this, `POST /api/requests` returns `503 Service Unavailable` with `Retry-After`. There is intentionally no Redis-backed request queue — the `503 + Retry-After` pattern is the documented backpressure mechanism. The HTMX frontend can retry automatically with `hx-retarget` on 503.
+
+**Lock taxonomy — two distinct Redis locks:**
+
+| Lock | Redis key | Purpose | Scope |
+|------|-----------|---------|-------|
+| Task lock | `thread:<id>:lock` | Serializes `task enqueue` within a thread. Only one task can be enqueued per thread at a time (acquired by `cmd/task enqueue`, released by `cmd/task wait` on completion or `cmd/task unlock` on timeout). Prevents concurrent worker tasks from racing on the same thread's state/workspace. | Per-thread, per-task |
+| Request lock | `thread:<id>:running` | Prevents concurrent `claude -p` invocations for the same thread. Acquired by the web UI handler before spawning, released by the background goroutine on completion/error/timeout. | Per-thread, per-request |
+
+**`--dangerously-skip-permissions` justification:** This flag bypasses Claude Code's interactive permission prompts (file reads, bash commands, network access). It is safe because: (a) the `claude -p` subprocess runs inside a Docker container with bounded filesystem access (`/workspace` volume only), (b) the container has no network exposure beyond Redis and the GitHub API (both intentional), and (c) the master orchestrator operates on code checked out within the container, not the host filesystem.
 
 **Timeout and cleanup:**
 
-- `REQUEST_TIMEOUT` (default 30 minutes) — handler kills the subprocess (SIGTERM, 10s grace, SIGKILL) and writes an error message.
+- `REQUEST_TIMEOUT` (default 30 minutes) — handler kills the subprocess (SIGTERM, 10s grace, SIGKILL) and writes an error message. Complex orchestrator workflows (plan → delegate → `task wait` → delegate → aggregate) can legitimately approach this limit. Tune per-deployment via the env var. As a future enhancement, the timeout could be refreshed when `claude -p` produces intermediate output (e.g., `type: "assistant"` messages).
 - `REQUEST_SHUTDOWN_GRACE` (default 60s) — on server shutdown, in-flight subprocesses are given this grace period before being killed.
 
 **Handler env vars:**
@@ -485,7 +496,7 @@ Thread history, task results, and aggregate stats can contain source code, PR de
 
 To disable auth intentionally in dev, explicitly set `WEBUI_API_KEY=` (empty string). The compose default is `${WEBUI_API_KEY:-CHANGE_ME}`, which forces explicit configuration — no accidental open deployments.
 
-For production deployments on shared networks, place a reverse proxy (nginx, Caddy) with TLS and auth in front of the web UI. The web UI itself is stateless — multiple replicas can run behind a load balancer.
+For production deployments on shared networks, place a reverse proxy (nginx, Caddy) with TLS and auth in front of the web UI. The web UI runs in the master-agent container alongside `claude` — since `claude -p` subprocesses and session files are local to each container, the master-agent is intentionally a single-instance service (not horizontally scaled). If higher web throughput is needed, a dedicated lightweight HTTP frontend can be placed in front of the web UI for static asset serving and request buffering.
 
 **CSRF protection:** Mutation endpoints require `Content-Type: application/json` (reject non-JSON with `415`). Since simple cross-origin forms cannot set `Content-Type: application/json`, this is an effective CSRF defense without requiring tokens. HTMX sends a custom `HX-Request` header on all AJAX requests which serves as an additional browser-side signal. The middleware accepts requests with **either** `Content-Type: application/json` **or** the `HX-Request` header — API clients (curl, scripts) use the former, browser HTMX uses the latter.
 
@@ -553,8 +564,7 @@ tasklib/                        # Shared library — all Redis CRUD (pure Redis,
   threads.go                    # Thread CRUD (no cleanup — that lives in cmd/task)
   workers.go                    # Worker stats + heartbeat
   uuid.go                       # UUID generation for thread/request IDs
-  inbox.go                      # → TO REPLACE: old PushRequestAtomic → AcquireRequestLock + session methods
-  lua/                          # → TO REMOVE: old FIFO Lua scripts (push_request.lua, cancel_request.lua)
+  request.go                    # (replaces inbox.go) AcquireRequestLock, ReleaseRequestLock, session ID methods, CancelRequest
   tasks_test.go                 # Unit tests with miniredis (non-blocking CRUD only)
   threads_test.go
   tasks_integration_test.go     # Integration tests with real Redis (blocking cmds + JSON compat)
@@ -620,7 +630,7 @@ Keys used by tasklib (all pre-existing except those marked NEW):
 |-----|------|---------|
 | `active_tasks` | Hash | **Existing.** Currently executing tasks. Keyed by `task_id`, value is JSON task info. Written by `cmd/worker` (HSET on start, HDEL on completion). Read by `task list` and web UI. |
 | `thread:<id>:running` | String (NEW, SET NX) | Per-thread lock preventing concurrent `claude -p` invocations. Value is the request ID. TTL = `REQUEST_TIMEOUT` (default 1800s). Released by handler on completion/error/timeout. Web UI checks this key to show "Waiting for master..." indicator. |
-| `thread:<id>:complete` | String (NEW) | Set by web UI handler when `type: "result"` is received. Marks the thread as having a completed response. |
+| `thread:<id>:complete` | String (NEW, 7-day TTL) | Set by web UI handler when `type: "result"` is received. Marks the thread as having a completed response. TTL aligns with the thread lifecycle — expires alongside thread keys. |
 | `thread:<id>:session_id` | String (NEW) | Claude session UUID for `--session-id` / `--resume`. Generated on first request, reused for follow-ups. |
 | `worker:<type>:<hostname>:heartbeat` | String (NEW, SETEX, 30s TTL) | Per-instance worker liveness. Value `1`. Set by background goroutine every 10s (20s margin). Read by `GetWorkerStats` via `SCAN worker:*:heartbeat`. Docker hostname changes on restart → old keys age out via TTL. |
 
@@ -643,7 +653,7 @@ During the `TASKLIB_BACKEND=python` transition period, both old (`role: "claude"
 
 All other keys are unchanged.
 
-**Thread lifecycle:** `tasklib` preserves the existing TTL behavior from `task.py` (tasks are created with `TTL_TASK`, threads with `TTL_THREAD`). On thread completion (status `complete` or `cancelled`), the web UI handler sets an **additional** 7-day TTL as a safety net — the existing TTLs already provide baseline cleanup. A `POST /api/threads/{id}/keep` endpoint extends the TTL. Expired keys are cleaned up automatically by Redis. A startup goroutine in the web UI finds threads with a `thread:<id>:running` lock but no response after `REQUEST_TIMEOUT` and marks them as timed out.
+**Thread lifecycle:** `tasklib` preserves the existing TTL behavior from `task.py` (tasks are created with `TTL_TASK`, threads with `TTL_THREAD`). On thread completion (status `complete` or `cancelled`), the web UI handler sets an **additional** 7-day TTL as a safety net — the existing TTLs already provide baseline cleanup. A `POST /api/threads/{id}/keep` endpoint extends the TTL. Expired keys are cleaned up automatically by Redis. A startup goroutine in the web UI scans for orphaned `thread:<id>:running` keys (left behind after a server crash). Since no subprocess PID exists for these keys, the startup sweep immediately reaps any `thread:<id>:running` key whose request ID doesn't correspond to a running `claude -p` subprocess — no need to wait for the full `REQUEST_TIMEOUT` TTL. It then writes an error message to the thread and marks the thread timed out.
 
 ## Implementation Plan
 
@@ -683,7 +693,7 @@ Remove `tasklib/lua/push_request.lua` and `tasklib/lua/cancel_request.lua` (FIFO
 
 ### Step 3: Go `task` CLI + `worker` binary
 
-> **Status: DONE** (PR #16). `cmd/task/main.go` is a `cobra` CLI with the same subcommands and flags as `task.py`. `cmd/worker/main.go` is the worker loop with heartbeat. No changes needed — the `task` CLI is invoked by `claude -p` exactly as before; the new tasklib methods are called directly by `cmd/webui`, not through the CLI.
+> **Status: task CLI DONE** (PR #16), **worker NOT STARTED**. `cmd/task/main.go` is a `cobra` CLI with the same subcommands and flags as `task.py`. `cmd/worker/main.go` — the worker loop with heartbeat — still needs to be built. No changes needed to the `task` CLI itself — it is invoked by `claude -p` exactly as before; the new tasklib methods are called directly by `cmd/webui`, not through the CLI.
 
 ### Step 4: Request handler (claude -p subprocess manager)
 
