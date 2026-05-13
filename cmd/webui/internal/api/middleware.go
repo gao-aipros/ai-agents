@@ -151,17 +151,13 @@ func (rl *rateLimiter) cleanup(ctx context.Context) {
 	}
 }
 
-// clientIP extracts the real client IP, respecting reverse proxy headers.
+// clientIP returns the client IP for rate limiting. It reads r.RemoteAddr,
+// which has already been set by chimw.RealIP middleware (runs earlier in the
+// stack). RealIP extracts the real client IP from X-Forwarded-For /
+// X-Real-IP headers when the request comes from a trusted proxy, and falls
+// back to the direct connection IP otherwise. This avoids trusting spoofed
+// headers from non-proxy clients.
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.IndexByte(xff, ','); i > 0 {
-			return strings.TrimSpace(xff[:i])
-		}
-		return strings.TrimSpace(xff)
-	}
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return strings.TrimSpace(xri)
-	}
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 	if ip == "" {
 		return r.RemoteAddr
