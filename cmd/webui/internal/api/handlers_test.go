@@ -66,7 +66,7 @@ func newTestRouter(t *testing.T) *testHarness {
 	}
 
 	handler := request.New(client, cfg)
-	router := NewRouter(client, handler, cfg)
+	router := NewRouter(client, handler, context.Background())
 
 	return &testHarness{
 		Router:       router,

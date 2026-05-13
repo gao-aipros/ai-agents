@@ -49,7 +49,7 @@ func (rs *requestsResource) submit(w http.ResponseWriter, r *http.Request) {
 			Error(w, re.Status, re.Message)
 		} else {
 			log.Printf("[webui] submit error: %v", err)
-			Error(w, http.StatusInternalServerError, err.Error())
+			Error(w, http.StatusInternalServerError, "internal error")
 		}
 		return
 	}

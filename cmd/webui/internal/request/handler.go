@@ -504,12 +504,13 @@ func (h *Handler) isCancelled(ctx context.Context) bool {
 	return ctx.Err() != nil
 }
 
-// validThreadID rejects thread IDs containing path traversal sequences.
+// validThreadID rejects thread IDs containing path traversal sequences
+// or colons (which would break Redis key parsing in ListThreads).
 func validThreadID(id string) bool {
 	if id == "" {
 		return false
 	}
-	return !strings.Contains(id, "..") && !strings.ContainsAny(id, "/\\")
+	return !strings.Contains(id, "..") && !strings.ContainsAny(id, "/\\:")
 }
 
 // ── stream-json parsing ───────────────────────────────────────────────────

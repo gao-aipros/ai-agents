@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 
@@ -9,11 +11,14 @@ import (
 )
 
 // NewRouter creates a chi router with all /api/ endpoints.
-func NewRouter(client *tasklib.Client, handler *request.Handler, cfg request.Config) chi.Router {
+// shutdownCtx is cancelled on server shutdown to stop background goroutines
+// (rate limiter cleanup tickers).
+func NewRouter(client *tasklib.Client, handler *request.Handler, shutdownCtx context.Context) chi.Router {
 	r := chi.NewRouter()
 
 	// Middleware stack
 	r.Use(chimw.Logger)
+	r.Use(chimw.RealIP)
 	r.Use(recoverMiddleware)
 	r.Use(authMiddleware)
 	r.Use(contentTypeMiddleware)
@@ -33,19 +38,23 @@ func NewRouter(client *tasklib.Client, handler *request.Handler, cfg request.Con
 		r.Get("/workers", wrk.list)
 		r.Get("/workers/{worker_type}", wrk.get)
 
-		// Requests
+		// Requests — strict rate limits
 		r.With(rateLimitMiddleware(requestsLimiter), maxBytesMiddleware(32*1024)).
 			Post("/requests", req.submit)
-		r.Post("/threads/{thread_id}/cancel", req.cancel)
+		r.With(rateLimitMiddleware(defaultLimiter)).
+			Post("/threads/{thread_id}/cancel", req.cancel)
 
 		// Threads
 		r.With(rateLimitMiddleware(threadsLimiter)).Post("/threads", thr.create)
 		r.Get("/threads", thr.list)
 		r.Get("/threads/{thread_id}", thr.get)
 		r.Get("/threads/{thread_id}/history", thr.history)
-		r.Delete("/threads/{thread_id}/workspace", thr.deleteWorkspace)
-		r.Post("/threads/{thread_id}/keep", thr.keep)
-		r.Post("/threads/{thread_id}/reset-session", thr.resetSession)
+		r.With(rateLimitMiddleware(defaultLimiter)).
+			Delete("/threads/{thread_id}/workspace", thr.deleteWorkspace)
+		r.With(rateLimitMiddleware(defaultLimiter)).
+			Post("/threads/{thread_id}/keep", thr.keep)
+		r.With(rateLimitMiddleware(defaultLimiter)).
+			Post("/threads/{thread_id}/reset-session", thr.resetSession)
 
 		// Tasks
 		r.Get("/tasks", tsk.list)
@@ -53,9 +62,10 @@ func NewRouter(client *tasklib.Client, handler *request.Handler, cfg request.Con
 		r.Get("/tasks/{task_id}/result", tsk.result)
 	})
 
-	// Start rate limiter cleanup goroutines
-	go requestsLimiter.cleanup()
-	go threadsLimiter.cleanup()
+	// Start rate limiter cleanup goroutines (stop on shutdownCtx)
+	go requestsLimiter.cleanup(shutdownCtx)
+	go threadsLimiter.cleanup(shutdownCtx)
+	go defaultLimiter.cleanup(shutdownCtx)
 
 	return r
 }

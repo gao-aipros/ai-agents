@@ -31,13 +31,17 @@ func (tr *threadsResource) create(w http.ResponseWriter, r *http.Request) {
 
 	threadID := b.ThreadID
 	if threadID == "" {
-		threadID = simpleUUID()
+		threadID = generateThreadID()
+	}
+
+	if !validThreadID(threadID) {
+		Error(w, http.StatusBadRequest, "invalid thread_id")
+		return
 	}
 
 	exists, err := tr.client.ThreadExists(r.Context(), threadID)
 	if err != nil {
-		log.Printf("[webui] thread exists check error: %v", err)
-		Error(w, http.StatusInternalServerError, err.Error())
+		serverError(w, "internal error", err)
 		return
 	}
 	if exists {
@@ -47,8 +51,7 @@ func (tr *threadsResource) create(w http.ResponseWriter, r *http.Request) {
 
 	thread, err := tr.client.CreateThread(r.Context(), threadID, b.Repo)
 	if err != nil {
-		log.Printf("[webui] create thread error: %v", err)
-		Error(w, http.StatusInternalServerError, err.Error())
+		serverError(w, "internal error", err)
 		return
 	}
 
@@ -59,8 +62,7 @@ func (tr *threadsResource) create(w http.ResponseWriter, r *http.Request) {
 func (tr *threadsResource) list(w http.ResponseWriter, r *http.Request) {
 	threads, err := tr.client.ListThreads(r.Context())
 	if err != nil {
-		log.Printf("[webui] list threads error: %v", err)
-		Error(w, http.StatusInternalServerError, err.Error())
+		serverError(w, "internal error", err)
 		return
 	}
 	Respond(w, r, http.StatusOK, threads)
@@ -71,7 +73,7 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 	threadID := r.PathValue("thread_id")
 	thread, err := tr.client.GetThread(r.Context(), threadID)
 	if err != nil {
-		Error(w, http.StatusNotFound, err.Error())
+		Error(w, http.StatusNotFound, "thread not found")
 		return
 	}
 
@@ -111,8 +113,7 @@ func (tr *threadsResource) history(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		log.Printf("[webui] thread history error thread=%s: %v", threadID, err)
-		Error(w, http.StatusInternalServerError, err.Error())
+		serverError(w, "internal error", err)
 		return
 	}
 	Respond(w, r, http.StatusOK, messages)
@@ -130,8 +131,7 @@ func (tr *threadsResource) deleteWorkspace(w http.ResponseWriter, r *http.Reques
 	// Check for running tasks on this thread
 	tasks, err := tr.client.ListTasks(r.Context(), "", "running", threadID, 1, 0)
 	if err != nil {
-		log.Printf("[webui] list running tasks error thread=%s: %v", threadID, err)
-		Error(w, http.StatusInternalServerError, err.Error())
+		serverError(w, "internal error", err)
 		return
 	}
 	if len(tasks) > 0 {
@@ -142,20 +142,22 @@ func (tr *threadsResource) deleteWorkspace(w http.ResponseWriter, r *http.Reques
 	// Set deleting sentinel
 	ok, err := tr.client.AcquireRequestLock(r.Context(), threadID, "deleting", tasklib.LockTTL)
 	if err != nil {
-		log.Printf("[webui] deleting sentinel error thread=%s: %v", threadID, err)
-		Error(w, http.StatusInternalServerError, err.Error())
+		serverError(w, "internal error", err)
 		return
 	}
 	if !ok {
 		Error(w, http.StatusConflict, "thread is in use")
 		return
 	}
-	defer tr.client.ReleaseRequestLock(r.Context(), threadID)
+	// Use a background context for deferred lock release — if the client
+	// disconnects mid-request, r.Context() is cancelled and the DEL would
+	// silently fail, leaking the lock for its full TTL (35 min).
+	defer tr.client.ReleaseRequestLock(cleanupContext(), threadID)
 
 	wp := workspacePath(threadID)
 	if err := removeWorkspace(wp); err != nil {
 		log.Printf("[webui] workspace delete error thread=%s dir=%s: %v", threadID, wp, err)
-		Error(w, http.StatusInternalServerError, "failed to delete workspace")
+		serverError(w, "failed to delete workspace", err)
 		return
 	}
 
@@ -169,7 +171,7 @@ func (tr *threadsResource) keep(w http.ResponseWriter, r *http.Request) {
 
 	if err := tr.client.SetThreadTTL(r.Context(), threadID, tasklib.TTLThread); err != nil {
 		log.Printf("[webui] keep thread error thread=%s: %v", threadID, err)
-		Error(w, http.StatusInternalServerError, err.Error())
+		Error(w, http.StatusNotFound, "thread not found")
 		return
 	}
 
@@ -182,8 +184,7 @@ func (tr *threadsResource) resetSession(w http.ResponseWriter, r *http.Request) 
 
 	sessionID, err := tr.client.GetThreadSessionID(r.Context(), threadID)
 	if err != nil {
-		log.Printf("[webui] get session id error thread=%s: %v", threadID, err)
-		Error(w, http.StatusInternalServerError, err.Error())
+		serverError(w, "internal error", err)
 		return
 	}
 
@@ -193,7 +194,7 @@ func (tr *threadsResource) resetSession(w http.ResponseWriter, r *http.Request) 
 
 	if err := tr.client.SetThreadSessionID(r.Context(), threadID, ""); err != nil {
 		log.Printf("[webui] clear session id error thread=%s: %v", threadID, err)
-		Error(w, http.StatusInternalServerError, err.Error())
+		serverError(w, "internal error", err)
 		return
 	}
 

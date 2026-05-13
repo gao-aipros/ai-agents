@@ -1,7 +1,10 @@
 package api
 
 import (
+	"context"
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,18 +15,30 @@ import (
 
 // ── filesystem helpers ────────────────────────────────────────────────────
 
+// These must stay in sync with request.DefaultConfig() defaults.
+// See cmd/webui/internal/request/handler.go for the canonical values.
 var (
 	workspaceDir      = env.String("WORKSPACE_DIR", "/workspace")
 	claudeSessionsDir = env.String("CLAUDE_SESSIONS_DIR", "/home/agent/.claude")
 )
 
 // workspacePath returns the workspace directory path for a thread.
-// Rejects thread IDs containing path traversal sequences.
+// Rejects thread IDs containing path traversal sequences or colons
+// (colons break Redis key parsing in ListThreads).
 func workspacePath(threadID string) string {
-	if strings.Contains(threadID, "..") || strings.ContainsAny(threadID, "/\\") {
+	if !validThreadID(threadID) {
 		return ""
 	}
 	return filepath.Join(workspaceDir, threadID)
+}
+
+// validThreadID rejects thread IDs containing path traversal sequences
+// or characters that break Redis key parsing (colons split key segments).
+func validThreadID(id string) bool {
+	if id == "" {
+		return false
+	}
+	return !strings.Contains(id, "..") && !strings.ContainsAny(id, "/\\:")
 }
 
 // removeWorkspace removes the workspace directory for a thread.
@@ -61,4 +76,20 @@ func simpleUUID() string {
 		return fmt.Sprintf("%08x", os.Getpid())
 	}
 	return id
+}
+
+// ── error helpers ──────────────────────────────────────────────────────────
+
+// serverError logs the real error and returns a sanitized 500 response.
+// Prevents internal details (Redis addresses, filesystem paths, etc.)
+// from leaking to API consumers.
+func serverError(w http.ResponseWriter, msg string, err error) {
+	log.Printf("[webui] %s: %v", msg, err)
+	Error(w, http.StatusInternalServerError, msg)
+}
+
+// cleanupContext returns a context for deferred Redis operations that must
+// complete regardless of the HTTP request lifecycle (lock release, etc.).
+func cleanupContext() context.Context {
+	return context.Background()
 }

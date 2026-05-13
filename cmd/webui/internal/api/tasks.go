@@ -1,7 +1,6 @@
 package api
 
 import (
-	"log"
 	"net/http"
 	"strconv"
 
@@ -26,8 +25,7 @@ func (tr *tasksResource) list(w http.ResponseWriter, r *http.Request) {
 
 	tasks, err := tr.client.ListTasks(r.Context(), worker, status, threadID, limit, offset)
 	if err != nil {
-		log.Printf("[webui] list tasks error: %v", err)
-		Error(w, http.StatusInternalServerError, err.Error())
+		serverError(w, "internal error", err)
 		return
 	}
 	Respond(w, r, http.StatusOK, tasks)
@@ -38,7 +36,7 @@ func (tr *tasksResource) get(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("task_id")
 	task, err := tr.client.GetTask(r.Context(), taskID)
 	if err != nil {
-		Error(w, http.StatusInternalServerError, err.Error())
+		serverError(w, "internal error", err)
 		return
 	}
 	if task.Status == "" {
@@ -56,7 +54,7 @@ func (tr *tasksResource) result(w http.ResponseWriter, r *http.Request) {
 	// Check task exists first
 	task, err := tr.client.GetTask(r.Context(), taskID)
 	if err != nil {
-		Error(w, http.StatusInternalServerError, err.Error())
+		serverError(w, "internal error", err)
 		return
 	}
 	if task.Status == "" {
@@ -66,7 +64,7 @@ func (tr *tasksResource) result(w http.ResponseWriter, r *http.Request) {
 
 	result, err := tr.client.GetTaskResult(r.Context(), taskID, tail)
 	if err != nil {
-		Error(w, http.StatusInternalServerError, err.Error())
+		serverError(w, "internal error", err)
 		return
 	}
 	Respond(w, r, http.StatusOK, map[string]string{"task_id": taskID, "result": result})

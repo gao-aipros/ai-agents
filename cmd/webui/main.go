@@ -39,8 +39,13 @@ func main() {
 	client := tasklib.NewClient(rdb)
 	handler := request.New(client, cfg)
 
+	// Background context for rate limiter cleanup goroutines.
+	// Cancelled on server shutdown.
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	defer bgCancel()
+
 	// Build chi router with all /api/ endpoints
-	router := api.NewRouter(client, handler, cfg)
+	router := api.NewRouter(client, handler, bgCtx)
 
 	// Root placeholder (replaced by dashboard in Step 6)
 	router.Get("/", func(w http.ResponseWriter, r *http.Request) {
@@ -61,6 +66,8 @@ func main() {
 		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 		sig := <-sigCh
 		log.Printf("received signal %v, shutting down", sig)
+
+		bgCancel() // stop rate limiter cleanup goroutines
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownGrace)
 		defer cancel()

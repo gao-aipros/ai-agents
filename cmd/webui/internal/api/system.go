@@ -3,6 +3,7 @@ package api
 import (
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/noodle05/ai-agents/cmd/webui/internal/request"
 	"github.com/noodle05/ai-agents/tasklib"
@@ -19,7 +20,7 @@ func (sr *systemResource) health(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		Respond(w, r, http.StatusServiceUnavailable, map[string]string{
 			"redis":  "error",
-			"detail": err.Error(),
+			"detail": "redis unavailable",
 		})
 		return
 	}
@@ -37,20 +38,32 @@ func (sr *systemResource) health(w http.ResponseWriter, r *http.Request) {
 func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Aggregate task stats
 	tasks, err := sr.client.ListTasks(ctx, "", "", "", 0, 0)
 	if err != nil {
 		log.Printf("[webui] stats list tasks error: %v", err)
-		Error(w, http.StatusInternalServerError, err.Error())
+		Error(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
 	var total, done, failed, cancelled, running, pending int
+	var totalDuration time.Duration
+	var completedCount int
+
+	now := time.Now()
 	for _, t := range tasks {
 		total++
 		switch t.Status {
 		case "done":
 			done++
+			if t.CreatedAt != "" && t.CompletedAt != "" {
+				if start, err := time.Parse("2006-01-02T15:04:05Z", t.CreatedAt); err == nil {
+					if end, err := time.Parse("2006-01-02T15:04:05Z", t.CompletedAt); err == nil {
+						totalDuration += end.Sub(start)
+						completedCount++
+						_ = now // used for fallback if needed
+					}
+				}
+			}
 		case "failed":
 			failed++
 		case "cancelled":
@@ -60,6 +73,16 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 		case "pending":
 			pending++
 		}
+	}
+
+	successRate := 0.0
+	if done+failed > 0 {
+		successRate = float64(done) / float64(done+failed) * 100
+	}
+
+	avgDuration := 0.0
+	if completedCount > 0 {
+		avgDuration = totalDuration.Seconds() / float64(completedCount)
 	}
 
 	// Queue depths
@@ -79,6 +102,8 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 		"cancelled":        cancelled,
 		"running":          running,
 		"pending":          pending,
+		"success_rate":     successRate,
+		"avg_duration_sec": avgDuration,
 		"queue_depths":     queueDepths,
 		"active_requests":  sr.handler.ActiveRequests(),
 	})

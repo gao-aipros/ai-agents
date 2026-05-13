@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"log"
 	"net"
 	"net/http"
@@ -89,9 +90,13 @@ type rateLimiter struct {
 	interval time.Duration
 }
 
+// defaultLimiter is a moderate rate limit applied to all mutation endpoints
+// that don't have a more specific limit (cancel, keep, reset-session, workspace).
+var defaultLimiter = &rateLimiter{limit: 60, interval: time.Minute, windows: make(map[string][]time.Time)}
+
 var (
-	requestsLimiter  = &rateLimiter{limit: 10, interval: time.Minute, windows: make(map[string][]time.Time)}
-	threadsLimiter   = &rateLimiter{limit: 30, interval: time.Minute, windows: make(map[string][]time.Time)}
+	requestsLimiter = &rateLimiter{limit: 10, interval: time.Minute, windows: make(map[string][]time.Time)}
+	threadsLimiter  = &rateLimiter{limit: 30, interval: time.Minute, windows: make(map[string][]time.Time)}
 )
 
 func (rl *rateLimiter) allow(ip string) bool {
@@ -117,36 +122,57 @@ func (rl *rateLimiter) allow(ip string) bool {
 }
 
 // cleanup periodically removes expired entries from rate limiter maps.
-// Called once from NewRouter.
-func (rl *rateLimiter) cleanup() {
+// Exits when ctx is cancelled.
+func (rl *rateLimiter) cleanup(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Minute)
-	for range ticker.C {
-		rl.mu.Lock()
-		cutoff := time.Now().Add(-rl.interval)
-		for ip, window := range rl.windows {
-			valid := window[:0]
-			for _, t := range window {
-				if t.After(cutoff) {
-					valid = append(valid, t)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			rl.mu.Lock()
+			cutoff := time.Now().Add(-rl.interval)
+			for ip, window := range rl.windows {
+				valid := window[:0]
+				for _, t := range window {
+					if t.After(cutoff) {
+						valid = append(valid, t)
+					}
+				}
+				if len(valid) == 0 {
+					delete(rl.windows, ip)
+				} else {
+					rl.windows[ip] = valid
 				}
 			}
-			if len(valid) == 0 {
-				delete(rl.windows, ip)
-			} else {
-				rl.windows[ip] = valid
-			}
+			rl.mu.Unlock()
+		case <-ctx.Done():
+			return
 		}
-		rl.mu.Unlock()
 	}
+}
+
+// clientIP extracts the real client IP, respecting reverse proxy headers.
+func clientIP(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		if i := strings.IndexByte(xff, ','); i > 0 {
+			return strings.TrimSpace(xff[:i])
+		}
+		return strings.TrimSpace(xff)
+	}
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return strings.TrimSpace(xri)
+	}
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if ip == "" {
+		return r.RemoteAddr
+	}
+	return ip
 }
 
 func rateLimitMiddleware(rl *rateLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-			if ip == "" {
-				ip = r.RemoteAddr
-			}
+			ip := clientIP(r)
 			if !rl.allow(ip) {
 				w.Header().Set("Retry-After", "60")
 				Error(w, http.StatusTooManyRequests, "rate limit exceeded")
