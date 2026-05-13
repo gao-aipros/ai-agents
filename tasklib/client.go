@@ -23,7 +23,11 @@ func QueueKey(worker string) string          { return "tasks:queue:" + worker }
 func ProcessingKey(worker string) string     { return "tasks:processing:" + worker }
 func ThreadStateKey(threadID string) string  { return "thread:" + threadID + ":current_state" }
 func ThreadMessagesKey(threadID string) string { return "thread:" + threadID + ":messages" }
-func ThreadLockKey(threadID string) string   { return "thread:" + threadID + ":lock" }
+func ThreadLockKey(threadID string) string       { return "thread:" + threadID + ":lock" }
+func ThreadRunningKey(threadID string) string      { return "thread:" + threadID + ":running" }
+func ThreadCompleteKey(threadID string) string     { return "thread:" + threadID + ":complete" }
+func ThreadSessionIDKey(threadID string) string    { return "thread:" + threadID + ":session_id" }
+func ThreadLastActivityKey(threadID string) string { return "thread:" + threadID + ":last_activity" }
 func HeartbeatKey(workerType, hostname string) string {
 	return "worker:" + workerType + ":" + hostname + ":heartbeat"
 }

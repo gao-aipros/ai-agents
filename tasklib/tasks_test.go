@@ -586,72 +586,146 @@ func TestGetWorkerStats(t *testing.T) {
 	}
 }
 
-// ── inbox tests ───────────────────────────────────────────────────────────
+// ── request lock tests ─────────────────────────────────────────────────────
 
-func TestPushRequestAtomic(t *testing.T) {
+func TestAcquireReleaseRequestLock(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	err := c.PushRequestAtomic(ctx(), "thr-web-1", "owner/repo", "fix the bug")
+	ok, err := c.AcquireRequestLock(ctx(), "thr1", "req-1", 60*time.Second)
 	if err != nil {
-		t.Fatalf("PushRequestAtomic failed: %v", err)
+		t.Fatalf("AcquireRequestLock failed: %v", err)
+	}
+	if !ok {
+		t.Error("expected lock to be acquired")
 	}
 
-	// Verify thread was created
-	th, _ := c.GetThread(ctx(), "thr-web-1")
-	if th.Status != "initiated" {
-		t.Errorf("expected thread status initiated, got %s", th.Status)
-	}
-	if th.GHRepo != "owner/repo" {
-		t.Errorf("expected gh_repo owner/repo, got %s", th.GHRepo)
+	running, _ := c.IsRequestRunning(ctx(), "thr1")
+	if !running {
+		t.Error("expected thread to be marked as running")
 	}
 
-	// Verify thread message
-	msgs, _ := c.GetThreadHistory(ctx(), "thr-web-1", 0, 0)
-	if len(msgs) != 1 {
-		t.Errorf("expected 1 thread message, got %d", len(msgs))
-	}
-	if msgs[0].Role != "user" || msgs[0].Type != "request" {
-		t.Errorf("expected user request message, got role=%s type=%s", msgs[0].Role, msgs[0].Type)
-	}
-	if msgs[0].Source != "webui" {
-		t.Errorf("expected source webui, got %s", msgs[0].Source)
+	err = c.ReleaseRequestLock(ctx(), "thr1")
+	if err != nil {
+		t.Fatalf("ReleaseRequestLock failed: %v", err)
 	}
 
-	// Verify inbox entry
-	inboxLen := c.rdb.LLen(ctx(), "requests:inbox").Val()
-	if inboxLen != 1 {
-		t.Errorf("expected 1 inbox entry, got %d", inboxLen)
+	running, _ = c.IsRequestRunning(ctx(), "thr1")
+	if running {
+		t.Error("expected thread to not be running after release")
 	}
 }
 
-func TestPushRequestAtomicDuplicate(t *testing.T) {
+func TestAcquireRequestLockConflict(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	// First push succeeds
-	c.PushRequestAtomic(ctx(), "thr-dup", "", "request one")
+	ok, _ := c.AcquireRequestLock(ctx(), "thr1", "req-1", 60*time.Second)
+	if !ok {
+		t.Fatal("first lock should succeed")
+	}
 
-	// Second push should fail (duplicate pending sentinel exists)
-	err := c.PushRequestAtomic(ctx(), "thr-dup", "", "request two")
-	if err == nil {
-		t.Error("expected duplicate error")
+	ok, _ = c.AcquireRequestLock(ctx(), "thr1", "req-2", 60*time.Second)
+	if ok {
+		t.Error("second lock on same thread should fail")
 	}
 }
 
-func TestPushRequestAtomicRepoAlreadySet(t *testing.T) {
+// ── session ID tests ────────────────────────────────────────────────────────
+
+func TestSessionID(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	// Pre-create thread with repo
-	c.CreateThread(ctx(), "thr-existing", "old/repo")
-
-	// Push with a different repo — should NOT overwrite
-	err := c.PushRequestAtomic(ctx(), "thr-existing", "new/repo", "do something")
+	err := c.SetThreadSessionID(ctx(), "thr1", "550e8400-e29b-41d4-a716-446655440000")
 	if err != nil {
-		t.Fatalf("PushRequestAtomic failed: %v", err)
+		t.Fatalf("SetThreadSessionID failed: %v", err)
 	}
 
-	th, _ := c.GetThread(ctx(), "thr-existing")
-	if th.GHRepo != "old/repo" {
-		t.Errorf("repo should not be overwritten, expected 'old/repo' got '%s'", th.GHRepo)
+	sid, err := c.GetThreadSessionID(ctx(), "thr1")
+	if err != nil {
+		t.Fatalf("GetThreadSessionID failed: %v", err)
+	}
+	if sid != "550e8400-e29b-41d4-a716-446655440000" {
+		t.Errorf("expected session UUID, got '%s'", sid)
+	}
+}
+
+func TestGetSessionIDNotFound(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	sid, err := c.GetThreadSessionID(ctx(), "nonexistent")
+	if err != nil {
+		t.Fatalf("GetThreadSessionID should not error for missing key: %v", err)
+	}
+	if sid != "" {
+		t.Errorf("expected empty string for missing session ID, got '%s'", sid)
+	}
+}
+
+// ── CancelRequest tests ─────────────────────────────────────────────────────
+
+func TestCancelRequest(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "cr-thread", "owner/repo")
+
+	err := c.CancelRequest(ctx(), "cr-thread")
+	if err != nil {
+		t.Fatalf("CancelRequest failed: %v", err)
+	}
+
+	th, _ := c.GetThread(ctx(), "cr-thread")
+	if th.Status != "cancelled" {
+		t.Errorf("expected thread status cancelled, got %s", th.Status)
+	}
+}
+
+func TestCancelRequestNoop(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	err := c.CancelRequest(ctx(), "no-such-thread")
+	if err != nil {
+		t.Errorf("CancelRequest on missing thread should not error, got: %v", err)
+	}
+}
+
+// ── thread complete tests ───────────────────────────────────────────────────
+
+func TestThreadComplete(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	complete, _ := c.IsThreadComplete(ctx(), "thr1")
+	if complete {
+		t.Error("expected thread not complete initially")
+	}
+
+	err := c.SetThreadComplete(ctx(), "thr1")
+	if err != nil {
+		t.Fatalf("SetThreadComplete failed: %v", err)
+	}
+
+	complete, _ = c.IsThreadComplete(ctx(), "thr1")
+	if !complete {
+		t.Error("expected thread complete after set")
+	}
+}
+
+// ── thread last activity tests ──────────────────────────────────────────────
+
+func TestThreadLastActivity(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	val, _ := c.GetThreadLastActivity(ctx(), "thr1")
+	if val != "" {
+		t.Errorf("expected empty last activity for missing key, got '%s'", val)
+	}
+
+	err := c.UpdateThreadLastActivity(ctx(), "thr1")
+	if err != nil {
+		t.Fatalf("UpdateThreadLastActivity failed: %v", err)
+	}
+
+	val, _ = c.GetThreadLastActivity(ctx(), "thr1")
+	if val == "" {
+		t.Error("expected non-empty last activity after update")
 	}
 }
 
@@ -735,77 +809,6 @@ func TestWaitTaskTerminalStates(t *testing.T) {
 				t.Errorf("expected status %s, got %s", tt.status, task.Status)
 			}
 		})
-	}
-}
-
-// ── CancelRequest tests ───────────────────────────────────────────────────
-
-func TestCancelRequest(t *testing.T) {
-	c, _ := setupTestClient(t)
-
-	// Push a request into the inbox
-	err := c.PushRequestAtomic(ctx(), "cr-thread", "owner/repo", "do something")
-	if err != nil {
-		t.Fatalf("PushRequestAtomic failed: %v", err)
-	}
-
-	// Verify it's in the inbox
-	inboxLen := c.rdb.LLen(ctx(), "requests:inbox").Val()
-	if inboxLen != 1 {
-		t.Fatalf("expected 1 inbox entry, got %d", inboxLen)
-	}
-
-	// Cancel it
-	err = c.CancelRequest(ctx(), "cr-thread")
-	if err != nil {
-		t.Fatalf("CancelRequest failed: %v", err)
-	}
-
-	// Inbox should be empty
-	inboxLen = c.rdb.LLen(ctx(), "requests:inbox").Val()
-	if inboxLen != 0 {
-		t.Errorf("expected 0 inbox entries after cancel, got %d", inboxLen)
-	}
-
-	// Thread status should be cancelled
-	th, _ := c.GetThread(ctx(), "cr-thread")
-	if th.Status != "cancelled" {
-		t.Errorf("expected thread status cancelled, got %s", th.Status)
-	}
-}
-
-func TestCancelRequestInProcessing(t *testing.T) {
-	c, _ := setupTestClient(t)
-
-	// Push a request
-	c.PushRequestAtomic(ctx(), "crp-thread", "", "do it")
-
-	// Simulate inbox-reader moving it to processing list
-	item, _ := c.rdb.LMove(ctx(), "requests:inbox", "requests:inbox_processing", "RIGHT", "LEFT").Result()
-	if item == "" {
-		t.Fatal("LMOVE failed")
-	}
-
-	// Cancel should find it in the processing list
-	err := c.CancelRequest(ctx(), "crp-thread")
-	if err != nil {
-		t.Fatalf("CancelRequest failed: %v", err)
-	}
-
-	// Processing list should be empty
-	procLen := c.rdb.LLen(ctx(), "requests:inbox_processing").Val()
-	if procLen != 0 {
-		t.Errorf("expected 0 processing entries after cancel, got %d", procLen)
-	}
-}
-
-func TestCancelRequestNoop(t *testing.T) {
-	c, _ := setupTestClient(t)
-
-	// Cancelling a non-existent request should not error (silent no-op)
-	err := c.CancelRequest(ctx(), "no-such-thread")
-	if err != nil {
-		t.Errorf("CancelRequest on missing thread should not error, got: %v", err)
 	}
 }
 
