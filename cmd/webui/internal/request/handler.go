@@ -93,7 +93,7 @@ type SubmitResult struct {
 // Returns an error if the thread is already processing a request (409),
 // the global concurrency limit is reached (503), or setup fails.
 func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string) (*SubmitResult, error) {
-	if !validThreadID(threadID) {
+	if !ValidThreadID(threadID) {
 		return nil, fmt.Errorf("invalid thread_id: %q", threadID)
 	}
 
@@ -504,9 +504,9 @@ func (h *Handler) isCancelled(ctx context.Context) bool {
 	return ctx.Err() != nil
 }
 
-// validThreadID rejects thread IDs containing path traversal sequences
+// ValidThreadID rejects thread IDs containing path traversal sequences
 // or colons (which would break Redis key parsing in ListThreads).
-func validThreadID(id string) bool {
+func ValidThreadID(id string) bool {
 	if id == "" {
 		return false
 	}

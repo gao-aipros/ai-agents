@@ -66,7 +66,7 @@ func (rs *requestsResource) cancel(w http.ResponseWriter, r *http.Request) {
 		if re, ok := err.(*request.RequestError); ok {
 			Error(w, re.Status, re.Message)
 		} else {
-			Error(w, http.StatusInternalServerError, err.Error())
+			serverError(w, "internal error", err)
 		}
 		return
 	}

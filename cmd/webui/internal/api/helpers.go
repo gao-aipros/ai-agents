@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/noodle05/ai-agents/cmd/webui/internal/env"
-	"github.com/noodle05/ai-agents/tasklib"
+	"github.com/noodle05/ai-agents/cmd/webui/internal/request"
 )
 
 // ── filesystem helpers ────────────────────────────────────────────────────
@@ -25,20 +25,12 @@ var (
 // workspacePath returns the workspace directory path for a thread.
 // Rejects thread IDs containing path traversal sequences or colons
 // (colons break Redis key parsing in ListThreads).
+// Uses request.ValidThreadID which is the single source of truth for ID validation.
 func workspacePath(threadID string) string {
-	if !validThreadID(threadID) {
+	if !request.ValidThreadID(threadID) {
 		return ""
 	}
 	return filepath.Join(workspaceDir, threadID)
-}
-
-// validThreadID rejects thread IDs containing path traversal sequences
-// or characters that break Redis key parsing (colons split key segments).
-func validThreadID(id string) bool {
-	if id == "" {
-		return false
-	}
-	return !strings.Contains(id, "..") && !strings.ContainsAny(id, "/\\:")
 }
 
 // removeWorkspace removes the workspace directory for a thread.
@@ -67,15 +59,6 @@ func removeSessionFile(sessionID string) {
 			return
 		}
 	}
-}
-
-// simpleUUID generates a UUID string for auto-generated thread IDs.
-func simpleUUID() string {
-	id, err := tasklib.NewUUID()
-	if err != nil {
-		return fmt.Sprintf("%08x", os.Getpid())
-	}
-	return id
 }
 
 // ── error helpers ──────────────────────────────────────────────────────────

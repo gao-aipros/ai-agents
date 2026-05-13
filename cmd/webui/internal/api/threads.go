@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/noodle05/ai-agents/cmd/webui/internal/request"
 	"github.com/noodle05/ai-agents/tasklib"
 )
 
@@ -34,7 +35,7 @@ func (tr *threadsResource) create(w http.ResponseWriter, r *http.Request) {
 		threadID = generateThreadID()
 	}
 
-	if !validThreadID(threadID) {
+	if !request.ValidThreadID(threadID) {
 		Error(w, http.StatusBadRequest, "invalid thread_id")
 		return
 	}
@@ -77,8 +78,14 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	running, _ := tr.client.IsRequestRunning(r.Context(), threadID)
-	complete, _ := tr.client.IsThreadComplete(r.Context(), threadID)
+	running, err := tr.client.IsRequestRunning(r.Context(), threadID)
+	if err != nil {
+		log.Printf("[webui] IsRequestRunning error thread=%s: %v", threadID, err)
+	}
+	complete, err := tr.client.IsThreadComplete(r.Context(), threadID)
+	if err != nil {
+		log.Printf("[webui] IsThreadComplete error thread=%s: %v", threadID, err)
+	}
 
 	messages, err := tr.client.GetThreadHistoryTail(r.Context(), threadID, 20)
 	if err != nil {
@@ -168,6 +175,10 @@ func (tr *threadsResource) deleteWorkspace(w http.ResponseWriter, r *http.Reques
 // POST /api/threads/{thread_id}/keep
 func (tr *threadsResource) keep(w http.ResponseWriter, r *http.Request) {
 	threadID := r.PathValue("thread_id")
+	if !request.ValidThreadID(threadID) {
+		Error(w, http.StatusBadRequest, "invalid thread_id")
+		return
+	}
 
 	if err := tr.client.SetThreadTTL(r.Context(), threadID, tasklib.TTLThread); err != nil {
 		log.Printf("[webui] keep thread error thread=%s: %v", threadID, err)
@@ -181,6 +192,10 @@ func (tr *threadsResource) keep(w http.ResponseWriter, r *http.Request) {
 // POST /api/threads/{thread_id}/reset-session
 func (tr *threadsResource) resetSession(w http.ResponseWriter, r *http.Request) {
 	threadID := r.PathValue("thread_id")
+	if !request.ValidThreadID(threadID) {
+		Error(w, http.StatusBadRequest, "invalid thread_id")
+		return
+	}
 
 	sessionID, err := tr.client.GetThreadSessionID(r.Context(), threadID)
 	if err != nil {
