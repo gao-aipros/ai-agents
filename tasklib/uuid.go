@@ -7,11 +7,6 @@ import (
 
 // NewUUID generates a UUID v4 string.
 func NewUUID() (string, error) {
-	return newUUID()
-}
-
-// newUUID generates a UUID v4 string.
-func newUUID() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", fmt.Errorf("crypto/rand.Read failed: %w", err)
