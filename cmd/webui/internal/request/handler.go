@@ -72,6 +72,12 @@ func New(client *tasklib.Client, cfg Config) *Handler {
 	}
 }
 
+// SetClaudePath sets the path to the claude binary. Used in tests to
+// point at a fake shell script.
+func (h *Handler) SetClaudePath(path string) {
+	h.cfg.ClaudePath = path
+}
+
 // SubmitResult is returned by Submit after successfully spawning claude -p.
 type SubmitResult struct {
 	ThreadID  string `json:"thread_id"`
