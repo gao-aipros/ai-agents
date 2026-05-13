@@ -190,9 +190,19 @@ func (tr *threadsResource) keep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := tr.client.SetThreadTTL(r.Context(), threadID, tasklib.TTLThread); err != nil {
-		log.Printf("[webui] keep thread error thread=%s: %v", threadID, err)
+	// Check existence first to distinguish 404 from Redis errors.
+	exists, err := tr.client.ThreadExists(r.Context(), threadID)
+	if err != nil {
+		serverError(w, "internal error", err)
+		return
+	}
+	if !exists {
 		Error(w, http.StatusNotFound, "thread not found")
+		return
+	}
+
+	if err := tr.client.SetThreadTTL(r.Context(), threadID, tasklib.TTLThread); err != nil {
+		serverError(w, "internal error", err)
 		return
 	}
 

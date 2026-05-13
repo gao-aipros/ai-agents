@@ -66,7 +66,8 @@ func newTestRouter(t *testing.T) *testHarness {
 	}
 
 	handler := request.New(client, cfg)
-	router := NewRouter(client, handler, context.Background())
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	router := NewRouter(client, handler, bgCtx)
 
 	return &testHarness{
 		Router:       router,
@@ -77,6 +78,7 @@ func newTestRouter(t *testing.T) *testHarness {
 		SessionsDir:  sessionsDir,
 		Notify:       notify,
 		cleanup: func() {
+			bgCancel() // stop rate limiter cleanup goroutines
 			os.RemoveAll(workspaceDir)
 			os.RemoveAll(sessionsDir)
 		},

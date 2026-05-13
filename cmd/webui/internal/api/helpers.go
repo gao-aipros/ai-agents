@@ -47,6 +47,7 @@ func removeSessionFile(sessionID string) {
 	projectsDir := filepath.Join(claudeSessionsDir, "projects")
 	entries, err := os.ReadDir(projectsDir)
 	if err != nil {
+		log.Printf("[webui] removeSessionFile ReadDir error: %v", err)
 		return
 	}
 	for _, entry := range entries {
@@ -54,8 +55,8 @@ func removeSessionFile(sessionID string) {
 			continue
 		}
 		sessionFile := filepath.Join(projectsDir, entry.Name(), sessionID+".json")
-		if _, err := os.Stat(sessionFile); err == nil {
-			os.Remove(sessionFile)
+		// Remove directly — avoid TOCTOU between Stat and Remove.
+		if err := os.Remove(sessionFile); err == nil || os.IsNotExist(err) {
 			return
 		}
 	}
