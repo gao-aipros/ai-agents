@@ -324,14 +324,18 @@ func (c *Client) WaitTask(ctx context.Context, taskID, threadID string, timeout 
 					t.CompletedAt = val
 				}
 			}
-			return t, nil
-		}
-		if time.Now().After(deadline) {
-			// Release thread lock on timeout (same as task.py finally block)
+			// Release thread lock on completion (matching task.py finally block)
 			if threadID != "" {
 				c.rdb.Del(ctx, ThreadLockKey(threadID))
 			}
-			return nil, fmt.Errorf("timed out waiting for task %s (status: %s)", taskID, status)
+			return t, nil
+		}
+		if time.Now().After(deadline) {
+			// Release thread lock on timeout
+			if threadID != "" {
+				c.rdb.Del(ctx, ThreadLockKey(threadID))
+			}
+			return nil, fmt.Errorf("Timed out waiting for task %s (status: %s)", taskID, status)
 		}
 
 		select {
@@ -346,31 +350,17 @@ func (c *Client) WaitTask(ctx context.Context, taskID, threadID string, timeout 
 }
 
 // CancelTask sets the cancel flag so workers check it before starting.
-// The status is set to "cancelled" only if the task is not already in a
-// terminal state (done/failed/cancelled) — once a task has finished, its
-// result is preserved.
+// Does not change task status — the worker transitions the task to
+// "cancelled" when it dequeues and checks the flag. Matches task.py behavior.
 func (c *Client) CancelTask(ctx context.Context, taskID string) error {
-	current, err := c.rdb.Get(ctx, TaskKey(taskID, "status")).Result()
-	if err == redis.Nil {
-		return fmt.Errorf("task %s not found", taskID)
-	}
+	exists, err := c.rdb.Exists(ctx, TaskKey(taskID, "status")).Result()
 	if err != nil {
 		return err
 	}
-
-	pipe := c.rdb.Pipeline()
-	pipe.Set(ctx, TaskKey(taskID, "cancel"), "1", TTLTask)
-	switch current {
-	case "done", "failed", "cancelled":
-		// Already terminal — don't overwrite the status, just set the
-		// cancel flag for idempotency.
-	default:
-		pipe.Set(ctx, TaskKey(taskID, "status"), "cancelled", TTLTask)
+	if exists == 0 {
+		return fmt.Errorf("task %s not found", taskID)
 	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		return err
-	}
-	return nil
+	return c.rdb.Set(ctx, TaskKey(taskID, "cancel"), "1", TTLTask).Err()
 }
 
 // RequeueStale requeues stale in-flight tasks for a given worker type.
