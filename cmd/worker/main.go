@@ -131,7 +131,7 @@ func main() {
 		}
 
 		processOneTask(log, client, rdb, result, workerType, agentCmd,
-			taskTimeout, historyWindow, workspaceDir, homeDir, processingKey)
+			taskTimeout, historyWindow, workspaceDir, homeDir, processingKey, hostname)
 	}
 
 	log.log("info", "worker shutting down")
@@ -145,7 +145,7 @@ func processOneTask(
 	rdb *redis.Client,
 	taskJSON, workerType, agentCmd string,
 	defaultTimeout, defaultHistoryWindow int,
-	workspaceDir, homeDir, processingKey string,
+	workspaceDir, homeDir, processingKey, hostname string,
 ) {
 	var taskPayload struct {
 		TaskID        string `json:"task_id"`
@@ -163,16 +163,17 @@ func processOneTask(
 	taskID := taskPayload.TaskID
 	threadID := taskPayload.ThreadID
 	instruction := taskPayload.Instruction
-	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	startedAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 
 	log.log("info", "task dequeued", "task_id", taskID, "thread_id", threadID)
 
 	// Register in active_tasks
 	client.SetActiveTask(context.Background(), taskID, tasklib.TaskInfo{
-		Status:   "running",
-		Worker:   workerType,
-		ThreadID: threadID,
-		StartedAt: now,
+		Status:     "running",
+		Worker:     workerType,
+		ThreadID:   threadID,
+		StartedAt:  startedAt,
+		WorkerHost: hostname,
 	})
 
 	// Initialize per-task keys
@@ -181,7 +182,7 @@ func processOneTask(
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "worker"), workerType, tasklib.TTLTask)
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "thread_id"), threadID, tasklib.TTLTask)
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "description"), instruction, tasklib.TTLTask)
-	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "created_at"), now, tasklib.TTLTask)
+	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "created_at"), startedAt, tasklib.TTLTask)
 	pipe.Exec(context.Background())
 
 	// Build prompt with thread context
@@ -239,17 +240,19 @@ func processOneTask(
 	if cancelFlag, _ := rdb.Get(context.Background(), tasklib.TaskKey(taskID, "cancel")).Result(); cancelFlag != "" {
 		log.log("info", "task cancelled before start", "task_id", taskID, "thread_id", threadID)
 
+		cancelledAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+
 		pipe := rdb.Pipeline()
 		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "status"), "cancelled", tasklib.TTLTask)
 		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "result"), "Cancelled by master", tasklib.TTLTask)
 		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "exit_code"), "-1", tasklib.TTLTask)
-		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "completed_at"), now, tasklib.TTLTask)
+		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "completed_at"), cancelledAt, tasklib.TTLTask)
 		pipe.Exec(context.Background())
 
 		cancelMsg, _ := json.Marshal(map[string]interface{}{
 			"role":      workerType,
 			"content":   fmt.Sprintf("[cancelled] Task %s was cancelled by master", taskID),
-			"timestamp": now,
+			"timestamp": cancelledAt,
 			"metadata":  map[string]string{"task_id": taskID},
 		})
 		rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(threadID), string(cancelMsg))
@@ -306,11 +309,13 @@ func processOneTask(
 			"exit_code", exitCode, "status", status)
 	}
 
-	// Store results
+	// Store results — compute a fresh timestamp after agent completion.
+	completedAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+
 	pipe = rdb.Pipeline()
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "result"), result, tasklib.TTLTask)
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "exit_code"), fmt.Sprintf("%d", exitCode), tasklib.TTLTask)
-	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "completed_at"), now, tasklib.TTLTask)
+	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "completed_at"), completedAt, tasklib.TTLTask)
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "status"), status, tasklib.TTLTask)
 	pipe.Exec(context.Background())
 
@@ -322,7 +327,7 @@ func processOneTask(
 	resultMsg, _ := json.Marshal(map[string]interface{}{
 		"role":      workerType,
 		"content":   cappedResult,
-		"timestamp": now,
+		"timestamp": completedAt,
 		"metadata":  map[string]string{"task_id": taskID},
 	})
 	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(threadID), string(resultMsg))
@@ -332,7 +337,7 @@ func processOneTask(
 	rdb.HSet(context.Background(), tasklib.ThreadStateKey(threadID), map[string]interface{}{
 		"last_updated_by": workerType,
 		"last_task_id":    taskID,
-		"updated_at":      now,
+		"updated_at":      completedAt,
 	})
 	rdb.Expire(context.Background(), tasklib.ThreadStateKey(threadID), tasklib.TTLThread)
 
@@ -373,6 +378,7 @@ func envIntDefault(key string, def int) int {
 	}
 	return def
 }
+
 
 func copyFile(src, dst string) {
 	s, err := os.Open(src)
