@@ -11,7 +11,7 @@ import (
 const (
 	TTLTask   = 86400 * time.Second  // 24 hours
 	TTLThread = 604800 * time.Second // 7 days
-	LockTTL   = 2100 * time.Second   // TASK_TIMEOUT(1800) + 300
+	LockTTL   = 2100 * time.Second   // REQUEST_TIMEOUT(1800) + 300s margin
 )
 
 // Valid worker types — must match task.py WORKERS.
@@ -23,7 +23,11 @@ func QueueKey(worker string) string          { return "tasks:queue:" + worker }
 func ProcessingKey(worker string) string     { return "tasks:processing:" + worker }
 func ThreadStateKey(threadID string) string  { return "thread:" + threadID + ":current_state" }
 func ThreadMessagesKey(threadID string) string { return "thread:" + threadID + ":messages" }
-func ThreadLockKey(threadID string) string   { return "thread:" + threadID + ":lock" }
+func ThreadLockKey(threadID string) string       { return "thread:" + threadID + ":lock" }
+func ThreadRunningKey(threadID string) string      { return "thread:" + threadID + ":running" }
+func ThreadCompleteKey(threadID string) string     { return "thread:" + threadID + ":complete" }
+func ThreadSessionIDKey(threadID string) string    { return "thread:" + threadID + ":session_id" }
+func ThreadLastActivityKey(threadID string) string { return "thread:" + threadID + ":last_activity" }
 func HeartbeatKey(workerType, hostname string) string {
 	return "worker:" + workerType + ":" + hostname + ":heartbeat"
 }
