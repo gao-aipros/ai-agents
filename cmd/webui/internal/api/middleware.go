@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -64,7 +65,9 @@ func recoverMiddleware(next http.Handler) http.Handler {
 // header) on mutation endpoints. GET/HEAD/OPTIONS requests are passed through.
 func contentTypeMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
+		// GET, HEAD, OPTIONS, and DELETE have no meaningful JSON body.
+		if r.Method == http.MethodGet || r.Method == http.MethodHead ||
+			r.Method == http.MethodOptions || r.Method == http.MethodDelete {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -170,7 +173,7 @@ func rateLimitMiddleware(rl *rateLimiter) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := clientIP(r)
 			if !rl.allow(ip) {
-				w.Header().Set("Retry-After", "60")
+				w.Header().Set("Retry-After", fmt.Sprintf("%.0f", rl.interval.Seconds()))
 				Error(w, http.StatusTooManyRequests, "rate limit exceeded")
 				return
 			}

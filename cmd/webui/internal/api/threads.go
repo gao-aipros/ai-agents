@@ -72,9 +72,19 @@ func (tr *threadsResource) list(w http.ResponseWriter, r *http.Request) {
 // GET /api/threads/{thread_id}
 func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 	threadID := r.PathValue("thread_id")
+	// Check existence first to distinguish 404 from Redis errors
+	exists, err := tr.client.ThreadExists(r.Context(), threadID)
+	if err != nil {
+		serverError(w, "internal error", err)
+		return
+	}
+	if !exists {
+		Error(w, http.StatusNotFound, "thread not found")
+		return
+	}
 	thread, err := tr.client.GetThread(r.Context(), threadID)
 	if err != nil {
-		Error(w, http.StatusNotFound, "thread not found")
+		serverError(w, "internal error", err)
 		return
 	}
 

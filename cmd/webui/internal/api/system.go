@@ -25,7 +25,10 @@ func (sr *systemResource) health(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workers, _ := sr.client.GetWorkerStats(r.Context())
+	workers, err := sr.client.GetWorkerStats(r.Context())
+	if err != nil {
+		log.Printf("[webui] health GetWorkerStats error: %v", err)
+	}
 
 	Respond(w, r, http.StatusOK, map[string]interface{}{
 		"redis":              "ok",
