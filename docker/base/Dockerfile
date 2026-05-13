@@ -1,24 +1,30 @@
+FROM debian:trixie AS gh-fetcher
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl jq \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN ARCH=$(dpkg --print-architecture) \
+    && DOWNLOAD_URL=$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest \
+        | jq -r --arg arch "$ARCH" \
+            '.assets[].browser_download_url | select(test("linux_" + $arch + ".tar.gz"))') \
+    && curl -fsSL "$DOWNLOAD_URL" -o /tmp/gh.tar.gz \
+    && tar -xzf /tmp/gh.tar.gz -C /tmp \
+    && cp /tmp/gh_*/bin/gh /usr/local/bin/gh \
+    && chmod +x /usr/local/bin/gh \
+    && rm -rf /tmp/gh.tar.gz /tmp/gh_*
+
 FROM debian:trixie
 
 ARG AGENT_UID=1000
 ARG AGENT_GID=1000
 
-# Install gnupg first (needed by apt for signed repos), then add GitHub CLI repo
+COPY --from=gh-fetcher /usr/local/bin/gh /usr/local/bin/gh
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
     ca-certificates \
     curl \
-    gnupg \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-    -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-    > /etc/apt/sources.list.d/github-cli.list \
-    && apt-get update && apt-get install -y --no-install-recommends \
-    bash \
-    curl \
-    gh \
     git \
     gnupg \
     jq \
