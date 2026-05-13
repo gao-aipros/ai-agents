@@ -49,18 +49,16 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 	var totalDuration time.Duration
 	var completedCount int
 
-	now := time.Now()
 	for _, t := range tasks {
 		total++
 		switch t.Status {
 		case "done":
 			done++
 			if t.CreatedAt != "" && t.CompletedAt != "" {
-				if start, err := time.Parse("2006-01-02T15:04:05Z", t.CreatedAt); err == nil {
-					if end, err := time.Parse("2006-01-02T15:04:05Z", t.CompletedAt); err == nil {
+				if start, sErr := time.Parse("2006-01-02T15:04:05Z", t.CreatedAt); sErr == nil {
+					if end, eErr := time.Parse("2006-01-02T15:04:05Z", t.CompletedAt); eErr == nil {
 						totalDuration += end.Sub(start)
 						completedCount++
-						_ = now // used for fallback if needed
 					}
 				}
 			}
