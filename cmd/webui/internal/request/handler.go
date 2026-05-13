@@ -3,6 +3,7 @@ package request
 import (
 	"bufio"
 	"context"
+	crand "crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -99,7 +100,10 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 		return nil, ErrConcurrencyLimit
 	}
 
-	// Create thread if it doesn't exist
+	// Create thread if it doesn't exist.
+	// Note: two concurrent Submit calls for the same new thread may both
+	// see ThreadExists=false and both call CreateThread. This is harmless:
+	// HSET is idempotent (last write wins, only updated_at changes).
 	exists, err := h.client.ThreadExists(ctx, threadID)
 	if err != nil {
 		<-h.sem // release semaphore slot
@@ -248,6 +252,14 @@ func (h *Handler) ActiveRequests() int {
 	return len(h.sem)
 }
 
+// cleanupCtx returns a context with a 30s deadline for Redis cleanup
+// operations. Using context.Background() in cleanup paths risks blocking
+// indefinitely if Redis is unreachable, leaking the semaphore slot and
+// per-thread request lock.
+func cleanupCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 30*time.Second)
+}
+
 // ── background subprocess management ──────────────────────────────────────
 
 func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, threadID, requestID string, args []string) {
@@ -262,8 +274,10 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 	// Cleanup: release semaphore, request lock, remove cancel registration
 	defer func() {
 		<-h.sem
-		h.client.ReleaseRequestLock(context.Background(), threadID)
-		h.client.UpdateThreadLastActivity(context.Background(), threadID)
+		cleanCtx, cleanCancel := cleanupCtx()
+		defer cleanCancel()
+		h.client.ReleaseRequestLock(cleanCtx, threadID)
+		h.client.UpdateThreadLastActivity(cleanCtx, threadID)
 
 		h.mu.Lock()
 		delete(h.cancels, threadID)
@@ -432,7 +446,9 @@ func (h *Handler) handleAssistantMessage(ctx context.Context, threadID string, m
 		return
 	}
 
-	h.client.AppendMessage(context.Background(), threadID, tasklib.Message{
+	cleanCtx, cleanCancel := cleanupCtx()
+	defer cleanCancel()
+	h.client.AppendMessage(cleanCtx, threadID, tasklib.Message{
 		Role:      "master",
 		Type:      msgType,
 		Content:   text,
@@ -443,16 +459,19 @@ func (h *Handler) handleAssistantMessage(ctx context.Context, threadID string, m
 func (h *Handler) writeResponseMessage(ctx context.Context, threadID, content string) {
 	h.logger.Printf("thread=%s completed successfully", threadID)
 
-	h.client.SetThreadComplete(context.Background(), threadID)
+	cleanCtx, cleanCancel := cleanupCtx()
+	defer cleanCancel()
 
-	h.client.AppendMessage(context.Background(), threadID, tasklib.Message{
+	h.client.SetThreadComplete(cleanCtx, threadID)
+
+	h.client.AppendMessage(cleanCtx, threadID, tasklib.Message{
 		Role:      "master",
 		Type:      "response",
 		Content:   content,
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 	})
 
-	h.client.UpdateThread(context.Background(), threadID, map[string]string{
+	h.client.UpdateThread(cleanCtx, threadID, map[string]string{
 		"status": "complete",
 	})
 }
@@ -460,14 +479,17 @@ func (h *Handler) writeResponseMessage(ctx context.Context, threadID, content st
 func (h *Handler) writeErrorMessage(ctx context.Context, threadID, content string) {
 	h.logger.Printf("thread=%s error: %s", threadID, content)
 
-	h.client.AppendMessage(context.Background(), threadID, tasklib.Message{
+	cleanCtx, cleanCancel := cleanupCtx()
+	defer cleanCancel()
+
+	h.client.AppendMessage(cleanCtx, threadID, tasklib.Message{
 		Role:      "master",
 		Type:      "error",
 		Content:   content,
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 	})
 
-	h.client.UpdateThread(context.Background(), threadID, map[string]string{
+	h.client.UpdateThread(cleanCtx, threadID, map[string]string{
 		"status": "error",
 	})
 }
@@ -572,9 +594,18 @@ func (e *RequestError) Error() string { return e.Message }
 
 func mustUUID() string {
 	id, err := tasklib.NewUUID()
-	if err != nil {
-		// fallback: timestamp-based identifier
-		return fmt.Sprintf("fallback_%d", time.Now().UnixNano())
+	if err == nil {
+		return id
 	}
-	return id
+	// Fallback: crypto/rand failure is catastrophic, but produce a valid
+	// UUID v4 so --session-id / --resume still work. crypto/rand failing
+	// here means tasklib.NewUUID() already failed the same way — try once
+	// more with a fresh read, then degrade to a deterministic suffix.
+	var b [16]byte
+	if _, err2 := crand.Read(b[:]); err2 == nil {
+		b[6] = (b[6] & 0x0f) | 0x40
+		b[8] = (b[8] & 0x3f) | 0x80
+		return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+	}
+	return fmt.Sprintf("00000000-0000-4000-8000-%012d", time.Now().UnixNano()%1000000000000)
 }

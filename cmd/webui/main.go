@@ -231,7 +231,10 @@ func withLogging(next http.Handler) http.Handler {
 
 func generateThreadID() string {
 	b := make([]byte, 10)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// Fall back to timestamp-only on crypto/rand failure
+		return fmt.Sprintf("web_%d_%x", time.Now().Unix(), time.Now().UnixNano())
+	}
 	const chars = "0123456789abcdefghijklmnopqrstuvwxyz"
 	for i := range b {
 		b[i] = chars[int(b[i])%len(chars)]
