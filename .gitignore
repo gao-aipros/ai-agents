@@ -1,6 +1,10 @@
 # Agent binaries
 docker/*/bin/
 
+# Go build artifacts (root)
+/task
+/worker
+
 # Runtime workspace
 workspace/
 
