@@ -10,16 +10,29 @@ services:
 
   master:
     image: ${MASTER_AGENT_IMAGE:-master-agent:latest}
-    stdin_open: true
-    tty: true
     restart: unless-stopped
+    ports:
+      - "${WEBUI_PORT:-8000}:8000"
     volumes:
       - workspace:/workspace
+      - claude_sessions:/home/agent/.claude
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       TASK_TIMEOUT: "1800"
       TASKLIB_BACKEND: ${TASKLIB_BACKEND:-go}
+      WEBUI_PORT: "8000"
+      WEBUI_API_KEY: ${WEBUI_API_KEY:-}
+      WEBUI_POLL_DASHBOARD: "5"
+      WEBUI_POLL_THREAD_DETAIL: "3"
+      WEBUI_POLL_WORKERS: "5"
+      WEBUI_HTMX_SRC: /static/htmx.min.js
+      WEBUI_THEME: ${WEBUI_THEME:-light}
+      WORKSPACE_DIR: /workspace
+      CLAUDE_PATH: /usr/local/bin/claude
+      CLAUDE_SESSIONS_DIR: /home/agent/.claude
+      REQUEST_TIMEOUT: "1800"
+      MAX_CONCURRENT_REQUESTS: "5"
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
       GH_TOKEN: ${GH_TOKEN}
       GITHUB_TOKEN: ${GITHUB_TOKEN}
@@ -103,4 +116,6 @@ volumes:
   workspace:
     driver: local
   redis_data:
+    driver: local
+  claude_sessions:
     driver: local

@@ -5,6 +5,11 @@ import (
 	"fmt"
 )
 
+// NewUUID generates a UUID v4 string.
+func NewUUID() (string, error) {
+	return newUUID()
+}
+
 // newUUID generates a UUID v4 string.
 func newUUID() (string, error) {
 	var b [16]byte
