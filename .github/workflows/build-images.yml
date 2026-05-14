@@ -10,16 +10,41 @@ env:
   PLATFORMS: linux/amd64,linux/arm64
 
 jobs:
-  build:
+  # ── Go binaries (pre-built, shared via artifact) ──────────────────────
+  go-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Build Go binaries (multi-arch)
+        run: |
+          mkdir -p out/amd64 out/arm64
+          GOOS=linux GOARCH=amd64 go build -o out/amd64/worker-go ./cmd/worker/
+          GOOS=linux GOARCH=amd64 go build -o out/amd64/task-go   ./cmd/task/
+          GOOS=linux GOARCH=amd64 go build -o out/amd64/webui     ./cmd/webui/
+          GOOS=linux GOARCH=arm64 go build -o out/arm64/worker-go ./cmd/worker/
+          GOOS=linux GOARCH=arm64 go build -o out/arm64/task-go   ./cmd/task/
+          GOOS=linux GOARCH=arm64 go build -o out/arm64/webui     ./cmd/webui/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: go-binaries
+          path: out/
+
+  # ── Phase 1: ai-base (no deps beyond checkout) ────────────────────────
+  ai-base:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Login to GitHub Container Registry
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -29,14 +54,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Compute lowercase image prefix
+      - name: Compute image prefix
         run: |
           OWNER_LC="${{ github.repository_owner }}"
           OWNER_LC="${OWNER_LC,,}"
           echo "PREFIX=${REGISTRY}/${OWNER_LC}" >> $GITHUB_ENV
 
-      # Layer 0 — base image (no build-arg needed, FROM debian:trixie is multi-arch on Docker Hub)
-      - name: Build ai-base
+      - name: Build and push ai-base
         run: |
           docker buildx build \
             --platform ${PLATFORMS} \
@@ -44,53 +68,189 @@ jobs:
             -t ${PREFIX}/ai-base:latest \
             docker/base/
 
-      # Layer 1 — agent base images (FROM ai-base via build-arg)
-      - name: Build claude-code
-        run: |
-          docker buildx build \
-            --platform ${PLATFORMS} \
-            --push \
-            --build-arg BASE_IMAGE=${PREFIX}/ai-base:latest \
-            -t ${PREFIX}/claude-code:latest \
-            docker/claude-code/
+  # ── Phase 2: worker-base + master-agent (parallel, FROM ai-base) ─────
+  worker-base:
+    needs: [go-build, ai-base]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Build copilot
+      - uses: actions/download-artifact@v4
+        with:
+          name: go-binaries
+          path: out/
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute image prefix
+        run: |
+          OWNER_LC="${{ github.repository_owner }}"
+          OWNER_LC="${OWNER_LC,,}"
+          echo "PREFIX=${REGISTRY}/${OWNER_LC}" >> $GITHUB_ENV
+
+      - name: Build and push worker-base
         run: |
           docker buildx build \
             --platform ${PLATFORMS} \
             --push \
             --build-arg BASE_IMAGE=${PREFIX}/ai-base:latest \
-            -t ${PREFIX}/copilot:latest \
-            -f docker/copilot/Dockerfile \
+            -t ${PREFIX}/worker-base:latest \
+            -f docker/worker-base/Dockerfile \
             .
 
-      - name: Build opencode
+  master-agent:
+    needs: [go-build, ai-base]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: go-binaries
+          path: out/
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute image prefix
+        run: |
+          OWNER_LC="${{ github.repository_owner }}"
+          OWNER_LC="${OWNER_LC,,}"
+          echo "PREFIX=${REGISTRY}/${OWNER_LC}" >> $GITHUB_ENV
+
+      - name: Build and push master-agent
         run: |
           docker buildx build \
             --platform ${PLATFORMS} \
             --push \
             --build-arg BASE_IMAGE=${PREFIX}/ai-base:latest \
-            -t ${PREFIX}/opencode:latest \
-            -f docker/opencode/Dockerfile \
-            .
-
-      # Layer 2 — agent images depending on claude-code
-      - name: Build master-agent
-        run: |
-          docker buildx build \
-            --platform ${PLATFORMS} \
-            --push \
-            --build-arg CLAUDE_IMAGE=${PREFIX}/claude-code:latest \
             -t ${PREFIX}/master-agent:latest \
             -f docker/master-agent/Dockerfile \
             .
 
-      - name: Build worker-claude
+  # ── Phase 3: workers (parallel, all FROM worker-base) ────────────────
+  copilot:
+    needs: [worker-base]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute image prefix
+        run: |
+          OWNER_LC="${{ github.repository_owner }}"
+          OWNER_LC="${OWNER_LC,,}"
+          echo "PREFIX=${REGISTRY}/${OWNER_LC}" >> $GITHUB_ENV
+
+      - name: Build and push copilot
         run: |
           docker buildx build \
             --platform ${PLATFORMS} \
             --push \
-            --build-arg CLAUDE_IMAGE=${PREFIX}/claude-code:latest \
+            --build-arg WORKER_BASE_IMAGE=${PREFIX}/worker-base:latest \
+            -t ${PREFIX}/copilot:latest \
+            -f docker/copilot/Dockerfile \
+            .
+
+  opencode:
+    needs: [worker-base]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute image prefix
+        run: |
+          OWNER_LC="${{ github.repository_owner }}"
+          OWNER_LC="${OWNER_LC,,}"
+          echo "PREFIX=${REGISTRY}/${OWNER_LC}" >> $GITHUB_ENV
+
+      - name: Build and push opencode
+        run: |
+          docker buildx build \
+            --platform ${PLATFORMS} \
+            --push \
+            --build-arg WORKER_BASE_IMAGE=${PREFIX}/worker-base:latest \
+            -t ${PREFIX}/opencode:latest \
+            -f docker/opencode/Dockerfile \
+            .
+
+  worker-claude:
+    needs: [worker-base]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute image prefix
+        run: |
+          OWNER_LC="${{ github.repository_owner }}"
+          OWNER_LC="${OWNER_LC,,}"
+          echo "PREFIX=${REGISTRY}/${OWNER_LC}" >> $GITHUB_ENV
+
+      - name: Build and push worker-claude
+        run: |
+          docker buildx build \
+            --platform ${PLATFORMS} \
+            --push \
+            --build-arg WORKER_BASE_IMAGE=${PREFIX}/worker-base:latest \
             -t ${PREFIX}/worker-claude:latest \
             -f docker/worker-claude/Dockerfile \
             .
