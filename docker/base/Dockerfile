@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \
     openssh-client \
     python3 \
-    python3-pip \
+    redis-tools \
     unzip \
     wget \
     vim \
@@ -38,8 +38,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g "$AGENT_GID" agent \
     && useradd -m -d /home/agent -s /bin/bash -u "$AGENT_UID" -g "$AGENT_GID" agent
-
-RUN pip install --break-system-packages redis
 
 RUN mkdir -p /workspace /home/agent/.config && chown agent:agent /workspace /home/agent/.config
 

@@ -54,7 +54,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python3", "-c", "import redis; assert redis.Redis(host='redis').ping()"]
+      test: ["CMD", "redis-cli", "-h", "redis", "ping"]
       interval: 30s
       retries: 3
       start_period: 10s
@@ -75,7 +75,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python3", "-c", "import redis; assert redis.Redis(host='redis').ping()"]
+      test: ["CMD", "redis-cli", "-h", "redis", "ping"]
       interval: 30s
       retries: 3
       start_period: 10s
@@ -96,7 +96,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python3", "-c", "import redis; assert redis.Redis(host='redis').ping()"]
+      test: ["CMD", "redis-cli", "-h", "redis", "ping"]
       interval: 30s
       retries: 3
       start_period: 10s
