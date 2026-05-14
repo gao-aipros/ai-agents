@@ -45,7 +45,7 @@ ENV COPILOT_PROVIDER_TYPE=anthropic \
     COPILOT_MODEL=deepseek-v4-pro[1m] \
     COPILOT_PROVIDER_MAX_PROMPT_TOKENS=840000 \
     COPILOT_PROVIDER_MAX_OUTPUT_TOKENS=128000 \
-    AGENT_CMD="copilot --allow-all -p"
+    AGENT_CMD="copilot --yolo -p"
 
 # API key — pass at build time (--build-arg) or runtime (-e)
 ARG COPILOT_PROVIDER_API_KEY
@@ -74,4 +74,4 @@ COPY scripts/worker-entrypoint.sh /usr/local/bin/worker-entrypoint.sh
 COPY --chown=agent:agent docker/copilot/AGENTS.md /home/agent/AGENTS.md
 
 USER agent
-ENTRYPOINT ["/usr/local/bin/worker-entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/worker-go", "copilot"]
