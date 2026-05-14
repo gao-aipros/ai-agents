@@ -45,6 +45,7 @@ The container has Go installed. When working on Go projects:
 - **Vet**: `go vet ./...`
 - **Dependencies**: `go mod tidy`, `go get <pkg>`
 - **Fmt**: `go fmt ./...`
+- **CGO**: `CGO_ENABLED=1 go build -o ../out/ ./...` (gcc and libc6-dev are installed)
 
 Run builds and tests inside the cloned repo. Verify tests pass before committing.
 

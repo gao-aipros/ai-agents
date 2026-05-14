@@ -43,8 +43,8 @@ Workers are already running — you delegate by enqueuing tasks, not by spawning
 - **Auth**: Already authenticated via `GH_TOKEN` env var. Run `gh auth status` to verify.
 - **Clone**: `gh repo clone owner/repo /workspace/<thread_id>/repo`
 - **Check issues**: `gh issue list -R owner/repo`
-- **Create PR**: `gh pr create -R owner/repo --title "..." --body "$(cat /workspace/<thread_id>/result.md)"`
-- **Review PR**: `gh pr review <number> -R owner/repo --approve|--comment|--request-changes --body "$(cat /workspace/<thread_id>/review.md)"`
+- **Create PR**: `gh pr create -R owner/repo --title "..." --body "$(cat /workspace/<thread_id>/docs/result.md)"`
+- **Review PR**: `gh pr review <number> -R owner/repo --approve|--comment|--request-changes --body "$(cat /workspace/<thread_id>/docs/review.md)"`
 - **Commit/push**: Use git directly: `git add -A && git commit -m "..." && git push`
 
 ## Workflow
