@@ -18,17 +18,17 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version-file: 'go.mod'
 
       - name: Build Go binaries (multi-arch)
         run: |
           mkdir -p out/amd64 out/arm64
-          GOOS=linux GOARCH=amd64 go build -o out/amd64/worker-go ./cmd/worker/
-          GOOS=linux GOARCH=amd64 go build -o out/amd64/task-go   ./cmd/task/
-          GOOS=linux GOARCH=amd64 go build -o out/amd64/webui     ./cmd/webui/
-          GOOS=linux GOARCH=arm64 go build -o out/arm64/worker-go ./cmd/worker/
-          GOOS=linux GOARCH=arm64 go build -o out/arm64/task-go   ./cmd/task/
-          GOOS=linux GOARCH=arm64 go build -o out/arm64/webui     ./cmd/webui/
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o out/amd64/worker-go ./cmd/worker/
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o out/amd64/task-go   ./cmd/task/
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o out/amd64/webui     ./cmd/webui/
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o out/arm64/worker-go ./cmd/worker/
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o out/arm64/task-go   ./cmd/task/
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o out/arm64/webui     ./cmd/webui/
 
       - uses: actions/upload-artifact@v4
         with:

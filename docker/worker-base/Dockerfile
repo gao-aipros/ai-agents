@@ -25,5 +25,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN mkdir -p /home/agent/go && chown -R agent:agent /home/agent/go
 
 # Pre-built worker binary
-ARG TARGETARCH
 COPY out/${TARGETARCH}/worker-go /usr/local/bin/worker-go
