@@ -34,7 +34,6 @@ services:
       MAX_CONCURRENT_REQUESTS: "5"
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
       GH_TOKEN: ${MASTER_GH_TOKEN}
-      GITHUB_TOKEN: ${MASTER_GITHUB_TOKEN}
     depends_on:
       redis:
         condition: service_healthy
@@ -51,7 +50,6 @@ services:
       HISTORY_WINDOW: "10"
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
       GH_TOKEN: ${WORKER_CLAUDE_GH_TOKEN}
-      GITHUB_TOKEN: ${WORKER_CLAUDE_GITHUB_TOKEN}
     depends_on:
       redis:
         condition: service_healthy
@@ -73,7 +71,6 @@ services:
       HISTORY_WINDOW: "10"
       COPILOT_PROVIDER_API_KEY: ${DEEPSEEK_API_KEY}
       GH_TOKEN: ${WORKER_COPILOT_GH_TOKEN}
-      GITHUB_TOKEN: ${WORKER_COPILOT_GITHUB_TOKEN}
     depends_on:
       redis:
         condition: service_healthy
@@ -95,7 +92,6 @@ services:
       HISTORY_WINDOW: "10"
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       GH_TOKEN: ${WORKER_OPENCODE_GH_TOKEN}
-      GITHUB_TOKEN: ${WORKER_OPENCODE_GITHUB_TOKEN}
     depends_on:
       redis:
         condition: service_healthy

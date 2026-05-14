@@ -121,4 +121,4 @@ TTL constants: tasks 24h, threads 7 days, locks 35 minutes (timeout + margin).
 
 ### Service environment
 
-Rename `.env.example` to `.env` and fill in per-agent `*_GH_TOKEN` / `*_GITHUB_TOKEN` pairs and `DEEPSEEK_API_KEY`. Run with `docker compose up -d`. The web UI is at `http://localhost:8000`.
+Rename `.env.example` to `.env` and fill in per-agent `*_GH_TOKEN` values and `DEEPSEEK_API_KEY`. Run with `docker compose up -d`. The web UI is at `http://localhost:8000`.

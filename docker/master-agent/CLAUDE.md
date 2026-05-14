@@ -165,5 +165,5 @@ task thread-history --id add-oauth2 --tail 10
 - Always `task wait` for sequential steps before enqueuing the next task on the same thread.
 - After task completes, review output with `task result` and update thread state with `task thread-update`.
 - Workers communicate results to Redis, not stdout. Use `task result` to read them.
-- Each worker receives its own `GH_TOKEN` / `GITHUB_TOKEN` via docker-compose. The master's token is separate.
+- Each worker receives its own `GH_TOKEN` via docker-compose. The master's token is separate.
 - Clean up workspace directories for completed threads with `task thread-cleanup --id <thread_id>`.

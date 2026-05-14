@@ -49,4 +49,3 @@ Run builds and tests inside the cloned repo. Verify tests pass before committing
 - Use Go for Go projects, shell scripts for automation, python3 for scripting.
 - Clean up temp files before exiting.
 - Always push your branch and create a PR for code changes.
-- Use `GITHUB_TOKEN` for git operations if `git push` prompts for credentials.

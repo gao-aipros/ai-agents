@@ -29,7 +29,7 @@ COPY --from=go-build-task /out/task-go /usr/local/bin/task
 # Go webui binary
 COPY --from=go-build-webui /out/webui /usr/local/bin/webui
 
-RUN mkdir -p /home/agent/.claude
+RUN mkdir -p /home/agent/.claude && chown agent:agent /home/agent/.claude
 COPY --chown=agent:agent docker/master-agent/CLAUDE.md /home/agent/.claude/CLAUDE.md
 
 USER agent
