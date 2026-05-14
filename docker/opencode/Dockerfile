@@ -76,4 +76,4 @@ COPY scripts/worker-entrypoint.sh /usr/local/bin/worker-entrypoint.sh
 USER agent
 RUN opencode models --refresh
 
-ENTRYPOINT ["/usr/local/bin/worker-entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/worker-go", "opencode"]

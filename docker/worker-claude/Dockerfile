@@ -48,4 +48,4 @@ COPY --chown=agent:agent docker/worker-claude/CLAUDE.md /home/agent/.claude/CLAU
 COPY --chown=agent:agent docker/worker-claude/settings.json /home/agent/.claude/settings.json
 
 USER agent
-ENTRYPOINT ["/usr/local/bin/worker-entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/worker-go", "claude"]

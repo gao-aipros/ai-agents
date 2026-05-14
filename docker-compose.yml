@@ -48,10 +48,8 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      WORKER_TYPE: claude
       TASK_TIMEOUT: "1800"
       HISTORY_WINDOW: "10"
-      TASKLIB_BACKEND: ${TASKLIB_BACKEND:-go}
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
       GH_TOKEN: ${GH_TOKEN}
       GITHUB_TOKEN: ${GITHUB_TOKEN}
@@ -72,10 +70,8 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      WORKER_TYPE: copilot
       TASK_TIMEOUT: "1800"
       HISTORY_WINDOW: "10"
-      TASKLIB_BACKEND: ${TASKLIB_BACKEND:-go}
       COPILOT_PROVIDER_API_KEY: ${DEEPSEEK_API_KEY}
       GH_TOKEN: ${GH_TOKEN}
       GITHUB_TOKEN: ${GITHUB_TOKEN}
@@ -96,10 +92,8 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      WORKER_TYPE: opencode
       TASK_TIMEOUT: "1800"
       HISTORY_WINDOW: "10"
-      TASKLIB_BACKEND: ${TASKLIB_BACKEND:-go}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       GH_TOKEN: ${GH_TOKEN}
       GITHUB_TOKEN: ${GITHUB_TOKEN}
