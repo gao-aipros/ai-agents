@@ -133,8 +133,17 @@ func TestNew_LoadsTemplates(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	// Verify that named partial templates are parsed and executable.
+	// Verify that page and partial templates are parsed and executable.
 	var buf mockWriter
+	if err := r.Page(&buf, "page-dashboard", nil); err != nil {
+		t.Fatalf("Page returned error: %v", err)
+	}
+	output := string(buf.data)
+	if !strings.Contains(output, "AI Agents") || !strings.Contains(output, "Dashboard") {
+		t.Errorf("Page output missing expected content, got: %s", output)
+	}
+
+	buf.data = nil
 	if err := r.Partial(&buf, "worker-cards", map[string]interface{}{
 		"Workers": map[string]interface{}{
 			"claude": map[string]int{"Online": 1, "Instances": 1, "TotalActive": 0},
@@ -142,12 +151,76 @@ func TestNew_LoadsTemplates(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Partial returned error: %v", err)
 	}
-	output := string(buf.data)
+	output = string(buf.data)
 	if output == "" {
 		t.Error("Partial should produce output")
 	}
 	if !strings.Contains(output, "worker-card") {
 		t.Errorf("Partial output missing 'worker-card', got: %s", output)
+	}
+}
+
+func TestPage_RendersCorrectTemplate(t *testing.T) {
+	r, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Each page template should render its own content, not overwrite others.
+	tests := []struct {
+		name     string
+		template string
+		data     map[string]interface{}
+		contains string
+		excludes string
+	}{
+		{
+			name:     "dashboard",
+			template: "page-dashboard",
+			data:     nil,
+			contains: "Recent Tasks",
+			excludes: "Thread not found",
+		},
+		{
+			name:     "thread list",
+			template: "page-thread-list",
+			data:     map[string]interface{}{"Threads": []interface{}{}},
+			contains: "Threads",
+		},
+		{
+			name:     "thread detail not found",
+			template: "page-thread-detail",
+			data:     map[string]interface{}{"Thread": nil},
+			contains: "Thread not found",
+		},
+		{
+			name:     "task list",
+			template: "page-task-list",
+			data:     nil,
+			contains: "Tasks",
+		},
+		{
+			name:     "task detail not found",
+			template: "page-task-detail",
+			data:     map[string]interface{}{"Task": nil},
+			contains: "Task not found",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf mockWriter
+			if err := r.Page(&buf, tt.template, tt.data); err != nil {
+				t.Fatalf("Page(%s) returned error: %v", tt.name, err)
+			}
+			output := string(buf.data)
+			if !strings.Contains(output, tt.contains) {
+				t.Errorf("Page(%s) missing %q in output", tt.name, tt.contains)
+			}
+			if tt.excludes != "" && strings.Contains(output, tt.excludes) {
+				t.Errorf("Page(%s) unexpectedly contains %q", tt.name, tt.excludes)
+			}
+		})
 	}
 }
 

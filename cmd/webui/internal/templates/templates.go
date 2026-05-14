@@ -1,6 +1,7 @@
 package templates
 
 import (
+	"bytes"
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
@@ -94,20 +95,19 @@ func (r *Renderer) baseData(data interface{}) map[string]interface{} {
 	m["WorkerTypes"] = r.WorkerTypes
 	m["CSRFToken"] = r.CSRFToken
 	m["NowUnix"] = time.Now().Unix()
-	// Safe defaults for template iteration — the "content" template from the
-	// last-parsed file accesses these, so provide empty slices when not set.
-	if _, ok := m["Threads"]; !ok {
-		m["Threads"] = []interface{}{}
-	}
-	if _, ok := m["Tasks"]; !ok {
-		m["Tasks"] = []interface{}{}
-	}
 	return m
 }
 
-// Page renders a full HTML page using base.html as the layout.
-func (r *Renderer) Page(w io.Writer, data interface{}) error {
-	return r.tmpl.ExecuteTemplate(w, "base.html", r.baseData(data))
+// Page renders a full HTML page. The content template is rendered first and
+// passed as PageContent to base.html, which injects it via {{.PageContent}}.
+func (r *Renderer) Page(w io.Writer, contentTemplate string, data interface{}) error {
+	var content bytes.Buffer
+	if err := r.tmpl.ExecuteTemplate(&content, contentTemplate, r.baseData(data)); err != nil {
+		return err
+	}
+	bd := r.baseData(data)
+	bd["PageContent"] = template.HTML(content.String())
+	return r.tmpl.ExecuteTemplate(w, "base.html", bd)
 }
 
 // Partial renders a named template without the layout shell (for HTMX responses).

@@ -89,10 +89,11 @@ func TestPage_RenderErrorReturns500(t *testing.T) {
 	if err != nil {
 		t.Fatalf("templates.New: %v", err)
 	}
-	// Render a page with Threads slice for the list template.
+	// Render a full page through the API-level Page wrapper with buffer-then-write.
 	w := httptest.NewRecorder()
-	if err := r.Page(w, map[string]interface{}{"Threads": []interface{}{}}); err != nil {
-		t.Fatalf("Page returned error: %v", err)
+	Page(w, r, "page-thread-list", map[string]interface{}{"Threads": []interface{}{}})
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
 	if w.Body.Len() == 0 {
 		t.Error("Page should produce output")

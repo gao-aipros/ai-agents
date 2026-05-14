@@ -102,7 +102,7 @@ type pageResource struct {
 
 // GET /
 func (pr *pageResource) dashboard(w http.ResponseWriter, r *http.Request) {
-	Page(w, pr.renderer, nil)
+	Page(w, pr.renderer, "page-dashboard", nil)
 }
 
 // GET /threads
@@ -112,7 +112,7 @@ func (pr *pageResource) threadList(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[webui] thread list page error: %v", err)
 		threads = nil
 	}
-	Page(w, pr.renderer, map[string]interface{}{
+	Page(w, pr.renderer, "page-thread-list", map[string]interface{}{
 		"Threads": threads,
 	})
 }
@@ -122,13 +122,13 @@ func (pr *pageResource) threadDetail(w http.ResponseWriter, r *http.Request) {
 	threadID := r.PathValue("thread_id")
 
 	if !request.ValidThreadID(threadID) {
-		Page(w, pr.renderer, map[string]interface{}{"Thread": nil})
+		Page(w, pr.renderer, "page-thread-detail", map[string]interface{}{"Thread": nil})
 		return
 	}
 
 	exists, err := pr.client.ThreadExists(r.Context(), threadID)
 	if err != nil || !exists {
-		Page(w, pr.renderer, map[string]interface{}{
+		Page(w, pr.renderer, "page-thread-detail", map[string]interface{}{
 			"Thread": nil,
 		})
 		return
@@ -137,14 +137,14 @@ func (pr *pageResource) threadDetail(w http.ResponseWriter, r *http.Request) {
 	thread, err := pr.client.GetThread(r.Context(), threadID)
 	if err != nil {
 		log.Printf("[webui] thread detail page error: %v", err)
-		Page(w, pr.renderer, map[string]interface{}{"Thread": nil})
+		Page(w, pr.renderer, "page-thread-detail", map[string]interface{}{"Thread": nil})
 		return
 	}
 
 	running, _ := pr.client.IsRequestRunning(r.Context(), threadID)
 	complete, _ := pr.client.IsThreadComplete(r.Context(), threadID)
 
-	Page(w, pr.renderer, map[string]interface{}{
+	Page(w, pr.renderer, "page-thread-detail", map[string]interface{}{
 		"Thread":   thread,
 		"Running":  running,
 		"Complete": complete,
@@ -153,7 +153,7 @@ func (pr *pageResource) threadDetail(w http.ResponseWriter, r *http.Request) {
 
 // GET /tasks
 func (pr *pageResource) taskList(w http.ResponseWriter, r *http.Request) {
-	Page(w, pr.renderer, nil)
+	Page(w, pr.renderer, "page-task-list", nil)
 }
 
 // GET /tasks/{task_id}
@@ -162,7 +162,7 @@ func (pr *pageResource) taskDetail(w http.ResponseWriter, r *http.Request) {
 
 	task, err := pr.client.GetTask(r.Context(), taskID)
 	if err != nil || task.Status == "" {
-		Page(w, pr.renderer, map[string]interface{}{
+		Page(w, pr.renderer, "page-task-detail", map[string]interface{}{
 			"Task": nil,
 		})
 		return
@@ -182,7 +182,7 @@ func (pr *pageResource) taskDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	Page(w, pr.renderer, map[string]interface{}{
+	Page(w, pr.renderer, "page-task-detail", map[string]interface{}{
 		"Task":     task,
 		"TailInfo": tailInfo,
 	})

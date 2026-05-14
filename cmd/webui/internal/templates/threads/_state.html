@@ -29,25 +29,17 @@
 
 {{define "thread-state-oob"}}
 {{if .Thread}}
+{{if .Complete}}
 <div id="response-banner" hx-swap-oob="true">
-  {{if .Complete}}
   <div class="banner banner-response">
     <strong>Response ready</strong> — the master agent has completed this thread.
   </div>
-  {{end}}
 </div>
-<div id="waiting-banner" hx-swap-oob="true">
-  {{if and .Running (not .Complete)}}
-  <div class="banner banner-waiting"
-       hx-get="/api/threads/{{.Thread.ThreadID}}/history?tail=1"
-       hx-trigger="every {{.PollThread}}s"
-       hx-swap="none">
-    <span class="status-dot running"></span>
-    <strong>Waiting for master...</strong>
-    <span class="elapsed" data-start="{{.NowUnix}}">0s elapsed</span>
-  </div>
-  {{end}}
-</div>
+<div id="waiting-banner" hx-swap-oob="true"></div>
+{{else if not .Running}}
+<div id="response-banner" hx-swap-oob="true"></div>
+<div id="waiting-banner" hx-swap-oob="true"></div>
+{{end}}
 <div class="state-panel">
   <div class="state-item">
     <div class="label">Status</div>

@@ -106,12 +106,6 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[webui] IsThreadComplete error thread=%s: %v", threadID, err)
 	}
 
-	messages, err := tr.client.GetThreadHistoryTail(r.Context(), threadID, 20)
-	if err != nil {
-		log.Printf("[webui] thread history tail error thread=%s: %v", threadID, err)
-		messages = nil
-	}
-
 	if IsHTMX(r) {
 		Partial(w, tr.renderer, "thread-state-oob", map[string]interface{}{
 			"Thread":   thread,
@@ -119,6 +113,11 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 			"Complete": complete,
 		})
 	} else {
+		messages, err := tr.client.GetThreadHistoryTail(r.Context(), threadID, 20)
+		if err != nil {
+			log.Printf("[webui] thread history tail error thread=%s: %v", threadID, err)
+			messages = nil
+		}
 		Respond(w, r, http.StatusOK, map[string]interface{}{
 			"thread":   thread,
 			"running":  running,

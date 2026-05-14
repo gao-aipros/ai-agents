@@ -15,7 +15,7 @@
     // Send CSRF token as a header on every HTMX request
     var csrfMeta = document.querySelector('meta[name="csrf-token"]');
     var csrfToken = csrfMeta ? csrfMeta.content : '';
-    document.body.addEventListener('htmx:configRequest', function(evt) {
+    document.addEventListener('htmx:configRequest', function(evt) {
       if (csrfToken) evt.detail.headers['X-CSRF-Token'] = csrfToken;
     });
     // Simple elapsed timer for elements with data-start
@@ -49,7 +49,7 @@
     <a href="/tasks" hx-boost="true">Tasks</a>
   </nav>
   <main class="container">
-    {{template "content" .}}
+    {{.PageContent}}
   </main>
 </body>
 </html>
