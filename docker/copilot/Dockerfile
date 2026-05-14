@@ -61,14 +61,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN mkdir -p /home/agent/go && chown -R agent:agent /home/agent/go
 
-# Go worker binary (TASKLIB_BACKEND=go)
+# Go worker binary
 COPY --from=go-build-worker /out/worker-go /usr/local/bin/worker-go
-
-# Python worker (TASKLIB_BACKEND=python)
-COPY scripts/worker.py /usr/local/bin/worker.py
-
-# Worker entrypoint — toggles backend via TASKLIB_BACKEND env var
-COPY scripts/worker-entrypoint.sh /usr/local/bin/worker-entrypoint.sh
 
 # Copilot custom instructions (stored in home, copied to workspace at runtime)
 COPY --chown=agent:agent docker/copilot/AGENTS.md /home/agent/AGENTS.md

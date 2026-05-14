@@ -20,7 +20,6 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       TASK_TIMEOUT: "1800"
-      TASKLIB_BACKEND: ${TASKLIB_BACKEND:-go}
       WEBUI_PORT: "8000"
       WEBUI_API_KEY: ${WEBUI_API_KEY:-}
       WEBUI_POLL_DASHBOARD: "5"
@@ -34,8 +33,8 @@ services:
       REQUEST_TIMEOUT: "1800"
       MAX_CONCURRENT_REQUESTS: "5"
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
-      GH_TOKEN: ${GH_TOKEN}
-      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      GH_TOKEN: ${MASTER_GH_TOKEN}
+      GITHUB_TOKEN: ${MASTER_GITHUB_TOKEN}
     depends_on:
       redis:
         condition: service_healthy
@@ -51,8 +50,8 @@ services:
       TASK_TIMEOUT: "1800"
       HISTORY_WINDOW: "10"
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
-      GH_TOKEN: ${GH_TOKEN}
-      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      GH_TOKEN: ${WORKER_CLAUDE_GH_TOKEN}
+      GITHUB_TOKEN: ${WORKER_CLAUDE_GITHUB_TOKEN}
     depends_on:
       redis:
         condition: service_healthy
@@ -73,8 +72,8 @@ services:
       TASK_TIMEOUT: "1800"
       HISTORY_WINDOW: "10"
       COPILOT_PROVIDER_API_KEY: ${DEEPSEEK_API_KEY}
-      GH_TOKEN: ${GH_TOKEN}
-      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      GH_TOKEN: ${WORKER_COPILOT_GH_TOKEN}
+      GITHUB_TOKEN: ${WORKER_COPILOT_GITHUB_TOKEN}
     depends_on:
       redis:
         condition: service_healthy
@@ -95,8 +94,8 @@ services:
       TASK_TIMEOUT: "1800"
       HISTORY_WINDOW: "10"
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
-      GH_TOKEN: ${GH_TOKEN}
-      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      GH_TOKEN: ${WORKER_OPENCODE_GH_TOKEN}
+      GITHUB_TOKEN: ${WORKER_OPENCODE_GITHUB_TOKEN}
     depends_on:
       redis:
         condition: service_healthy

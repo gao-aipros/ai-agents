@@ -31,14 +31,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Go worker binary (TASKLIB_BACKEND=go)
+# Go worker binary
 COPY --from=go-build-worker /out/worker-go /usr/local/bin/worker-go
-
-# Python worker (TASKLIB_BACKEND=python)
-COPY scripts/worker.py /usr/local/bin/worker.py
-
-# Worker entrypoint — toggles backend via TASKLIB_BACKEND env var
-COPY scripts/worker-entrypoint.sh /usr/local/bin/worker-entrypoint.sh
 
 ENV AGENT_CMD="claude -p --dangerously-skip-permissions"
 
