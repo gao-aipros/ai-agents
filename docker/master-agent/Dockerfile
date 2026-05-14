@@ -33,10 +33,11 @@ ENV ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic \
 ARG ANTHROPIC_AUTH_TOKEN
 ENV ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
 
-# Pre-built Go binaries
+# Pre-built Go binaries (artifact upload/download strips execute bit)
 ARG TARGETARCH
 COPY out/${TARGETARCH}/task-go /usr/local/bin/task
 COPY out/${TARGETARCH}/webui /usr/local/bin/webui
+RUN chmod +x /usr/local/bin/task /usr/local/bin/webui
 
 RUN mkdir -p /home/agent/.claude && chown agent:agent /home/agent/.claude
 COPY --chown=agent:agent docker/master-agent/CLAUDE.md /home/agent/.claude/CLAUDE.md

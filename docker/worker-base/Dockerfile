@@ -25,5 +25,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN mkdir -p /home/agent/go && chown -R agent:agent /home/agent/go
 
-# Pre-built worker binary
+# Pre-built worker binary (artifact upload/download strips execute bit)
 COPY out/${TARGETARCH}/worker-go /usr/local/bin/worker-go
+RUN chmod +x /usr/local/bin/worker-go
