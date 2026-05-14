@@ -684,7 +684,7 @@ All other keys are unchanged.
 
 ### Step 0: Pre-implementation validation
 
-Validated 2026-05-12 against `ghcr.io/noodle05/claude-code:latest` (v2.1.126). Full findings in `docs/design-web-ui-revision-notes.md`.
+Validated 2026-05-12 against `ghcr.io/gao-aipros/claude-code:latest` (v2.1.126). Full findings in `docs/design-web-ui-revision-notes.md`.
 
 1. **`claude -p --output-format stream-json`** — Validated. `-p` mode supports complex multi-step tool use (`num_turns: 3+`) within a single invocation. `stream-json` produces unambiguous `{"type":"result","subtype":"success"}` completion messages. `--session-id` + `--resume` + shared `~/.claude` volume provides session persistence across invocations. This approach replaces the originally-planned FIFO/supervisor/prompt-marker architecture.
 

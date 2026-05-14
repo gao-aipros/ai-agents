@@ -6,7 +6,7 @@
 
 ### Finding 1: Prompt marker approach is unnecessary
 
-Tested `ghcr.io/noodle05/claude-code:latest` (v2.1.126):
+Tested `ghcr.io/gao-aipros/claude-code:latest` (v2.1.126):
 
 - `-p --output-format stream-json --verbose` produces structured JSON on stdout
 - Each turn ends with an unambiguous `{"type":"result","subtype":"success","stop_reason":"end_turn"}`
