@@ -1,0 +1,14 @@
+{{define "worker-cards"}}
+{{range $type, $info := .Workers}}
+<div class="card worker-card">
+  <div class="card-header">
+    <span class="status-dot {{if gt $info.Online 0}}online{{else}}offline{{end}}"></span>
+    {{$type}}
+  </div>
+  <div class="stats">
+    <div><strong>{{$info.Online}}</strong> / {{$info.Instances}} online</div>
+    <div><strong>{{$info.TotalActive}}</strong> active</div>
+  </div>
+</div>
+{{end}}
+{{end}}

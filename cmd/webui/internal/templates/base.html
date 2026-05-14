@@ -1,0 +1,56 @@
+{{define "base.html"}}<!DOCTYPE html>
+<html lang="en" data-theme="{{.Theme}}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{.CSRFToken}}">
+  <title>AI Agents — Master Console</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="{{.HtmxSrc}}"></script>
+  <style>
+    /* Poll indicator — subtle pulse on the nav brand when HTMX is fetching */
+    .htmx-request nav .brand { opacity: 0.7; }
+  </style>
+  <script>
+    // Send CSRF token as a header on every HTMX request
+    var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+    var csrfToken = csrfMeta ? csrfMeta.content : '';
+    document.addEventListener('htmx:configRequest', function(evt) {
+      if (csrfToken) evt.detail.headers['X-CSRF-Token'] = csrfToken;
+    });
+    // Simple elapsed timer for elements with data-start
+    document.addEventListener('DOMContentLoaded', function() {
+      document.querySelectorAll('.elapsed[data-start]').forEach(function(el) {
+        if (el._timerStarted) return;
+        el._timerStarted = true;
+        var start = parseInt(el.dataset.start) * 1000;
+        setInterval(function() {
+          el.textContent = Math.floor((Date.now() - start) / 1000) + 's elapsed';
+        }, 1000);
+      });
+    });
+    document.body.addEventListener('htmx:afterSwap', function() {
+      document.querySelectorAll('.elapsed[data-start]').forEach(function(el) {
+        if (el._timerStarted) return;
+        el._timerStarted = true;
+        var start = parseInt(el.dataset.start) * 1000;
+        setInterval(function() {
+          el.textContent = Math.floor((Date.now() - start) / 1000) + 's elapsed';
+        }, 1000);
+      });
+    });
+  </script>
+</head>
+<body>
+  <nav>
+    <a href="/" class="brand">AI Agents</a>
+    <a href="/" hx-boost="true">Dashboard</a>
+    <a href="/threads" hx-boost="true">Threads</a>
+    <a href="/tasks" hx-boost="true">Tasks</a>
+  </nav>
+  <main class="container">
+    {{.PageContent}}
+  </main>
+</body>
+</html>
+{{end}}

@@ -59,6 +59,31 @@ func recoverMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// ── csrf ──────────────────────────────────────────────────────────────────
+
+// csrfMiddleware validates the X-CSRF-Token header for HTMX mutation requests.
+// The token is compared against the Renderer's CSRFToken (generated at startup).
+func csrfMiddleware(csrfToken string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodGet || r.Method == http.MethodHead ||
+				r.Method == http.MethodOptions {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if !IsHTMX(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			if r.Header.Get("X-CSRF-Token") != csrfToken {
+				Error(w, http.StatusForbidden, "invalid CSRF token")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // ── content-type ──────────────────────────────────────────────────────────
 
 // contentTypeMiddleware requires application/json Content-Type (or HX-Request

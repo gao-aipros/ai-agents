@@ -196,6 +196,115 @@ func TestRateLimiter_DifferentIPs(t *testing.T) {
 	}
 }
 
+// ── csrf middleware tests ──────────────────────────────────────────────────
+
+func TestCSRFMiddleware_GetPassesThrough(t *testing.T) {
+	handler := csrfMiddleware("test-token")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r := httptest.NewRequest("GET", "/threads", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestCSRFMiddleware_NonHTMXPostPassesThrough(t *testing.T) {
+	handler := csrfMiddleware("test-token")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r := httptest.NewRequest("POST", "/api/requests", strings.NewReader("{}"))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (non-HTMX POST should bypass CSRF)", w.Code, http.StatusOK)
+	}
+}
+
+func TestCSRFMiddleware_HTMXPost_ValidToken(t *testing.T) {
+	handler := csrfMiddleware("test-token")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r := httptest.NewRequest("POST", "/api/requests", strings.NewReader("field=value"))
+	r.Header.Set("HX-Request", "true")
+	r.Header.Set("X-CSRF-Token", "test-token")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+}
+
+func TestCSRFMiddleware_HTMXPost_WrongToken(t *testing.T) {
+	handler := csrfMiddleware("test-token")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r := httptest.NewRequest("POST", "/api/keep", strings.NewReader(""))
+	r.Header.Set("HX-Request", "true")
+	r.Header.Set("X-CSRF-Token", "wrong-token")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
+func TestCSRFMiddleware_HTMXPost_MissingToken(t *testing.T) {
+	handler := csrfMiddleware("test-token")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r := httptest.NewRequest("POST", "/api/cancel", strings.NewReader(""))
+	r.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
+func TestCSRFMiddleware_HTMXDelete(t *testing.T) {
+	handler := csrfMiddleware("test-token")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r := httptest.NewRequest("DELETE", "/api/threads/t1/workspace?confirm=true", nil)
+	r.Header.Set("HX-Request", "true")
+	r.Header.Set("X-CSRF-Token", "test-token")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestCSRFMiddleware_HEADPassesThrough(t *testing.T) {
+	handler := csrfMiddleware("test-token")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r := httptest.NewRequest("HEAD", "/api/health", nil)
+	r.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
 // ── recover middleware tests ───────────────────────────────────────────────
 
 func TestRecoverMiddleware_NoPanic(t *testing.T) {

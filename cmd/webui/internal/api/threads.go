@@ -7,11 +7,13 @@ import (
 	"strconv"
 
 	"github.com/noodle05/ai-agents/cmd/webui/internal/request"
+	"github.com/noodle05/ai-agents/cmd/webui/internal/templates"
 	"github.com/noodle05/ai-agents/tasklib"
 )
 
 type threadsResource struct {
-	client *tasklib.Client
+	client   *tasklib.Client
+	renderer *templates.Renderer
 }
 
 // POST /api/threads
@@ -66,13 +68,20 @@ func (tr *threadsResource) list(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "internal error", err)
 		return
 	}
-	Respond(w, r, http.StatusOK, threads)
+	if IsHTMX(r) {
+		Partial(w, tr.renderer, "thread-table", map[string]interface{}{"Threads": threads})
+	} else {
+		Respond(w, r, http.StatusOK, threads)
+	}
 }
 
 // GET /api/threads/{thread_id}
 func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 	threadID := r.PathValue("thread_id")
-	// Check existence first to distinguish 404 from Redis errors
+	if !request.ValidThreadID(threadID) {
+		Error(w, http.StatusBadRequest, "invalid thread_id")
+		return
+	}
 	exists, err := tr.client.ThreadExists(r.Context(), threadID)
 	if err != nil {
 		serverError(w, "internal error", err)
@@ -97,18 +106,25 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[webui] IsThreadComplete error thread=%s: %v", threadID, err)
 	}
 
-	messages, err := tr.client.GetThreadHistoryTail(r.Context(), threadID, 20)
-	if err != nil {
-		log.Printf("[webui] thread history tail error thread=%s: %v", threadID, err)
-		messages = nil
+	if IsHTMX(r) {
+		Partial(w, tr.renderer, "thread-state-oob", map[string]interface{}{
+			"Thread":   thread,
+			"Running":  running,
+			"Complete": complete,
+		})
+	} else {
+		messages, err := tr.client.GetThreadHistoryTail(r.Context(), threadID, 20)
+		if err != nil {
+			log.Printf("[webui] thread history tail error thread=%s: %v", threadID, err)
+			messages = nil
+		}
+		Respond(w, r, http.StatusOK, map[string]interface{}{
+			"thread":   thread,
+			"running":  running,
+			"complete": complete,
+			"messages": messages,
+		})
 	}
-
-	Respond(w, r, http.StatusOK, map[string]interface{}{
-		"thread":   thread,
-		"running":  running,
-		"complete": complete,
-		"messages": messages,
-	})
 }
 
 // GET /api/threads/{thread_id}/history
@@ -133,7 +149,11 @@ func (tr *threadsResource) history(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "internal error", err)
 		return
 	}
-	Respond(w, r, http.StatusOK, messages)
+	if IsHTMX(r) {
+		Partial(w, tr.renderer, "thread-history", map[string]interface{}{"Messages": messages})
+	} else {
+		Respond(w, r, http.StatusOK, messages)
+	}
 }
 
 // DELETE /api/threads/{thread_id}/workspace
@@ -150,7 +170,6 @@ func (tr *threadsResource) deleteWorkspace(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Check for running tasks on this thread
 	tasks, err := tr.client.ListTasks(r.Context(), "", "running", threadID, 1, 0)
 	if err != nil {
 		serverError(w, "internal error", err)
@@ -161,7 +180,6 @@ func (tr *threadsResource) deleteWorkspace(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Set deleting sentinel
 	ok, err := tr.client.AcquireRequestLock(r.Context(), threadID, "deleting", tasklib.LockTTL)
 	if err != nil {
 		serverError(w, "internal error", err)
@@ -171,9 +189,6 @@ func (tr *threadsResource) deleteWorkspace(w http.ResponseWriter, r *http.Reques
 		Error(w, http.StatusConflict, "thread is in use")
 		return
 	}
-	// Use a background context for deferred lock release — if the client
-	// disconnects mid-request, r.Context() is cancelled and the DEL would
-	// silently fail, leaking the lock for its full TTL (35 min).
 	defer tr.client.ReleaseRequestLock(cleanupContext(), threadID)
 
 	wp := workspacePath(threadID)
@@ -195,7 +210,6 @@ func (tr *threadsResource) keep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check existence first to distinguish 404 from Redis errors.
 	exists, err := tr.client.ThreadExists(r.Context(), threadID)
 	if err != nil {
 		serverError(w, "internal error", err)

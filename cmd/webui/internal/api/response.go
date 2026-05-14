@@ -1,8 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
+
+	"github.com/noodle05/ai-agents/cmd/webui/internal/templates"
 )
 
 // JSON writes a JSON response with the given status code and value.
@@ -22,8 +26,36 @@ func IsHTMX(r *http.Request) bool {
 	return r.Header.Get("HX-Request") == "true"
 }
 
-// Respond writes a response. When the HX-Request header is present, it
-// returns JSON for now (HTML partial rendering is wired in Step 6).
+// Page writes a full HTML page response using the renderer.
+// contentTemplate names the page template (e.g. "page-dashboard") whose output
+// is injected into base.html via {{.PageContent}}.
+// Renders into a buffer first so a partial failure doesn't produce a corrupt 200.
+func Page(w http.ResponseWriter, r *templates.Renderer, contentTemplate string, data interface{}) {
+	var buf bytes.Buffer
+	if err := r.Page(&buf, contentTemplate, data); err != nil {
+		log.Printf("[webui] template page error: %v", err)
+		Error(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	buf.WriteTo(w)
+}
+
+// Partial writes an HTML partial response using the renderer.
+// Renders into a buffer first so a partial failure doesn't produce a corrupt 200.
+func Partial(w http.ResponseWriter, r *templates.Renderer, name string, data interface{}) {
+	var buf bytes.Buffer
+	if err := r.Partial(&buf, name, data); err != nil {
+		log.Printf("[webui] template partial %s error: %v", name, err)
+		Error(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	buf.WriteTo(w)
+}
+
+// Respond writes a JSON response. Callers that need HTML partials for HTMX
+// requests should check IsHTMX and call Partial directly.
 func Respond(w http.ResponseWriter, r *http.Request, status int, v interface{}) {
 	JSON(w, status, v)
 }

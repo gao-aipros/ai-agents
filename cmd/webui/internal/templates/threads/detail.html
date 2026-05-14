@@ -1,0 +1,70 @@
+{{define "page-thread-detail"}}
+{{if .Thread}}
+  {{$thread := .Thread}}
+
+  {{if .Complete}}
+  <div class="banner banner-response" id="response-banner">
+    <strong>Response ready</strong> — the master agent has completed this thread.
+  </div>
+  {{else if .Running}}
+  <div class="banner banner-waiting" id="waiting-banner"
+       hx-get="/api/threads/{{$thread.ThreadID}}/history?tail=1"
+       hx-trigger="every {{.PollThread}}s"
+       hx-swap="none">
+    <span class="status-dot running"></span>
+    <strong>Waiting for master...</strong>
+    <span class="elapsed" data-start="{{.NowUnix}}">0s elapsed</span>
+  </div>
+  {{end}}
+
+  <div class="grid-2 mb-24">
+    <section>
+      <h2>State</h2>
+      <div class="card" id="thread-state"
+           hx-get="/api/threads/{{$thread.ThreadID}}"
+           hx-trigger="load, every {{.PollThread}}s"
+           hx-swap="innerHTML">
+        {{template "thread-state" .}}
+      </div>
+    </section>
+    <section>
+      <div class="flex-between mb-16" style="margin-bottom:12px">
+        <h2 style="margin:0">Actions</h2>
+      </div>
+      <div class="card">
+        {{if .Running}}
+        <button class="btn btn-danger"
+                hx-post="/api/threads/{{$thread.ThreadID}}/cancel"
+                hx-swap="none">
+          Cancel request
+        </button>
+        {{end}}
+        <button class="btn"
+                hx-post="/api/threads/{{$thread.ThreadID}}/keep"
+                hx-swap="none"
+                style="margin-left:8px">
+          Extend TTL
+        </button>
+        <button class="btn"
+                hx-post="/api/threads/{{$thread.ThreadID}}/reset-session"
+                hx-swap="none"
+                style="margin-left:8px">
+          Reset session
+        </button>
+      </div>
+    </section>
+  </div>
+
+  <section>
+    <h2>Messages</h2>
+    <div id="thread-history"
+         hx-get="/api/threads/{{$thread.ThreadID}}/history?tail=50"
+         hx-trigger="load{{if .Running}}, every {{.PollThread}}s{{end}}"
+         hx-swap="innerHTML">
+      <div class="text-center text-muted"><span class="spinner"></span> Loading...</div>
+    </div>
+  </section>
+{{else}}
+<div class="text-center text-muted">Thread not found</div>
+{{end}}
+{{end}}

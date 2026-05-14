@@ -14,6 +14,7 @@ import (
 	"github.com/noodle05/ai-agents/cmd/webui/internal/api"
 	"github.com/noodle05/ai-agents/cmd/webui/internal/env"
 	"github.com/noodle05/ai-agents/cmd/webui/internal/request"
+	"github.com/noodle05/ai-agents/cmd/webui/internal/templates"
 	"github.com/noodle05/ai-agents/tasklib"
 )
 
@@ -39,21 +40,19 @@ func main() {
 	client := tasklib.NewClient(rdb)
 	handler := request.New(client, cfg)
 
+	// Template renderer
+	renderer, err := templates.New()
+	if err != nil {
+		log.Fatalf("template init failed: %v", err)
+	}
+	log.Printf("templates loaded (theme=%s)", renderer.Theme)
+
 	// Background context for rate limiter cleanup goroutines.
-	// Cancelled on server shutdown.
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	defer bgCancel()
 
-	// Build chi router with all /api/ endpoints
-	router := api.NewRouter(client, handler, bgCtx)
-
-	// Root placeholder (replaced by dashboard in Step 6)
-	router.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		api.Respond(w, r, http.StatusOK, map[string]string{
-			"service": "ai-agents webui",
-			"version": "0.1.0",
-		})
-	})
+	// Build chi router with page routes, API endpoints, and static files
+	router := api.NewRouter(client, handler, renderer, bgCtx)
 
 	srv := &http.Server{
 		Addr:    ":" + port,

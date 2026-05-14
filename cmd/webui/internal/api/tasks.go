@@ -4,11 +4,13 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/noodle05/ai-agents/cmd/webui/internal/templates"
 	"github.com/noodle05/ai-agents/tasklib"
 )
 
 type tasksResource struct {
-	client *tasklib.Client
+	client   *tasklib.Client
+	renderer *templates.Renderer
 }
 
 // GET /api/tasks
@@ -28,7 +30,11 @@ func (tr *tasksResource) list(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "internal error", err)
 		return
 	}
-	Respond(w, r, http.StatusOK, tasks)
+	if IsHTMX(r) {
+		Partial(w, tr.renderer, "task-table", map[string]interface{}{"Tasks": tasks})
+	} else {
+		Respond(w, r, http.StatusOK, tasks)
+	}
 }
 
 // GET /api/tasks/{task_id}
@@ -51,7 +57,6 @@ func (tr *tasksResource) result(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("task_id")
 	tail, _ := strconv.Atoi(r.URL.Query().Get("tail"))
 
-	// Check task exists first
 	task, err := tr.client.GetTask(r.Context(), taskID)
 	if err != nil {
 		serverError(w, "internal error", err)

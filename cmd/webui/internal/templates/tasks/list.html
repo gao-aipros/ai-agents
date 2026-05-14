@@ -1,0 +1,41 @@
+{{define "page-task-list"}}
+<section>
+  <div class="flex-between mb-16">
+    <h2 style="margin:0">Tasks</h2>
+  </div>
+
+  <div class="card mb-16">
+    <form id="task-filters"
+          hx-get="/api/tasks"
+          hx-trigger="change from:find select, input delay:200ms"
+          hx-target="#task-table"
+          hx-swap="innerHTML">
+      <div class="filters">
+        <select name="worker">
+          <option value="">All workers</option>
+          {{range .WorkerTypes}}
+          <option value="{{.}}">{{.}}</option>
+          {{end}}
+        </select>
+        <select name="status">
+          <option value="">All statuses</option>
+          <option value="pending">Pending</option>
+          <option value="running">Running</option>
+          <option value="done">Done</option>
+          <option value="failed">Failed</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+        <input type="text" name="thread_id" placeholder="Filter by thread...">
+      </div>
+    </form>
+  </div>
+
+  <div class="card" id="task-table"
+       hx-get="/api/tasks"
+       hx-trigger="load, every {{.PollDash}}s"
+       hx-include="#task-filters"
+       hx-swap="innerHTML">
+    <div class="text-center text-muted"><span class="spinner"></span> Loading...</div>
+  </div>
+</section>
+{{end}}
