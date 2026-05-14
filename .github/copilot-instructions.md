@@ -7,7 +7,7 @@ Multi-agent Docker orchestration where a master agent (Claude Code) delegates ta
 **Image dependency layers:**
 
 ```
-ai-base (debian:trixie + gh, git, jq, python3, redis-py, curl, ssh)
+ai-base (debian:trixie + gh, git, jq, python3, redis-tools, curl, ssh)
   ├─ claude-code (FROM ai-base, + claude CLI)
   ├─ copilot     (FROM ai-base, + copilot CLI, + Go toolchain)
   └─ opencode    (FROM ai-base, + opencode CLI, + Go toolchain)
