@@ -44,10 +44,8 @@ RUN pip install --break-system-packages redis
 RUN mkdir -p /workspace /home/agent/.config && chown agent:agent /workspace /home/agent/.config
 
 ARG GH_TOKEN
-ARG GITHUB_TOKEN
 ARG GH_HOST=github.com
 ENV GH_TOKEN=${GH_TOKEN} \
-    GITHUB_TOKEN=${GITHUB_TOKEN} \
     GH_HOST=${GH_HOST}
 
 WORKDIR /workspace

@@ -16,9 +16,7 @@ ai-base (debian:trixie + gh, git, jq, python3, redis-py, curl, ssh)
         └─ worker-claude  (FROM claude-code, + Go toolchain)
 ```
 
-The master agent runs a web UI (chi router, HTMX + Go templates on port 8000) and delegates tasks via `task enqueue`. Workers dequeue tasks via `BLMOVE`, execute agent subprocesses with thread context, and post results back to Redis. All agents use DeepSeek as the backend (Anthropic-compatible API). Auth tokens are passed via environment variables.
-
-**Dual backend:** The `task` CLI and worker binary have both Go and Python implementations. `TASKLIB_BACKEND` (default `go`) toggles between them via wrapper scripts (`task-wrapper.sh`, `worker-entrypoint.sh`). Both backends must be byte-for-byte compatible at the Redis level.
+The master agent runs a web UI (chi router, HTMX + Go templates on port 8000) and delegates tasks via `task enqueue`. Workers dequeue tasks via `BLMOVE`, execute agent subprocesses with thread context, and post results back to Redis. All agents use DeepSeek as the backend (Anthropic-compatible API). Auth tokens are passed via environment variables. Each agent gets its own GitHub token for isolation and rate limiting.
 
 ## Build, Test, and Lint
 
@@ -66,15 +64,9 @@ go test ./tasklib/ -run TestEnqueue
 
 # Run Web UI API handler tests
 go test ./cmd/webui/internal/api/
-
-# Run compatibility tests (Go backend)
-go test ./cmd/task/ -run TestCompat
-
-# Run compatibility tests (Python backend, requires COMPAT_TEST_DB env var)
-TASKLIB_BACKEND=python COMPAT_TEST_DB=1 python3 scripts/test_task.py
 ```
 
-Tests use `miniredis` (in-memory Redis) — no real Redis instance is required. The `tasklib` package is the integration layer and has the most comprehensive tests. CLI tests in `cmd/task/` and `cmd/worker/` verify byte-for-byte compatibility with the Python backend.
+Tests use `miniredis` (in-memory Redis) — no real Redis instance is required. The `tasklib` package is the integration layer and has the most comprehensive tests. CLI tests in `cmd/task/` and `cmd/worker/` verify end-to-end behavior.
 
 ### Lint
 
@@ -105,7 +97,7 @@ Module path: `github.com/noodle05/ai-agents`. Key dependencies: `go-redis/v9`, `
 
 ### Redis key schema
 
-All keys follow a strict pattern shared between Go and Python backends:
+All keys follow a strict pattern:
 - `task:<taskID>:<field>` — per-task keys (status, worker, thread_id, result, etc.)
 - `tasks:queue:<worker>` — task queue (list, LPUSH for enqueue)
 - `tasks:processing:<worker>` — in-flight tasks (list, BLMOVE from queue)
@@ -129,4 +121,4 @@ TTL constants: tasks 24h, threads 7 days, locks 35 minutes (timeout + margin).
 
 ### Service environment
 
-Rename `.env.example` to `.env` and fill in `GH_TOKEN`, `GITHUB_TOKEN`, and `DEEPSEEK_API_KEY`. Run with `docker compose up -d`. The web UI is at `http://localhost:8000`.
+Rename `.env.example` to `.env` and fill in per-agent `*_GH_TOKEN` values and `DEEPSEEK_API_KEY`. Run with `docker compose up -d`. The web UI is at `http://localhost:8000`.

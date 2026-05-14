@@ -64,14 +64,8 @@ ENV DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
 COPY --chown=agent:agent docker/opencode/AGENTS.md /home/agent/AGENTS.md
 COPY --chown=agent:agent docker/opencode/opencode.json /home/agent/.config/opencode/opencode.json
 
-# Go worker binary (TASKLIB_BACKEND=go)
+# Go worker binary
 COPY --from=go-build-worker /out/worker-go /usr/local/bin/worker-go
-
-# Python worker (TASKLIB_BACKEND=python)
-COPY scripts/worker.py /usr/local/bin/worker.py
-
-# Worker entrypoint — toggles backend via TASKLIB_BACKEND env var
-COPY scripts/worker-entrypoint.sh /usr/local/bin/worker-entrypoint.sh
 
 USER agent
 RUN opencode models --refresh

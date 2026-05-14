@@ -303,8 +303,9 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		return
 	}
 
-	// Set CLAUDE_CONFIG_DIR so session files land in the shared volume
-	cmd.Env = append(os.Environ(), "CLAUDE_CONFIG_DIR="+h.cfg.ClaudeSessionsDir)
+	// Session files are stored in ~/.claude/projects/ by default.
+	// The Docker volume claude_sessions is mounted at ~/.claude so
+	// sessions persist across restarts — no extra env vars needed.
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

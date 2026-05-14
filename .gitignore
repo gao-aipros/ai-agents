@@ -4,6 +4,7 @@ docker/*/bin/
 # Go compiled binaries
 /task
 /worker
+/webui
 *.test
 
 # Runtime workspace

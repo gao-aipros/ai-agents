@@ -1,2 +1,0 @@
-pytest>=8.0
-fakeredis[lua]>=2.20
