@@ -37,17 +37,17 @@ docker build --load -t master-agent:latest -f docker/master-agent/Dockerfile .
 docker build --load -t worker-claude:latest -f docker/worker-claude/Dockerfile .
 ```
 
-CI (`.github/workflows/build-images.yml`) builds multi-arch (`linux/amd64,linux/arm64`) with `docker buildx build --push` and publishes to `ghcr.io/noodle05/<image>:latest`.
+CI (`.github/workflows/build-images.yml`) builds multi-arch (`linux/amd64,linux/arm64`) with `docker buildx build --push` and publishes to `ghcr.io/gao-aipros/<image>:latest`.
 
 ### Multi-arch builds (CI pattern)
 
 ```bash
 docker buildx build --platform linux/amd64,linux/arm64 --push \
-  -t ghcr.io/noodle05/ai-base:latest docker/base/
+  -t ghcr.io/gao-aipros/ai-base:latest docker/base/
 
 docker buildx build --platform linux/amd64,linux/arm64 --push \
-  --build-arg BASE_IMAGE=ghcr.io/noodle05/ai-base:latest \
-  -t ghcr.io/noodle05/claude-code:latest docker/claude-code/
+  --build-arg BASE_IMAGE=ghcr.io/gao-aipros/ai-base:latest \
+  -t ghcr.io/gao-aipros/claude-code:latest docker/claude-code/
 ```
 
 ### Test

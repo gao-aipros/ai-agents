@@ -574,7 +574,7 @@ func sessionFileExists(sessionsDir, sessionID string) bool {
 		if !entry.IsDir() {
 			continue
 		}
-		sessionFile := filepath.Join(projectsDir, entry.Name(), sessionID+".json")
+		sessionFile := filepath.Join(projectsDir, entry.Name(), sessionID+".jsonl")
 		if _, err := os.Stat(sessionFile); err == nil {
 			return true
 		}

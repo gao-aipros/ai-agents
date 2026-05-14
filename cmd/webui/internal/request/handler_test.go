@@ -196,7 +196,7 @@ func TestSessionFileExists(t *testing.T) {
 		dir := t.TempDir()
 		projectDir := filepath.Join(dir, "projects", "-")
 		os.MkdirAll(projectDir, 0755)
-		sessionFile := filepath.Join(projectDir, "abc-123.json")
+		sessionFile := filepath.Join(projectDir, "abc-123.jsonl")
 		os.WriteFile(sessionFile, []byte("{}"), 0644)
 
 		if !sessionFileExists(dir, "abc-123") {
@@ -208,7 +208,7 @@ func TestSessionFileExists(t *testing.T) {
 		dir := t.TempDir()
 		projectDir := filepath.Join(dir, "projects", "-")
 		os.MkdirAll(projectDir, 0755)
-		os.WriteFile(filepath.Join(projectDir, "abc-123.json"), []byte("{}"), 0644)
+		os.WriteFile(filepath.Join(projectDir, "abc-123.jsonl"), []byte("{}"), 0644)
 
 		if sessionFileExists(dir, "xyz-999") {
 			t.Error("expected false for different session id")

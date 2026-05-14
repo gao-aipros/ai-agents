@@ -51,11 +51,11 @@ CI uses `docker buildx build --platform linux/amd64,linux/arm64 --push` in depen
 
 ```bash
 docker buildx build --platform linux/amd64,linux/arm64 --push \
-  -t ghcr.io/noodle05/ai-base:latest docker/base/
+  -t ghcr.io/gao-aipros/ai-base:latest docker/base/
 
 docker buildx build --platform linux/amd64,linux/arm64 --push \
-  --build-arg BASE_IMAGE=ghcr.io/noodle05/ai-base:latest \
-  -t ghcr.io/noodle05/claude-code:latest docker/claude-code/
+  --build-arg BASE_IMAGE=ghcr.io/gao-aipros/ai-base:latest \
+  -t ghcr.io/gao-aipros/claude-code:latest docker/claude-code/
 ```
 
 ## Dockerfile pattern
@@ -75,7 +75,7 @@ Build stages (`FROM debian:trixie`, `FROM golang:latest`) use Docker Hub images,
 
 ## CI
 
-GitHub Actions workflow at `.github/workflows/build-images.yml`. Triggers on push to `main` or manual `workflow_dispatch`. Pushes to `ghcr.io/noodle05/<image>:latest`. Single non-matrix job builds all 6 images in dependency order.
+GitHub Actions workflow at `.github/workflows/build-images.yml`. Triggers on push to `main` or manual `workflow_dispatch`. Pushes to `ghcr.io/gao-aipros/<image>:latest`. Single non-matrix job builds all 6 images in dependency order.
 
 ## Environment
 
