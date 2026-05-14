@@ -1,0 +1,34 @@
+{{define "task-table"}}
+{{if .Tasks}}
+<table>
+  <thead>
+    <tr>
+      <th>Task ID</th>
+      <th>Worker</th>
+      <th>Thread</th>
+      <th>Status</th>
+      <th>Created</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+  {{range .Tasks}}
+    <tr>
+      <td><a href="/tasks/{{.TaskID}}" class="mono">{{.TaskID}}</a></td>
+      <td><span class="badge badge-info">{{or .Worker "-"}}</span></td>
+      <td class="mono">
+        {{if .ThreadID}}
+        <a href="/threads/{{.ThreadID}}" class="truncate" style="max-width:200px">{{.ThreadID}}</a>
+        {{else}}-{{end}}
+      </td>
+      <td>{{statusBadge .Status}}</td>
+      <td class="text-muted">{{or .CreatedAt "-"}}</td>
+      <td><a href="/tasks/{{.TaskID}}" class="btn btn-sm">View</a></td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<div class="text-center text-muted" style="padding:24px">No tasks</div>
+{{end}}
+{{end}}

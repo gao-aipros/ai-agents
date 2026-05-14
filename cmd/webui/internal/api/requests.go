@@ -9,12 +9,14 @@ import (
 	"time"
 
 	"github.com/noodle05/ai-agents/cmd/webui/internal/request"
+	"github.com/noodle05/ai-agents/cmd/webui/internal/templates"
 	"github.com/noodle05/ai-agents/tasklib"
 )
 
 type requestsResource struct {
-	client  *tasklib.Client
-	handler *request.Handler
+	client   *tasklib.Client
+	handler  *request.Handler
+	renderer *templates.Renderer
 }
 
 // POST /api/requests
@@ -57,14 +59,17 @@ func (rs *requestsResource) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	Respond(w, r, http.StatusAccepted, result)
+	if IsHTMX(r) {
+		Partial(w, rs.renderer, "request-submitted", result)
+	} else {
+		Respond(w, r, http.StatusAccepted, result)
+	}
 }
 
 // POST /api/threads/{thread_id}/cancel
 func (rs *requestsResource) cancel(w http.ResponseWriter, r *http.Request) {
 	threadID := r.PathValue("thread_id")
 
-	// Cancel the subprocess context (SIGTERM → SIGKILL)
 	if err := rs.handler.Cancel(threadID); err != nil {
 		if re, ok := err.(*request.RequestError); ok {
 			Error(w, re.Status, re.Message)
@@ -74,7 +79,6 @@ func (rs *requestsResource) cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set thread status to cancelled in Redis
 	if err := rs.client.CancelRequest(r.Context(), threadID); err != nil {
 		log.Printf("[webui] cancel request redis error thread=%s: %v", threadID, err)
 	}

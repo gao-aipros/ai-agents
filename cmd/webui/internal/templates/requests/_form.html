@@ -1,0 +1,48 @@
+{{define "request-form"}}
+<form id="new-request"
+      hx-post="/api/requests"
+      hx-target="#request-form-container"
+      hx-swap="innerHTML"
+      hx-indicator="#submit-spinner">
+  <div class="grid-2">
+    <div>
+      <div class="form-group">
+        <label for="thread_id">Thread ID (optional)</label>
+        <input type="text" id="thread_id" name="thread_id" placeholder="auto-generated if empty">
+      </div>
+    </div>
+    <div>
+      <div class="form-group">
+        <label for="repo">Repo (optional)</label>
+        <input type="text" id="repo" name="repo" placeholder="owner/repo">
+      </div>
+    </div>
+  </div>
+  <div class="form-group">
+    <label for="request">Request</label>
+    <textarea id="request" name="request" rows="4" required
+              placeholder="Describe what you want the master agent to do..."
+              maxlength="32768"></textarea>
+  </div>
+  <button type="submit" class="btn btn-primary">
+    <span id="submit-spinner" class="spinner htmx-indicator" style="width:14px;height:14px"></span>
+    Submit
+  </button>
+</form>
+{{end}}
+
+{{define "request-submitted"}}
+<div class="banner banner-info" style="background:var(--color-info-bg);border-color:var(--color-info);color:var(--color-info)">
+  <strong>Request submitted</strong>
+  <p style="margin-top:8px">
+    Thread: <a href="/threads/{{.ThreadID}}" class="mono">{{.ThreadID}}</a>
+    &mdash; <a href="/threads/{{.ThreadID}}">View thread</a>
+  </p>
+</div>
+<button class="btn btn-sm mt-16"
+        hx-get="/api/requests/_form"
+        hx-target="#request-form-container"
+        hx-swap="innerHTML">
+  + New request
+</button>
+{{end}}

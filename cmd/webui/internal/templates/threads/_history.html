@@ -1,0 +1,18 @@
+{{define "thread-history"}}
+{{if .Messages}}
+<div class="timeline">
+{{range .Messages}}
+  {{$roleClass := roleClass .Role .Type}}
+  <div class="msg {{$roleClass}} type-{{.Type}}">
+    <div class="msg-meta">
+      <span>{{badgeForRole .Role .Type}}</span>
+      <span>{{.Timestamp}}</span>
+    </div>
+    <div class="msg-content">{{.Content}}</div>
+  </div>
+{{end}}
+</div>
+{{else}}
+<div class="text-center text-muted" style="padding:24px">No messages yet</div>
+{{end}}
+{{end}}

@@ -1,0 +1,60 @@
+{{define "content"}}
+{{if .Task}}
+<section>
+  <h2>Task {{.Task.TaskID}}</h2>
+  <div class="card mb-24">
+    <div class="state-panel">
+      <div class="state-item">
+        <div class="label">Status</div>
+        <div class="value">{{statusBadge .Task.Status}}</div>
+      </div>
+      <div class="state-item">
+        <div class="label">Worker</div>
+        <div class="value">{{or .Task.Worker "-"}}</div>
+      </div>
+      <div class="state-item">
+        <div class="label">Thread</div>
+        <div class="value mono">
+          {{if .Task.ThreadID}}
+          <a href="/threads/{{.Task.ThreadID}}">{{.Task.ThreadID}}</a>
+          {{else}}-{{end}}
+        </div>
+      </div>
+      <div class="state-item">
+        <div class="label">Exit Code</div>
+        <div class="value mono">{{or .Task.ExitCode "-"}}</div>
+      </div>
+      <div class="state-item">
+        <div class="label">Created</div>
+        <div class="value mono" style="font-size:12px">{{or .Task.CreatedAt "-"}}</div>
+      </div>
+      <div class="state-item">
+        <div class="label">Completed</div>
+        <div class="value mono" style="font-size:12px">{{or .Task.CompletedAt "-"}}</div>
+      </div>
+    </div>
+  </div>
+
+  <section>
+    <h2>Instruction</h2>
+    <div class="card mb-24">
+      <pre class="mono" style="white-space:pre-wrap;word-break:break-word">{{or .Task.Instruction "(no instruction)"}}</pre>
+    </div>
+  </section>
+
+  {{if .Task.Result}}
+  <section>
+    <div class="flex-between mb-16" style="margin-bottom:8px">
+      <h2 style="margin:0">Result</h2>
+      <span class="text-muted">showing {{.TailInfo}}</span>
+    </div>
+    <div class="card">
+      <pre class="mono" style="white-space:pre-wrap;word-break:break-word;max-height:600px;overflow-y:auto">{{.Task.Result}}</pre>
+    </div>
+  </section>
+  {{end}}
+</section>
+{{else}}
+<div class="text-center text-muted">Task not found</div>
+{{end}}
+{{end}}

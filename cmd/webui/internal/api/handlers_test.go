@@ -17,6 +17,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/noodle05/ai-agents/cmd/webui/internal/request"
+	"github.com/noodle05/ai-agents/cmd/webui/internal/templates"
 	"github.com/noodle05/ai-agents/tasklib"
 )
 
@@ -67,7 +68,11 @@ func newTestRouter(t *testing.T) *testHarness {
 
 	handler := request.New(client, cfg)
 	bgCtx, bgCancel := context.WithCancel(context.Background())
-	router := NewRouter(client, handler, bgCtx)
+	renderer, err := templates.New()
+	if err != nil {
+		t.Fatalf("templates.New: %v", err)
+	}
+	router := NewRouter(client, handler, renderer, bgCtx)
 
 	return &testHarness{
 		Router:       router,

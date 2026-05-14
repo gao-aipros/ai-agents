@@ -2,18 +2,22 @@ package api
 
 import (
 	"context"
+	"fmt"
+	"log"
+	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/noodle05/ai-agents/cmd/webui/internal/request"
+	"github.com/noodle05/ai-agents/cmd/webui/internal/static"
+	"github.com/noodle05/ai-agents/cmd/webui/internal/templates"
 	"github.com/noodle05/ai-agents/tasklib"
 )
 
-// NewRouter creates a chi router with all /api/ endpoints.
-// shutdownCtx is cancelled on server shutdown to stop background goroutines
-// (rate limiter cleanup tickers).
-func NewRouter(client *tasklib.Client, handler *request.Handler, shutdownCtx context.Context) chi.Router {
+// NewRouter creates a chi router with all /api/ endpoints and page routes.
+func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templates.Renderer, shutdownCtx context.Context) chi.Router {
 	r := chi.NewRouter()
 
 	// Middleware stack
@@ -23,12 +27,29 @@ func NewRouter(client *tasklib.Client, handler *request.Handler, shutdownCtx con
 	r.Use(authMiddleware)
 	r.Use(contentTypeMiddleware)
 
+	// Static file serving (CSS, JS)
+	fileServer := http.FileServer(http.FS(static.FS))
+	r.Handle("/static/*", http.StripPrefix("/static/", fileServer))
+
+	// Page resources
+	pages := &pageResource{client: client, handler: handler, renderer: renderer}
+
+	// Page routes (full HTML pages)
+	r.Get("/", pages.dashboard)
+	r.Get("/threads", pages.threadList)
+	r.Get("/threads/{thread_id}", pages.threadDetail)
+	r.Get("/tasks", pages.taskList)
+	r.Get("/tasks/{task_id}", pages.taskDetail)
+
+	// Request form partial (for form reset after submission)
+	r.Get("/api/requests/_form", pages.requestForm)
+
 	r.Route("/api", func(r chi.Router) {
 		sys := &systemResource{client: client, handler: handler}
-		wrk := &workersResource{client: client}
-		req := &requestsResource{client: client, handler: handler}
-		thr := &threadsResource{client: client}
-		tsk := &tasksResource{client: client}
+		wrk := &workersResource{client: client, renderer: renderer}
+		req := &requestsResource{client: client, handler: handler, renderer: renderer}
+		thr := &threadsResource{client: client, renderer: renderer}
+		tsk := &tasksResource{client: client, renderer: renderer}
 
 		// Health / stats
 		r.Get("/health", sys.health)
@@ -62,10 +83,106 @@ func NewRouter(client *tasklib.Client, handler *request.Handler, shutdownCtx con
 		r.Get("/tasks/{task_id}/result", tsk.result)
 	})
 
-	// Start rate limiter cleanup goroutines (stop on shutdownCtx)
+	// Start rate limiter cleanup goroutines
 	go requestsLimiter.cleanup(shutdownCtx)
 	go threadsLimiter.cleanup(shutdownCtx)
 	go defaultLimiter.cleanup(shutdownCtx)
 
 	return r
+}
+
+// ── page resource (full HTML pages) ───────────────────────────────────────
+
+type pageResource struct {
+	client   *tasklib.Client
+	handler  *request.Handler
+	renderer *templates.Renderer
+}
+
+// GET /
+func (pr *pageResource) dashboard(w http.ResponseWriter, r *http.Request) {
+	Page(w, pr.renderer, nil)
+}
+
+// GET /threads
+func (pr *pageResource) threadList(w http.ResponseWriter, r *http.Request) {
+	threads, err := pr.client.ListThreads(r.Context())
+	if err != nil {
+		log.Printf("[webui] thread list page error: %v", err)
+		threads = nil
+	}
+	Page(w, pr.renderer, map[string]interface{}{
+		"Threads": threads,
+	})
+}
+
+// GET /threads/{thread_id}
+func (pr *pageResource) threadDetail(w http.ResponseWriter, r *http.Request) {
+	threadID := r.PathValue("thread_id")
+
+	exists, err := pr.client.ThreadExists(r.Context(), threadID)
+	if err != nil || !exists {
+		Page(w, pr.renderer, map[string]interface{}{
+			"Thread": nil,
+		})
+		return
+	}
+
+	thread, err := pr.client.GetThread(r.Context(), threadID)
+	if err != nil {
+		log.Printf("[webui] thread detail page error: %v", err)
+		Page(w, pr.renderer, map[string]interface{}{"Thread": nil})
+		return
+	}
+
+	running, _ := pr.client.IsRequestRunning(r.Context(), threadID)
+	complete, _ := pr.client.IsThreadComplete(r.Context(), threadID)
+
+	Page(w, pr.renderer, map[string]interface{}{
+		"Thread":   thread,
+		"Running":  running,
+		"Complete": complete,
+	})
+}
+
+// GET /tasks
+func (pr *pageResource) taskList(w http.ResponseWriter, r *http.Request) {
+	Page(w, pr.renderer, nil)
+}
+
+// GET /tasks/{task_id}
+func (pr *pageResource) taskDetail(w http.ResponseWriter, r *http.Request) {
+	taskID := r.PathValue("task_id")
+
+	task, err := pr.client.GetTask(r.Context(), taskID)
+	if err != nil || task.Status == "" {
+		Page(w, pr.renderer, map[string]interface{}{
+			"Task": nil,
+		})
+		return
+	}
+
+	tail, _ := strconv.Atoi(r.URL.Query().Get("tail"))
+	tailInfo := "full"
+	if tail > 0 {
+		tailInfo = fmt.Sprintf("last %d lines", tail)
+	}
+
+	// Fetch result if task is done
+	if task.Result == "" && (task.Status == "done" || task.Status == "failed") {
+		result, err := pr.client.GetTaskResult(r.Context(), taskID, tail)
+		if err == nil {
+			task.Result = result
+		}
+	}
+
+	Page(w, pr.renderer, map[string]interface{}{
+		"Task":     task,
+		"TailInfo": tailInfo,
+	})
+}
+
+// GET /api/requests/_form
+func (pr *pageResource) requestForm(w http.ResponseWriter, r *http.Request) {
+	Partial(w, pr.renderer, "request-form", nil)
 }

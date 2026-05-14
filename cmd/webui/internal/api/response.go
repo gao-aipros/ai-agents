@@ -2,7 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
+
+	"github.com/noodle05/ai-agents/cmd/webui/internal/templates"
 )
 
 // JSON writes a JSON response with the given status code and value.
@@ -22,8 +25,24 @@ func IsHTMX(r *http.Request) bool {
 	return r.Header.Get("HX-Request") == "true"
 }
 
-// Respond writes a response. When the HX-Request header is present, it
-// returns JSON for now (HTML partial rendering is wired in Step 6).
+// Page writes a full HTML page response using the renderer.
+func Page(w http.ResponseWriter, r *templates.Renderer, data interface{}) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := r.Page(w, data); err != nil {
+		log.Printf("[webui] template page error: %v", err)
+	}
+}
+
+// Partial writes an HTML partial response using the renderer.
+func Partial(w http.ResponseWriter, r *templates.Renderer, name string, data interface{}) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := r.Partial(w, name, data); err != nil {
+		log.Printf("[webui] template partial %s error: %v", name, err)
+	}
+}
+
+// Respond writes a response. When the HX-Request header is present and a
+// template name is provided, it renders an HTML partial. Otherwise, JSON.
 func Respond(w http.ResponseWriter, r *http.Request, status int, v interface{}) {
 	JSON(w, status, v)
 }
