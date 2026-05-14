@@ -7,8 +7,9 @@ USER root
 # Go SDK via tarball (avoids pulling ~500 MB golang:latest)
 ARG GO_VERSION=1.26.3
 ARG TARGETARCH
-RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${TARGETARCH}.tar.gz" \
-    | tar -xzC /usr/local
+RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${TARGETARCH}.tar.gz" -o /tmp/go.tar.gz \
+    && tar -xzf /tmp/go.tar.gz -C /usr/local \
+    && rm /tmp/go.tar.gz
 
 ENV GOROOT=/usr/local/go \
     GOPATH=/home/agent/go \
