@@ -27,6 +27,7 @@ type testHarness struct {
 	Router       chi.Router
 	Handler      *request.Handler
 	Client       *tasklib.Client
+	Renderer     *templates.Renderer
 	MR           *miniredis.Miniredis
 	WorkspaceDir string
 	SessionsDir  string
@@ -78,6 +79,7 @@ func newTestRouter(t *testing.T) *testHarness {
 		Router:       router,
 		Handler:      handler,
 		Client:       client,
+		Renderer:     renderer,
 		MR:           mr,
 		WorkspaceDir: workspaceDir,
 		SessionsDir:  sessionsDir,
@@ -694,6 +696,147 @@ func TestHandleCancelRequest_NoRunning(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
+	}
+}
+
+// ── HTMX content negotiation ───────────────────────────────────────────────
+
+func TestHandleSubmitRequest_HTMXFormEncoded(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	th.setFakeClaude(t, []string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"result","subtype":"success","is_error":false,"result":"Done"}`,
+	}, 0)
+
+	// Simulate HTMX form submission (application/x-www-form-urlencoded)
+	body := strings.NewReader("request=Say+hello&repo=test/repo&thread_id=")
+	r := httptest.NewRequest("POST", "/api/requests", body)
+	r.Header.Set("HX-Request", "true")
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("X-CSRF-Token", th.Renderer.CSRFToken)
+	w := httptest.NewRecorder()
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	// Response should be HTML partial (the request-submitted template)
+	bodyStr := w.Body.String()
+	if !strings.Contains(bodyStr, "Request submitted") && !strings.Contains(bodyStr, "View thread") {
+		t.Errorf("expected HTML partial, got: %s", bodyStr)
+	}
+
+	// Wait for subprocess
+	waitForNotification(th.Notify, 10*time.Second)
+}
+
+func TestHandleGetThread_HTMXReturnsPartial(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	ctx := context.Background()
+	th.Client.CreateThread(ctx, "htmx-thread", "repo/test")
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/threads/htmx-thread", nil)
+	r.Header.Set("HX-Request", "true")
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	bodyStr := w.Body.String()
+	// Should contain the state panel HTML, not JSON
+	if !strings.Contains(bodyStr, "state-panel") {
+		t.Errorf("expected state-panel in HTML partial, got: %s", bodyStr)
+	}
+	if strings.HasPrefix(bodyStr, "{") {
+		t.Error("expected HTML partial, got JSON")
+	}
+}
+
+func TestHandleGetThread_NonHTMXReturnsJSON(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	ctx := context.Background()
+	th.Client.CreateThread(ctx, "json-thread", "repo/test")
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/threads/json-thread", nil)
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	bodyStr := w.Body.String()
+	if !strings.HasPrefix(bodyStr, "{") {
+		t.Error("expected JSON response for non-HTMX request")
+	}
+
+	var resp map[string]interface{}
+	readJSON(w, &resp)
+	if _, ok := resp["thread"]; !ok {
+		t.Error("JSON response missing thread field")
+	}
+}
+
+func TestHandleGetThread_InvalidID(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	// Use an ID with a colon, which is rejected by ValidThreadID but
+	// doesn't get normalized away by the router like ".." does.
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/threads/invalid:thread", nil)
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+}
+
+func TestHandleGetThread_InvalidID_HTMX(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	// Use a colon in the ID — it's rejected by ValidThreadID but doesn't
+	// create a new path segment (unlike "/").
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/threads/invalid:id", nil)
+	r.Header.Set("HX-Request", "true")
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+}
+
+func TestPageThreadDetail_InvalidID(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/threads/invalid:thread", nil)
+	th.Router.ServeHTTP(w, r)
+
+	// Page should return 200 (it's a page route, not an API route).
+	// The ValidThreadID check passes nil Thread data to the template,
+	// which renders the page shell successfully.
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	if w.Body.Len() == 0 {
+		t.Error("page should have a body")
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", ct)
 	}
 }
 

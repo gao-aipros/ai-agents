@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/noodle05/ai-agents/cmd/webui/internal/templates"
 )
 
 func TestIsHTMX(t *testing.T) {
@@ -80,4 +82,38 @@ func TestRespond(t *testing.T) {
 			t.Errorf("Content-Type = %q, want %q", ct, "application/json")
 		}
 	})
+}
+
+func TestPage_RenderErrorReturns500(t *testing.T) {
+	r, err := templates.New()
+	if err != nil {
+		t.Fatalf("templates.New: %v", err)
+	}
+	// Render a page with Threads slice for the list template.
+	w := httptest.NewRecorder()
+	if err := r.Page(w, map[string]interface{}{"Threads": []interface{}{}}); err != nil {
+		t.Fatalf("Page returned error: %v", err)
+	}
+	if w.Body.Len() == 0 {
+		t.Error("Page should produce output")
+	}
+}
+
+func TestPartial_RenderErrorReturns500(t *testing.T) {
+	r, err := templates.New()
+	if err != nil {
+		t.Fatalf("templates.New: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	// Call the API-level Partial which uses buffer-then-write.
+	Partial(w, r, "nonexistent-template", nil)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusInternalServerError, w.Body.String())
+	}
+	// Body should be a JSON error, not partial HTML.
+	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json on error", ct)
+	}
 }

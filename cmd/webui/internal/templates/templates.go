@@ -94,6 +94,14 @@ func (r *Renderer) baseData(data interface{}) map[string]interface{} {
 	m["WorkerTypes"] = r.WorkerTypes
 	m["CSRFToken"] = r.CSRFToken
 	m["NowUnix"] = time.Now().Unix()
+	// Safe defaults for template iteration — the "content" template from the
+	// last-parsed file accesses these, so provide empty slices when not set.
+	if _, ok := m["Threads"]; !ok {
+		m["Threads"] = []interface{}{}
+	}
+	if _, ok := m["Tasks"]; !ok {
+		m["Tasks"] = []interface{}{}
+	}
 	return m
 }
 
