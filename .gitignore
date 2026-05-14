@@ -7,6 +7,9 @@ docker/*/bin/
 /webui
 *.test
 
+# Pre-built Docker copy source
+out/
+
 # Runtime workspace
 workspace/
 

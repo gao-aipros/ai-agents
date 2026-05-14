@@ -8,12 +8,11 @@ Multi-agent Docker orchestration where a master agent (Claude Code) delegates ta
 
 ```
 ai-base (debian:trixie + gh, git, jq, python3, redis-tools, curl, ssh)
-  ├─ claude-code (FROM ai-base, + claude CLI)
-  ├─ copilot     (FROM ai-base, + copilot CLI, + Go toolchain)
-  └─ opencode    (FROM ai-base, + opencode CLI, + Go toolchain)
-        │
-        ├─ master-agent   (FROM claude-code, + task CLI + webui)
-        └─ worker-claude  (FROM claude-code, + Go toolchain)
+  ├─ worker-base    (ai-base + Go SDK + gcc/make + worker-go)
+  │   ├─ copilot     (worker-base + copilot CLI)
+  │   ├─ opencode    (worker-base + opencode CLI)
+  │   └─ worker-claude (worker-base + claude CLI)
+  └─ master-agent   (ai-base + claude CLI + task-go + webui)
 ```
 
 The master agent runs a web UI (chi router, HTMX + Go templates on port 8000) and delegates tasks via `task enqueue`. Workers dequeue tasks via `BLMOVE`, execute agent subprocesses with thread context, and post results back to Redis. All agents use DeepSeek as the backend (Anthropic-compatible API). Auth tokens are passed via environment variables. Each agent gets its own GitHub token for isolation and rate limiting.
@@ -23,31 +22,69 @@ The master agent runs a web UI (chi router, HTMX + Go templates on port 8000) an
 ### Build
 
 ```bash
-# Build ai-base first (others depend on it)
+# Pre-build Go binaries (required before any Docker build)
+go mod download
+GOOS=linux go build -o out/amd64/worker-go ./cmd/worker/
+GOOS=linux go build -o out/amd64/task-go   ./cmd/task/
+GOOS=linux go build -o out/amd64/webui     ./cmd/webui/
+
+# Phase 1 — base image
 docker build --load -t ai-base:latest docker/base/
 
-# Layer 1 — can run in parallel
-docker build --load -t claude-code:latest docker/claude-code/ &
-docker build --load -t copilot:latest -f docker/copilot/Dockerfile . &
-docker build --load -t opencode:latest -f docker/opencode/Dockerfile . &
+# Phase 2 — worker-base and master-agent (parallel, both FROM ai-base)
+docker build --load -t worker-base:latest -f docker/worker-base/Dockerfile . &
+docker build --load -t master-agent:latest -f docker/master-agent/Dockerfile . &
 wait
 
-# Layer 2 — depends on layer 1
-docker build --load -t master-agent:latest -f docker/master-agent/Dockerfile .
-docker build --load -t worker-claude:latest -f docker/worker-claude/Dockerfile .
+# Phase 3 — workers (parallel, all FROM worker-base)
+docker build --load -t copilot:latest -f docker/copilot/Dockerfile . &
+docker build --load -t opencode:latest -f docker/opencode/Dockerfile . &
+docker build --load -t worker-claude:latest -f docker/worker-claude/Dockerfile . &
+wait
 ```
 
-CI (`.github/workflows/build-images.yml`) builds multi-arch (`linux/amd64,linux/arm64`) with `docker buildx build --push` and publishes to `ghcr.io/gao-aipros/<image>:latest`.
+CI (`.github/workflows/build-images.yml`) pre-builds Go binaries for both architectures, then builds 5 multi-arch images (`linux/amd64,linux/arm64`) in 3 parallel phases and pushes to `ghcr.io/gao-aipros/<image>:latest`.
 
 ### Multi-arch builds (CI pattern)
 
 ```bash
+# Go binaries (cross-compiled in CI via actions/setup-go)
+GOOS=linux GOARCH=amd64 go build -o out/amd64/worker-go ./cmd/worker/
+GOOS=linux GOARCH=amd64 go build -o out/amd64/task-go   ./cmd/task/
+GOOS=linux GOARCH=amd64 go build -o out/amd64/webui     ./cmd/webui/
+GOOS=linux GOARCH=arm64 go build -o out/arm64/worker-go ./cmd/worker/
+GOOS=linux GOARCH=arm64 go build -o out/arm64/task-go   ./cmd/task/
+GOOS=linux GOARCH=arm64 go build -o out/arm64/webui     ./cmd/webui/
+
+# Phase 1
 docker buildx build --platform linux/amd64,linux/arm64 --push \
   -t ghcr.io/gao-aipros/ai-base:latest docker/base/
 
+# Phase 2 (parallel)
 docker buildx build --platform linux/amd64,linux/arm64 --push \
   --build-arg BASE_IMAGE=ghcr.io/gao-aipros/ai-base:latest \
-  -t ghcr.io/gao-aipros/claude-code:latest docker/claude-code/
+  -t ghcr.io/gao-aipros/worker-base:latest \
+  -f docker/worker-base/Dockerfile . &
+docker buildx build --platform linux/amd64,linux/arm64 --push \
+  --build-arg BASE_IMAGE=ghcr.io/gao-aipros/ai-base:latest \
+  -t ghcr.io/gao-aipros/master-agent:latest \
+  -f docker/master-agent/Dockerfile . &
+wait
+
+# Phase 3 (parallel)
+docker buildx build --platform linux/amd64,linux/arm64 --push \
+  --build-arg WORKER_BASE_IMAGE=ghcr.io/gao-aipros/worker-base:latest \
+  -t ghcr.io/gao-aipros/copilot:latest \
+  -f docker/copilot/Dockerfile . &
+docker buildx build --platform linux/amd64,linux/arm64 --push \
+  --build-arg WORKER_BASE_IMAGE=ghcr.io/gao-aipros/worker-base:latest \
+  -t ghcr.io/gao-aipros/opencode:latest \
+  -f docker/opencode/Dockerfile . &
+docker buildx build --platform linux/amd64,linux/arm64 --push \
+  --build-arg WORKER_BASE_IMAGE=ghcr.io/gao-aipros/worker-base:latest \
+  -t ghcr.io/gao-aipros/worker-claude:latest \
+  -f docker/worker-claude/Dockerfile . &
+wait
 ```
 
 ### Test
@@ -89,7 +126,7 @@ FROM ${BASE_IMAGE}                      # final stage (parameterized)
 ...
 ```
 
-Local builds use `--load` (no `--platform`). `ARG BASE_IMAGE` and `ARG CLAUDE_IMAGE` default to local tags.
+Local builds use `--load` (no `--platform`). `ARG BASE_IMAGE` and `ARG WORKER_BASE_IMAGE` default to local tags. Go binaries are pre-built outside Docker and copied in via `COPY out/${TARGETARCH}/<binary>`.
 
 ### Go module
 

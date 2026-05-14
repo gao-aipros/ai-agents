@@ -1,33 +1,42 @@
-ARG CLAUDE_IMAGE=claude-code:latest
+ARG BASE_IMAGE=ai-base:latest
 
-# Build stage: compile Go task CLI binary
-FROM golang:latest AS go-build-task
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY tasklib/ tasklib/
-COPY cmd/task/ cmd/task/
-RUN CGO_ENABLED=0 go build -o /out/task-go ./cmd/task/
+# Build stage: install Claude CLI
+FROM debian:trixie AS claude-build
 
-# Build stage: compile Go webui binary
-FROM golang:latest AS go-build-webui
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY tasklib/ tasklib/
-COPY cmd/webui/ cmd/webui/
-RUN CGO_ENABLED=0 go build -o /out/webui ./cmd/webui/
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG CLAUDE_VERSION=stable
+RUN curl -sL https://claude.ai/install.sh | bash -s -- "$CLAUDE_VERSION"
 
 # Final stage
-FROM ${CLAUDE_IMAGE}
+FROM ${BASE_IMAGE}
 
 USER root
 
-# Go task CLI binary
-COPY --from=go-build-task /out/task-go /usr/local/bin/task
+# Claude CLI
+COPY --from=claude-build /root/.local/bin/claude /usr/local/bin/claude
 
-# Go webui binary
-COPY --from=go-build-webui /out/webui /usr/local/bin/webui
+# DeepSeek config (non-sensitive defaults)
+ENV ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic \
+    ANTHROPIC_MODEL=deepseek-v4-pro[1m] \
+    ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro[1m] \
+    ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-v4-pro[1m] \
+    ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-flash \
+    CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash \
+    CLAUDE_CODE_EFFORT_LEVEL=max
+
+ARG ANTHROPIC_AUTH_TOKEN
+ENV ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
+
+# Pre-built Go binaries
+ARG TARGETARCH
+COPY out/${TARGETARCH}/task-go /usr/local/bin/task
+COPY out/${TARGETARCH}/webui /usr/local/bin/webui
 
 RUN mkdir -p /home/agent/.claude && chown agent:agent /home/agent/.claude
 COPY --chown=agent:agent docker/master-agent/CLAUDE.md /home/agent/.claude/CLAUDE.md
