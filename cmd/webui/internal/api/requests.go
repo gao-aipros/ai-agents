@@ -26,9 +26,15 @@ func (rs *requestsResource) submit(w http.ResponseWriter, r *http.Request) {
 		Repo     string `json:"repo"`
 		Request  string `json:"request"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		Error(w, http.StatusBadRequest, "invalid JSON body")
-		return
+	if IsHTMX(r) {
+		req.ThreadID = r.FormValue("thread_id")
+		req.Repo = r.FormValue("repo")
+		req.Request = r.FormValue("request")
+	} else {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			Error(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
 	}
 
 	if req.Request == "" {

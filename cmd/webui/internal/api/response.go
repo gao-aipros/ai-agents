@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -26,23 +27,33 @@ func IsHTMX(r *http.Request) bool {
 }
 
 // Page writes a full HTML page response using the renderer.
+// Renders into a buffer first so a partial failure doesn't produce a corrupt 200.
 func Page(w http.ResponseWriter, r *templates.Renderer, data interface{}) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := r.Page(w, data); err != nil {
+	var buf bytes.Buffer
+	if err := r.Page(&buf, data); err != nil {
 		log.Printf("[webui] template page error: %v", err)
+		Error(w, http.StatusInternalServerError, "internal server error")
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	buf.WriteTo(w)
 }
 
 // Partial writes an HTML partial response using the renderer.
+// Renders into a buffer first so a partial failure doesn't produce a corrupt 200.
 func Partial(w http.ResponseWriter, r *templates.Renderer, name string, data interface{}) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := r.Partial(w, name, data); err != nil {
+	var buf bytes.Buffer
+	if err := r.Partial(&buf, name, data); err != nil {
 		log.Printf("[webui] template partial %s error: %v", name, err)
+		Error(w, http.StatusInternalServerError, "internal server error")
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	buf.WriteTo(w)
 }
 
-// Respond writes a response. When the HX-Request header is present and a
-// template name is provided, it renders an HTML partial. Otherwise, JSON.
+// Respond writes a JSON response. Callers that need HTML partials for HTMX
+// requests should check IsHTMX and call Partial directly.
 func Respond(w http.ResponseWriter, r *http.Request, status int, v interface{}) {
 	JSON(w, status, v)
 }

@@ -2,9 +2,7 @@
 <section>
   <div class="flex-between mb-16">
     <h2 style="margin:0">Workers</h2>
-    <span class="text-muted" hx-get="/api/workers" hx-trigger="every {{.PollWorkers}}s" hx-swap="none">
-      polling every {{.PollWorkers}}s
-    </span>
+    <span class="text-muted">polling every {{.PollWorkers}}s</span>
   </div>
   <div class="grid-3" id="worker-cards" hx-get="/api/workers" hx-trigger="load, every {{.PollWorkers}}s" hx-swap="innerHTML">
     {{template "worker-cards-loading"}}

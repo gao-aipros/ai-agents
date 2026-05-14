@@ -25,6 +25,7 @@ func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templ
 	r.Use(chimw.RealIP)
 	r.Use(recoverMiddleware)
 	r.Use(authMiddleware)
+	r.Use(csrfMiddleware(renderer.CSRFToken))
 	r.Use(contentTypeMiddleware)
 
 	// Static file serving (CSS, JS)
@@ -119,6 +120,11 @@ func (pr *pageResource) threadList(w http.ResponseWriter, r *http.Request) {
 // GET /threads/{thread_id}
 func (pr *pageResource) threadDetail(w http.ResponseWriter, r *http.Request) {
 	threadID := r.PathValue("thread_id")
+
+	if !request.ValidThreadID(threadID) {
+		Page(w, pr.renderer, map[string]interface{}{"Thread": nil})
+		return
+	}
 
 	exists, err := pr.client.ThreadExists(r.Context(), threadID)
 	if err != nil || !exists {

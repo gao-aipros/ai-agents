@@ -13,7 +13,7 @@
        hx-swap="none">
     <span class="status-dot running"></span>
     <strong>Waiting for master...</strong>
-    <span class="elapsed" x-data x-init="let s=0;setInterval(()=>{s++;$el.textContent=s+'s elapsed'},1000)">0s elapsed</span>
+    <span class="elapsed" data-start="{{.NowUnix}}">0s elapsed</span>
   </div>
   {{end}}
 
@@ -66,34 +66,5 @@
   </section>
 {{else}}
 <div class="text-center text-muted">Thread not found</div>
-{{end}}
-{{end}}
-
-{{define "thread-state"}}
-{{if .Thread}}
-<div class="state-panel">
-  <div class="state-item">
-    <div class="label">Status</div>
-    <div class="value">{{statusBadge .Thread.Status}}</div>
-  </div>
-  <div class="state-item">
-    <div class="label">Repo</div>
-    <div class="value mono">{{or .Thread.GHRepo "-"}}</div>
-  </div>
-  <div class="state-item">
-    <div class="label">PR</div>
-    <div class="value mono">{{or .Thread.GHPRNumber "-"}}</div>
-  </div>
-  <div class="state-item">
-    <div class="label">Last Design</div>
-    <div class="value mono" style="font-size:12px">{{or .Thread.LastDesign "-"}}</div>
-  </div>
-  <div class="state-item">
-    <div class="label">Updated</div>
-    <div class="value mono" style="font-size:12px">{{or .Thread.UpdatedAt "-"}}</div>
-  </div>
-</div>
-{{else}}
-<div class="text-muted">Thread not found</div>
 {{end}}
 {{end}}

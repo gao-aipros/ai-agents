@@ -33,6 +33,7 @@
   <div class="card" id="task-table"
        hx-get="/api/tasks"
        hx-trigger="load, every {{.PollDash}}s"
+       hx-include="#task-filters"
        hx-swap="innerHTML">
     <div class="text-center text-muted"><span class="spinner"></span> Loading...</div>
   </div>

@@ -48,6 +48,9 @@
   --color-master-bg: #1a1033;
   --color-user: #6ea8fe;
   --color-user-bg: #031633;
+  --color-worker-claude: #fd9843;
+  --color-worker-copilot: #38d9a9;
+  --color-worker-opencode: #6edff6;
 }
 
 /* ── Reset & base ─────────────────────────────────────────────────────────── */

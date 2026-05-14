@@ -78,6 +78,10 @@ func (tr *threadsResource) list(w http.ResponseWriter, r *http.Request) {
 // GET /api/threads/{thread_id}
 func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 	threadID := r.PathValue("thread_id")
+	if !request.ValidThreadID(threadID) {
+		Error(w, http.StatusBadRequest, "invalid thread_id")
+		return
+	}
 	exists, err := tr.client.ThreadExists(r.Context(), threadID)
 	if err != nil {
 		serverError(w, "internal error", err)
@@ -108,12 +112,20 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 		messages = nil
 	}
 
-	Respond(w, r, http.StatusOK, map[string]interface{}{
-		"thread":   thread,
-		"running":  running,
-		"complete": complete,
-		"messages": messages,
-	})
+	if IsHTMX(r) {
+		Partial(w, tr.renderer, "thread-state-oob", map[string]interface{}{
+			"Thread":   thread,
+			"Running":  running,
+			"Complete": complete,
+		})
+	} else {
+		Respond(w, r, http.StatusOK, map[string]interface{}{
+			"thread":   thread,
+			"running":  running,
+			"complete": complete,
+			"messages": messages,
+		})
+	}
 }
 
 // GET /api/threads/{thread_id}/history

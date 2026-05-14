@@ -1,11 +1,14 @@
 package templates
 
 import (
+	"crypto/rand"
 	"embed"
+	"encoding/hex"
 	"html/template"
 	"io"
 	"io/fs"
 	"path/filepath"
+	"time"
 
 	"github.com/noodle05/ai-agents/cmd/webui/internal/env"
 	"github.com/noodle05/ai-agents/tasklib"
@@ -23,10 +26,15 @@ type Renderer struct {
 	HtmxSrc     string
 	Theme       string
 	WorkerTypes []string
+	CSRFToken   string
 }
 
 // New creates a new Renderer with defaults from environment variables.
 func New() (*Renderer, error) {
+	csrf := make([]byte, 16)
+	if _, err := rand.Read(csrf); err != nil {
+		return nil, err
+	}
 	r := &Renderer{
 		PollDash:    env.String("WEBUI_POLL_DASHBOARD", "5"),
 		PollThread:  env.String("WEBUI_POLL_THREAD_DETAIL", "3"),
@@ -34,6 +42,7 @@ func New() (*Renderer, error) {
 		HtmxSrc:     env.String("WEBUI_HTMX_SRC", "/static/htmx.min.js"),
 		Theme:       env.String("WEBUI_THEME", "light"),
 		WorkerTypes: tasklib.WorkerTypes,
+		CSRFToken:   hex.EncodeToString(csrf),
 	}
 
 	tmpl := template.New("").Funcs(template.FuncMap{
@@ -69,10 +78,13 @@ func New() (*Renderer, error) {
 }
 
 // baseData merges data with base template variables.
+// Always allocates a new map to avoid mutating caller's data.
 func (r *Renderer) baseData(data interface{}) map[string]interface{} {
-	m, ok := data.(map[string]interface{})
-	if !ok {
-		m = make(map[string]interface{})
+	m := make(map[string]interface{})
+	if existing, ok := data.(map[string]interface{}); ok {
+		for k, v := range existing {
+			m[k] = v
+		}
 	}
 	m["Theme"] = r.Theme
 	m["HtmxSrc"] = r.HtmxSrc
@@ -80,6 +92,8 @@ func (r *Renderer) baseData(data interface{}) map[string]interface{} {
 	m["PollThread"] = r.PollThread
 	m["PollWorkers"] = r.PollWorkers
 	m["WorkerTypes"] = r.WorkerTypes
+	m["CSRFToken"] = r.CSRFToken
+	m["NowUnix"] = time.Now().Unix()
 	return m
 }
 
