@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Agents — Master Console (Mockup)</title>
+  <link rel="stylesheet" href="internal/static/style.css">
+  <style>
+    /* Mockup-only demo styles */
+    .demo-toggle {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 999;
+      display: flex;
+      gap: 8px;
+    }
+    .demo-toggle button {
+      padding: 8px 16px;
+      border-radius: 20px;
+      border: 1px solid var(--color-border);
+      background: var(--color-surface);
+      color: var(--color-text);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      box-shadow: var(--shadow-md);
+      transition: all var(--transition);
+    }
+    .demo-toggle button:hover { background: var(--color-accent-bg); }
+    .demo-toggle button.active { background: var(--color-accent); color: #fff; border-color: var(--color-accent); }
+
+    .demo-section-label {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      background: var(--color-accent-bg);
+      color: var(--color-accent);
+      margin-bottom: 20px;
+    }
+    hr.demo-sep {
+      border: none;
+      border-top: 2px dashed var(--color-border);
+      margin: 40px 0;
+    }
+  </style>
+</head>
+<body>
+  <!-- Navigation -->
+  <nav>
+    <a href="/" class="brand">AI Agents</a>
+    <a href="/" class="active">Dashboard</a>
+    <a href="/">Threads</a>
+    <a href="/">Tasks</a>
+  </nav>
+
+  <main class="container">
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <span class="demo-section-label">Dashboard — Workers</span>
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+    <section>
+      <div class="section-header">
+        <h2>Workers</h2>
+        <span class="text-muted">polling every 5s</span>
+      </div>
+      <div class="grid-3">
+        <!-- Worker cards -->
+        <div class="card worker-card">
+          <div class="card-header">
+            <span class="status-dot online"></span>
+            claude
+          </div>
+          <div class="stats">
+            <div><strong>2</strong> / 2 online</div>
+            <div><strong>1</strong> active</div>
+          </div>
+        </div>
+        <div class="card worker-card">
+          <div class="card-header">
+            <span class="status-dot online"></span>
+            copilot
+          </div>
+          <div class="stats">
+            <div><strong>2</strong> / 2 online</div>
+            <div><strong>0</strong> active</div>
+          </div>
+        </div>
+        <div class="card worker-card">
+          <div class="card-header">
+            <span class="status-dot offline"></span>
+            opencode
+          </div>
+          <div class="stats">
+            <div><strong>0</strong> / 2 online</div>
+            <div><strong>0</strong> active</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <span class="demo-section-label">Dashboard — Active Threads</span>
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+    <section>
+      <div class="section-header">
+        <h2>Active Threads</h2>
+        <a href="#" class="btn btn-sm">View all</a>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Thread ID</th>
+                <th>Status</th>
+                <th>Repo</th>
+                <th>PR</th>
+                <th>Updated</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><a href="#" class="mono">th_a1b2c3d4</a></td>
+                <td><span class="badge badge-warning">running</span></td>
+                <td class="text-secondary">gao-aipros/ai-agents</td>
+                <td class="text-secondary">#42</td>
+                <td class="text-secondary">2 min ago</td>
+                <td><a href="#" class="btn btn-sm">View</a></td>
+              </tr>
+              <tr>
+                <td><a href="#" class="mono">th_e5f6g7h8</a></td>
+                <td><span class="badge badge-success">complete</span></td>
+                <td class="text-secondary">gao-aipros/backend</td>
+                <td class="text-secondary">#128</td>
+                <td class="text-secondary">15 min ago</td>
+                <td><a href="#" class="btn btn-sm">View</a></td>
+              </tr>
+              <tr>
+                <td><a href="#" class="mono">th_i9j0k1l2</a></td>
+                <td><span class="badge badge-info">pending</span></td>
+                <td class="text-secondary">—</td>
+                <td class="text-secondary">—</td>
+                <td class="text-secondary">1 min ago</td>
+                <td><a href="#" class="btn btn-sm">View</a></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <span class="demo-section-label">Dashboard — Recent Tasks</span>
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+    <section>
+      <div class="section-header">
+        <h2>Recent Tasks</h2>
+        <a href="#" class="btn btn-sm">View all</a>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Task ID</th>
+                <th>Worker</th>
+                <th>Thread</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><a href="#" class="mono">task_abc123</a></td>
+                <td><span class="badge badge-info">claude</span></td>
+                <td class="mono"><a href="#" class="truncate" style="max-width:160px">th_a1b2c3d4</a></td>
+                <td><span class="badge badge-warning">running</span></td>
+                <td class="text-secondary">10:32 AM</td>
+                <td><a href="#" class="btn btn-sm">View</a></td>
+              </tr>
+              <tr>
+                <td><a href="#" class="mono">task_def456</a></td>
+                <td><span class="badge badge-info">copilot</span></td>
+                <td class="mono"><a href="#" class="truncate" style="max-width:160px">th_e5f6g7h8</a></td>
+                <td><span class="badge badge-success">done</span></td>
+                <td class="text-secondary">10:15 AM</td>
+                <td><a href="#" class="btn btn-sm">View</a></td>
+              </tr>
+              <tr>
+                <td><a href="#" class="mono">task_ghi789</a></td>
+                <td><span class="badge badge-info">claude</span></td>
+                <td class="text-secondary mono">—</td>
+                <td><span class="badge badge-danger">failed</span></td>
+                <td class="text-secondary">9:58 AM</td>
+                <td><a href="#" class="btn btn-sm">View</a></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <span class="demo-section-label">New Request Form</span>
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+    <section>
+      <h2>New Request</h2>
+      <div class="card">
+        <form method="post">
+          <div class="grid-2">
+            <div>
+              <div class="form-group">
+                <label for="thread_id">Thread ID (optional)</label>
+                <input type="text" id="thread_id" name="thread_id" placeholder="auto-generated if empty">
+              </div>
+            </div>
+            <div>
+              <div class="form-group">
+                <label for="repo">Repo (optional)</label>
+                <input type="text" id="repo" name="repo" placeholder="owner/repo">
+              </div>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="request">Request</label>
+            <textarea id="request" name="request" rows="4" required
+                      placeholder="Describe what you want the master agent to do..."
+                      style="min-height:100px"></textarea>
+          </div>
+          <button type="submit" class="btn btn-primary">
+            Submit Request
+          </button>
+        </form>
+      </div>
+    </section>
+
+    <hr class="demo-sep">
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <span class="demo-section-label">Thread Detail Page</span>
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+    <!-- Waiting banner -->
+    <div class="banner banner-waiting">
+      <span class="status-dot running"></span>
+      <strong>Waiting for master...</strong>
+      <span class="elapsed" style="margin-left:auto">47s elapsed</span>
+    </div>
+
+    <div class="grid-2 mb-24">
+      <section>
+        <h2>State</h2>
+        <div class="card">
+          <div class="state-panel">
+            <div class="state-item">
+              <div class="label">Status</div>
+              <div class="value"><span class="badge badge-warning">running</span></div>
+            </div>
+            <div class="state-item">
+              <div class="label">Repo</div>
+              <div class="value mono">gao-aipros/ai-agents</div>
+            </div>
+            <div class="state-item">
+              <div class="label">PR</div>
+              <div class="value mono">#42</div>
+            </div>
+            <div class="state-item">
+              <div class="label">Last Design</div>
+              <div class="value mono" style="font-size:12px">add-worker-pool</div>
+            </div>
+            <div class="state-item">
+              <div class="label">Updated</div>
+              <div class="value mono" style="font-size:12px">2026-05-15 10:32</div>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section>
+        <h2>Actions</h2>
+        <div class="card">
+          <div class="btn-group">
+            <button class="btn btn-danger">Cancel request</button>
+            <button class="btn">Extend TTL</button>
+            <button class="btn btn-ghost">Reset session</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Messages timeline -->
+    <section>
+      <h2>Messages</h2>
+      <div class="timeline">
+        <!-- User message -->
+        <div class="msg role-user type-response">
+          <div class="msg-meta">
+            <span class="badge badge-primary">user</span>
+            <span>10:30 AM</span>
+          </div>
+          <div class="msg-content" style="font-family:var(--font-sans)">Please fix the race condition in the worker pool — when two tasks complete simultaneously, the counter sometimes goes negative.</div>
+        </div>
+
+        <!-- Master plan -->
+        <div class="msg role-master type-plan">
+          <div class="msg-meta">
+            <span class="badge" style="background:var(--color-master-bg);color:var(--color-master)">master</span>
+            <span>10:30 AM</span>
+          </div>
+          <div class="msg-content">Plan: 1) Audit the counter increment/decrement paths 2) Add mutex around shared counter 3) Add regression test 4) Verify fix</div>
+        </div>
+
+        <!-- Master delegates to claude -->
+        <div class="msg role-master type-delegate">
+          <div class="msg-meta">
+            <span class="badge" style="background:var(--color-master-bg);color:var(--color-master)">master</span>
+            <span>10:30 AM</span>
+          </div>
+          <div class="msg-content">Delegating to claude: Fix race condition in worker pool counter</div>
+        </div>
+
+        <!-- Claude tool call -->
+        <div class="msg role-claude type-tool_call">
+          <div class="msg-meta">
+            <span class="badge badge-info">claude</span>
+            <span>10:31 AM</span>
+          </div>
+          <div class="msg-content">grep -rn "counter" --include="*.go" ./cmd/worker/</div>
+        </div>
+
+        <!-- Claude response -->
+        <div class="msg role-claude type-response">
+          <div class="msg-meta">
+            <span class="badge badge-success">response</span>
+            <span>10:32 AM</span>
+          </div>
+          <div class="msg-content" style="font-family:var(--font-sans)">Found the issue: the decrement in worker.go:156 runs without holding the mutex. Fixed by moving it inside the critical section. Added regression test at worker_test.go:89.</div>
+        </div>
+      </div>
+    </section>
+
+    <hr class="demo-sep">
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <span class="demo-section-label">Task Detail Page</span>
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+    <section>
+      <h2>Task task_abc123</h2>
+      <div class="card mb-24">
+        <div class="state-panel">
+          <div class="state-item">
+            <div class="label">Status</div>
+            <div class="value"><span class="badge badge-success">done</span></div>
+          </div>
+          <div class="state-item">
+            <div class="label">Worker</div>
+            <div class="value">claude</div>
+          </div>
+          <div class="state-item">
+            <div class="label">Thread</div>
+            <div class="value mono"><a href="#">th_a1b2c3d4</a></div>
+          </div>
+          <div class="state-item">
+            <div class="label">Exit Code</div>
+            <div class="value mono">0</div>
+          </div>
+          <div class="state-item">
+            <div class="label">Created</div>
+            <div class="value mono" style="font-size:12px">2026-05-15 10:30:22</div>
+          </div>
+          <div class="state-item">
+            <div class="label">Completed</div>
+            <div class="value mono" style="font-size:12px">2026-05-15 10:32:05</div>
+          </div>
+        </div>
+      </div>
+
+      <section>
+        <h2>Instruction</h2>
+        <div class="card mb-24">
+          <pre>Fix the race condition in the worker pool — when two tasks complete simultaneously, the counter sometimes goes negative.</pre>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-header">
+          <h2>Result</h2>
+          <span class="text-muted">showing full</span>
+        </div>
+        <div class="card">
+          <pre style="max-height:300px;overflow-y:auto">--- a/cmd/worker/pool.go
++++ b/cmd/worker/pool.go
+@@ -153,8 +153,8 @@ func (p *Pool) Complete(taskID string) error {
+        if !ok {
+                return fmt.Errorf("task not found: %s", taskID)
+        }
++       p.mu.Lock()
+        p.activeCount--
+-       p.mu.Lock()
+        p.mu.Unlock()
+        return nil
+ }
+
+Added test: TestPoolConcurrentComplete verifies the counter
+never goes negative under 100 concurrent completions.</pre>
+        </div>
+      </section>
+    </section>
+
+    <hr class="demo-sep">
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <span class="demo-section-label">Tasks Page — with filters</span>
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+    <section>
+      <div class="section-header">
+        <h2>Tasks</h2>
+      </div>
+
+      <div class="card mb-16">
+        <div class="filters">
+          <select>
+            <option>All workers</option>
+            <option>claude</option>
+            <option>copilot</option>
+            <option>opencode</option>
+          </select>
+          <select>
+            <option>All statuses</option>
+            <option>Pending</option>
+            <option>Running</option>
+            <option>Done</option>
+            <option>Failed</option>
+            <option>Cancelled</option>
+          </select>
+          <input type="text" placeholder="Filter by thread...">
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Task ID</th>
+                <th>Worker</th>
+                <th>Thread</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><a href="#" class="mono">task_abc123</a></td>
+                <td><span class="badge badge-info">claude</span></td>
+                <td class="mono"><a href="#" class="truncate" style="max-width:160px">th_a1b2c3d4</a></td>
+                <td><span class="badge badge-success">done</span></td>
+                <td class="text-secondary">10:32 AM</td>
+                <td><a href="#" class="btn btn-sm">View</a></td>
+              </tr>
+              <tr>
+                <td><a href="#" class="mono">task_def456</a></td>
+                <td><span class="badge badge-info">copilot</span></td>
+                <td class="mono"><a href="#" class="truncate" style="max-width:160px">th_e5f6g7h8</a></td>
+                <td><span class="badge badge-warning">running</span></td>
+                <td class="text-secondary">10:15 AM</td>
+                <td><a href="#" class="btn btn-sm">View</a></td>
+              </tr>
+              <tr>
+                <td><a href="#" class="mono">task_ghi789</a></td>
+                <td><span class="badge badge-info">claude</span></td>
+                <td class="text-secondary mono">—</td>
+                <td><span class="badge badge-danger">failed</span></td>
+                <td class="text-secondary">9:58 AM</td>
+                <td><a href="#" class="btn btn-sm">View</a></td>
+              </tr>
+              <tr>
+                <td><a href="#" class="mono">task_jkl012</a></td>
+                <td><span class="badge badge-info">opencode</span></td>
+                <td class="mono"><a href="#" class="truncate" style="max-width:160px">th_m3n4o5p6</a></td>
+                <td><span class="badge badge-primary">cancelled</span></td>
+                <td class="text-secondary">9:30 AM</td>
+                <td><a href="#" class="btn btn-sm">View</a></td>
+              </tr>
+              <tr>
+                <td><a href="#" class="mono">task_mno345</a></td>
+                <td><span class="badge badge-info">claude</span></td>
+                <td class="mono"><a href="#" class="truncate" style="max-width:160px">th_q7r8s9t0</a></td>
+                <td><span class="badge badge-info">pending</span></td>
+                <td class="text-secondary">9:05 AM</td>
+                <td><a href="#" class="btn btn-sm">View</a></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <hr class="demo-sep">
+
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+    <span class="demo-section-label">States — all badge &amp; banner variants</span>
+    <!-- ═══════════════════════════════════════════════════════════════════ -->
+
+    <section>
+      <h2>Status Badges</h2>
+      <div class="card">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <span class="badge badge-success">done</span>
+          <span class="badge badge-warning">running</span>
+          <span class="badge badge-info">pending</span>
+          <span class="badge badge-danger">failed</span>
+          <span class="badge badge-primary">cancelled</span>
+          <span class="badge" style="background:var(--color-master-bg);color:var(--color-master)">master</span>
+          <span class="badge badge-info">claude</span>
+          <span class="badge badge-info">copilot</span>
+          <span class="badge badge-info">opencode</span>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Banners</h2>
+      <div class="banner banner-waiting">
+        <span class="status-dot running"></span>
+        <strong>Waiting for master...</strong>
+        <span class="elapsed" style="margin-left:auto">47s elapsed</span>
+      </div>
+      <div class="banner banner-response">
+        <strong>Response ready</strong> — the master agent has completed this thread.
+      </div>
+      <div class="banner banner-error">
+        <strong>Error</strong> — the request failed with exit code 1.
+      </div>
+      <div class="banner banner-info">
+        <strong>Request submitted</strong>
+        — Thread: <a href="#" class="mono">th_new1234</a>
+      </div>
+    </section>
+
+    <section>
+      <h2>Buttons</h2>
+      <div class="card">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button class="btn btn-primary">Primary Action</button>
+          <button class="btn">Default</button>
+          <button class="btn btn-danger">Delete</button>
+          <button class="btn btn-ghost">Ghost</button>
+          <button class="btn btn-sm">Small</button>
+          <button class="btn btn-primary">
+            <span class="spinner" style="width:14px;height:14px"></span>
+            Loading
+          </button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Theme toggle for demo -->
+  <div class="demo-toggle">
+    <button id="btn-light">Light</button>
+    <button id="btn-dark" class="active">Dark</button>
+  </div>
+  <script>
+    document.getElementById('btn-light').addEventListener('click', function() {
+      document.documentElement.setAttribute('data-theme', 'light');
+      this.classList.add('active');
+      document.getElementById('btn-dark').classList.remove('active');
+    });
+    document.getElementById('btn-dark').addEventListener('click', function() {
+      document.documentElement.setAttribute('data-theme', 'dark');
+      this.classList.add('active');
+      document.getElementById('btn-light').classList.remove('active');
+    });
+  </script>
+</body>
+</html>
