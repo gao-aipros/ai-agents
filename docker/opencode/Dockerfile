@@ -29,9 +29,6 @@ ENV OPENCODE_PROVIDER=deepseek \
 
 ENV AGENT_CMD="opencode -m ${OPENCODE_PROVIDER}/${OPENCODE_MODEL} run --dangerously-skip-permissions"
 
-ARG DEEPSEEK_API_KEY
-ENV DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
-
 COPY --chown=agent:agent docker/opencode/AGENTS.md /home/agent/AGENTS.md
 COPY --chown=agent:agent docker/opencode/opencode.json /home/agent/.config/opencode/opencode.json
 
