@@ -28,7 +28,8 @@ RUN case "${TARGETARCH}" in \
     esac && \
     curl -sSL "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-${ARCH}.tar.gz" \
       -o /tmp/codex.tar.gz && \
-    tar -xzf /tmp/codex.tar.gz -C /usr/local/bin/ codex && \
+    tar -xzf /tmp/codex.tar.gz -C /tmp && \
+    mv "/tmp/codex-${ARCH}" /usr/local/bin/codex && \
     chmod +x /usr/local/bin/codex
 
 # Stage 3: final image
