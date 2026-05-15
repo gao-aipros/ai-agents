@@ -23,6 +23,19 @@ func init() {
 	}
 }
 
+// sanitizeQueryMiddleware strips sensitive query parameters (api_key) from
+// r.URL.RawQuery so they don't appear in logs. Must run before chimw.Logger.
+func sanitizeQueryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if q.Has("api_key") {
+			q.Del("api_key")
+			r.URL.RawQuery = q.Encode()
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // authMiddleware validates the Authorization: Bearer header or ?api_key= query
 // parameter when WEBUI_API_KEY is configured. Both read and write endpoints require auth.
 func authMiddleware(next http.Handler) http.Handler {
@@ -38,7 +51,7 @@ func authMiddleware(next http.Handler) http.Handler {
 			token = q
 		}
 		if token == "" {
-			Error(w, http.StatusUnauthorized, "missing Authorization header")
+			Error(w, http.StatusUnauthorized, "missing API key (provide Authorization: Bearer header or ?api_key= query parameter)")
 			return
 		}
 		if token != apiKey {

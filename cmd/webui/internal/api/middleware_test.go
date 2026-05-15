@@ -86,6 +86,79 @@ func TestAuthMiddleware_KeySet_WrongBearer(t *testing.T) {
 	}
 }
 
+func TestAuthMiddleware_KeySet_ValidQueryParam(t *testing.T) {
+	oldKey := apiKey
+	apiKey = "test-secret"
+	defer func() { apiKey = oldKey }()
+
+	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r := httptest.NewRequest("GET", "/api/health?api_key=test-secret", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestAuthMiddleware_KeySet_WrongQueryParam(t *testing.T) {
+	oldKey := apiKey
+	apiKey = "test-secret"
+	defer func() { apiKey = oldKey }()
+
+	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r := httptest.NewRequest("GET", "/api/health?api_key=wrong-key", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAuthMiddleware_KeySet_EmptyQueryParam(t *testing.T) {
+	oldKey := apiKey
+	apiKey = "test-secret"
+	defer func() { apiKey = oldKey }()
+
+	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r := httptest.NewRequest("GET", "/api/health?api_key=", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d (empty api_key should fail)", w.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAuthMiddleware_KeySet_HeaderOverridesQueryParam(t *testing.T) {
+	oldKey := apiKey
+	apiKey = "test-secret"
+	defer func() { apiKey = oldKey }()
+
+	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r := httptest.NewRequest("GET", "/api/health?api_key=wrong-key", nil)
+	r.Header.Set("Authorization", "Bearer test-secret")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (header should take precedence over query param)", w.Code, http.StatusOK)
+	}
+}
+
 func TestAuthMiddleware_KeySet_WrongScheme(t *testing.T) {
 	oldKey := apiKey
 	apiKey = "test-secret"
