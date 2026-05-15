@@ -23,20 +23,24 @@ func init() {
 	}
 }
 
-// authMiddleware validates the Authorization: Bearer header when WEBUI_API_KEY
-// is configured. Both read and write endpoints require auth.
+// authMiddleware validates the Authorization: Bearer header or ?api_key= query
+// parameter when WEBUI_API_KEY is configured. Both read and write endpoints require auth.
 func authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if apiKey == "" {
 			next.ServeHTTP(w, r)
 			return
 		}
-		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") {
+		token := ""
+		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+			token = strings.TrimPrefix(auth, "Bearer ")
+		} else if q := r.URL.Query().Get("api_key"); q != "" {
+			token = q
+		}
+		if token == "" {
 			Error(w, http.StatusUnauthorized, "missing Authorization header")
 			return
 		}
-		token := strings.TrimPrefix(auth, "Bearer ")
 		if token != apiKey {
 			Error(w, http.StatusUnauthorized, "invalid API key")
 			return
