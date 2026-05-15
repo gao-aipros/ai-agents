@@ -23,14 +23,27 @@ func init() {
 	}
 }
 
+type contextKey string
+
+const ctxQueryAPIKey contextKey = "query_api_key"
+
 // sanitizeQueryMiddleware strips sensitive query parameters (api_key) from
-// r.URL.RawQuery so they don't appear in logs. Must run before chimw.Logger.
+// r.URL.RawQuery and r.RequestURI so they don't appear in logs. The value is
+// saved to request context so authMiddleware can read it later. Must run
+// before chimw.Logger.
 func sanitizeQueryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		if q.Has("api_key") {
+		if key := q.Get("api_key"); key != "" {
+			r = r.WithContext(context.WithValue(r.Context(), ctxQueryAPIKey, key))
 			q.Del("api_key")
 			r.URL.RawQuery = q.Encode()
+			if r.RequestURI != "" {
+				r.RequestURI = r.URL.Path
+				if r.URL.RawQuery != "" {
+					r.RequestURI += "?" + r.URL.RawQuery
+				}
+			}
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -47,6 +60,8 @@ func authMiddleware(next http.Handler) http.Handler {
 		token := ""
 		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
 			token = strings.TrimPrefix(auth, "Bearer ")
+		} else if v := r.Context().Value(ctxQueryAPIKey); v != nil {
+			token = v.(string)
 		} else if q := r.URL.Query().Get("api_key"); q != "" {
 			token = q
 		}

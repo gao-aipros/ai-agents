@@ -876,3 +876,22 @@ func TestAuthRequired_ValidAuth(t *testing.T) {
 		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
 	}
 }
+
+func TestAuthRequired_ValidQueryParamAuth(t *testing.T) {
+	oldKey := apiKey
+	apiKey = "test-secret"
+	defer func() { apiKey = oldKey }()
+
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	// Query param auth must survive sanitizeQueryMiddleware stripping api_key
+	// from the URL before authMiddleware reads it.
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/health?api_key=test-secret", nil)
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+}
