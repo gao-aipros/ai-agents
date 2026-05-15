@@ -28,7 +28,7 @@ entrypoint.sh starts moon-bridge, waits for `/health`, then starts worker-go. `w
 
 | Stage | Base image | Purpose |
 |-------|-----------|---------|
-| moon-bridge-build | `golang:1.25-bookworm` | Clone + build moon-bridge from source (pinned commit) |
+| moon-bridge-build | `golang:1.26.3-trixie` | Clone + build moon-bridge from source (pinned commit) |
 | codex-download | `debian:trixie` | Download Codex CLI binary from GitHub releases |
 | final | `${WORKER_BASE_IMAGE}` | Copy both binaries, configs, entrypoint |
 

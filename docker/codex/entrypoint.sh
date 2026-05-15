@@ -9,8 +9,9 @@ cleanup() {
 }
 trap cleanup SIGTERM SIGINT
 
-# Validate required env var
+# Validate required env var; also reject keys with '|' (sed delimiter)
 [[ -z "$DEEPSEEK_API_KEY" ]] && { echo "DEEPSEEK_API_KEY is required"; exit 1; }
+[[ "$DEEPSEEK_API_KEY" == *"|"* ]] && { echo "DEEPSEEK_API_KEY contains invalid character '|'"; exit 1; }
 
 # Inject API key into moon-bridge config
 sed "s|\${DEEPSEEK_API_KEY}|${DEEPSEEK_API_KEY}|g" \
