@@ -116,7 +116,7 @@ services:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN}
+      TUNNEL_TOKEN: ${CLOUDFLARED_TUNNEL_TOKEN}
     depends_on:
       - master
 
