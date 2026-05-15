@@ -1,3 +1,9 @@
-model = "deepseek-v4-pro"
-openai_base_url = "http://moon-bridge:38440/v1"
-openai_api_key = "any-non-empty-value"
+model = "moonbridge"
+model_provider = "moonbridge"
+model_context_window = 1000000
+model_max_output_tokens = 32768
+
+[model_providers.moonbridge]
+name = "Moon Bridge"
+base_url = "http://moon-bridge:38440/v1"
+wire_api = "responses"

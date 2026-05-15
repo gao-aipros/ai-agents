@@ -33,6 +33,7 @@ RUN mkdir -p /home/agent/.codex && chown -R agent:agent /home/agent/.codex
 
 # Codex config (static — always points at moon-bridge service)
 COPY --chown=agent:agent docker/codex/config.toml /home/agent/.codex/config.toml
+COPY --chown=agent:agent docker/codex/models_catalog.json /home/agent/.codex/models_catalog.json
 
 # Agent instructions
 COPY --chown=agent:agent docker/codex/AGENTS.md /home/agent/AGENTS.md
