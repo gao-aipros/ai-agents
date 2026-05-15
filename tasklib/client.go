@@ -15,7 +15,7 @@ const (
 )
 
 // Valid worker types — must match task.py WORKERS.
-var WorkerTypes = []string{"claude", "copilot", "opencode"}
+var WorkerTypes = []string{"claude", "copilot", "opencode", "codex"}
 
 // KeyName helpers produce the same Redis key names as task.py.
 func TaskKey(taskID, field string) string   { return "task:" + taskID + ":" + field }

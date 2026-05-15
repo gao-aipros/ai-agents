@@ -12,7 +12,7 @@ func TestBaseData_AllocatesNewMap(t *testing.T) {
 		PollDash:    "5",
 		PollThread:  "3",
 		PollWorkers: "5",
-		WorkerTypes: []string{"claude", "copilot", "opencode"},
+		WorkerTypes: []string{"claude", "copilot", "opencode", "codex"},
 		CSRFToken:   "test-csrf",
 	}
 
