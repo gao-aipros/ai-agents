@@ -10,17 +10,19 @@ Multi-agent Docker orchestration where a master agent delegates tasks to worker 
 
 ```
 ai-base (debian:trixie + gh, git, jq, python3, redis-tools, curl, ssh)
-  ├─ worker-base    (ai-base + Go SDK + gcc/make + worker-go)
-  │   ├─ copilot         (worker-base + copilot CLI)
-  │   ├─ opencode        (worker-base + opencode CLI)
-  │   ├─ worker-claude   (worker-base + claude CLI)
-  │   └─ codex           (worker-base + codex CLI + moon-bridge)
-  └─ master-agent   (ai-base + claude CLI + task-go + webui)
+  ├─ master-agent   (ai-base + claude CLI + task-go + webui)
+  └─ worker-base    (ai-base + Go SDK + gcc/make + worker-go)
+       ├─ copilot         (worker-base + copilot CLI)
+       ├─ opencode        (worker-base + opencode CLI)
+       ├─ worker-claude   (worker-base + claude CLI)
+       └─ codex           (worker-base + codex CLI)
+
+moon-bridge (independent, golang:1.26.3-trixie + moon-bridge binary)
 ```
 
 The master agent delegates tasks via `task enqueue` to a Redis task queue. Long-running worker containers (one per agent type) dequeue tasks via `BLMOVE`, execute them with full thread context, and post results back to Redis. All containers share a `/workspace` volume for file exchange. Auth tokens (`ANTHROPIC_AUTH_TOKEN`, per-agent `GH_TOKEN`) are passed via environment variables.
 
-All agents use DeepSeek as the backend. Claude Code and Copilot use the Anthropic-compatible API (`https://api.deepseek.com/anthropic`); OpenCode uses DeepSeek's native API; Codex uses the Chat Completions API via a moon-bridge proxy that translates OpenAI Responses API calls.
+All agents use DeepSeek as the backend. Claude Code and Copilot use the Anthropic-compatible API (`https://api.deepseek.com/anthropic`); OpenCode uses DeepSeek's native API; Codex uses the Chat Completions API via a separate moon-bridge container that translates OpenAI Responses API calls.
 
 Each agent gets its own GitHub token (`MASTER_GH_TOKEN`, `WORKER_CLAUDE_GH_TOKEN`, etc.) for isolation and rate limiting.
 
@@ -35,8 +37,10 @@ GOOS=linux go build -o out/amd64/worker-go ./cmd/worker/
 GOOS=linux go build -o out/amd64/task-go   ./cmd/task/
 GOOS=linux go build -o out/amd64/webui     ./cmd/webui/
 
-# Phase 1 — base image
-docker build --load -t ai-base:latest docker/base/
+# Phase 1 — base images (parallel, no deps)
+docker build --load -t ai-base:latest docker/base/ &
+docker build --load -t moon-bridge:latest -f docker/moon-bridge/Dockerfile . &
+wait
 
 # Phase 2 — worker-base and master-agent (parallel, both FROM ai-base)
 docker build --load -t worker-base:latest -f docker/worker-base/Dockerfile . &
@@ -66,9 +70,13 @@ GOOS=linux GOARCH=arm64 go build -o out/arm64/worker-go ./cmd/worker/
 GOOS=linux GOARCH=arm64 go build -o out/arm64/task-go   ./cmd/task/
 GOOS=linux GOARCH=arm64 go build -o out/arm64/webui     ./cmd/webui/
 
-# Phase 1
+# Phase 1 (parallel)
 docker buildx build --platform linux/amd64,linux/arm64 --push \
-  -t ghcr.io/gao-aipros/ai-base:latest docker/base/
+  -t ghcr.io/gao-aipros/ai-base:latest docker/base/ &
+docker buildx build --platform linux/amd64,linux/arm64 --push \
+  -t ghcr.io/gao-aipros/moon-bridge:latest \
+  -f docker/moon-bridge/Dockerfile . &
+wait
 
 # Phase 2 (parallel)
 docker buildx build --platform linux/amd64,linux/arm64 --push \
@@ -116,9 +124,11 @@ FROM ${BASE_IMAGE}                      # final stage (parameterized)
 
 Build stages use `debian:trixie` (Docker Hub), which is already multi-arch. Go binaries are pre-built outside Docker and copied in via `COPY out/${TARGETARCH}/<binary>` — there are no `FROM golang:latest` stages.
 
+The `moon-bridge` image is an exception: it builds from source (`FROM golang:1.26.3-trixie`) since it compiles an external Go project (moon-bridge proxy) that has no pre-built binaries or published images.
+
 ## CI
 
-GitHub Actions workflow at `.github/workflows/build-images.yml`. Triggers on push to `main` or manual `workflow_dispatch`. Pushes to `ghcr.io/gao-aipros/<image>:latest`. Single job builds Go binaries first, then 6 images in 3 phases (phase 1: `ai-base`, phase 2: `worker-base` and `master-agent` in parallel, phase 3: `copilot`, `opencode`, `worker-claude`, `codex` in parallel).
+GitHub Actions workflow at `.github/workflows/build-images.yml`. Triggers on push to `main` or manual `workflow_dispatch`. Pushes to `ghcr.io/gao-aipros/<image>:latest`. Single job builds Go binaries first, then 7 images in 3 phases (phase 1: `ai-base` and `moon-bridge` in parallel, phase 2: `worker-base` and `master-agent` in parallel, phase 3: `copilot`, `opencode`, `worker-claude`, `codex` in parallel).
 
 ## Environment
 
@@ -126,4 +136,4 @@ See `.env.example` for all variables. Key ones:
 - `MASTER_GH_TOKEN` / `WORKER_CLAUDE_GH_TOKEN` / etc. — per-agent GitHub auth for `gh` CLI
 - `DEEPSEEK_API_KEY` — shared by all agents
 - `REDIS_HOST` / `REDIS_PORT` — Redis connection (task queue)
-- Docker image overrides (compose-level): `WORKER_CLAUDE_IMAGE`, `WORKER_COPILOT_IMAGE`, `WORKER_OPENCODE_IMAGE`, `WORKER_CODEX_IMAGE`, `MASTER_AGENT_IMAGE`
+- Docker image overrides (compose-level): `WORKER_CLAUDE_IMAGE`, `WORKER_COPILOT_IMAGE`, `WORKER_OPENCODE_IMAGE`, `WORKER_CODEX_IMAGE`, `MASTER_AGENT_IMAGE`, `MOON_BRIDGE_IMAGE`

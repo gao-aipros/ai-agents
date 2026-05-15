@@ -101,6 +101,17 @@ services:
       retries: 3
       start_period: 10s
 
+  moon-bridge:
+    image: ${MOON_BRIDGE_IMAGE:-moon-bridge:latest}
+    restart: unless-stopped
+    environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+    healthcheck:
+      test: ["CMD", "curl", "-fsSL", "http://localhost:38440/api/v1/status"]
+      interval: 10s
+      retries: 3
+      start_period: 5s
+
   worker-codex:
     image: ${WORKER_CODEX_IMAGE:-codex:latest}
     restart: unless-stopped
@@ -111,10 +122,11 @@ services:
       REDIS_PORT: "6379"
       TASK_TIMEOUT: "1800"
       HISTORY_WINDOW: "10"
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       GH_TOKEN: ${WORKER_CODEX_GH_TOKEN:-}
     depends_on:
       redis:
+        condition: service_healthy
+      moon-bridge:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "redis-cli", "-h", "redis", "ping"]
