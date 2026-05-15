@@ -107,7 +107,7 @@ services:
     environment:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
     healthcheck:
-      test: ["CMD", "curl", "-fsSL", "http://localhost:38440/api/v1/status"]
+      test: ["CMD", "curl", "-fsSL", "http://localhost:38440/v1/models"]
       interval: 10s
       retries: 3
       start_period: 5s
