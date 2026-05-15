@@ -260,3 +260,38 @@ jobs:
             -t ${PREFIX}/worker-claude:latest \
             -f docker/worker-claude/Dockerfile \
             .
+
+  codex:
+    needs: [worker-base]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute image prefix
+        run: |
+          OWNER_LC="${{ github.repository_owner }}"
+          OWNER_LC="${OWNER_LC,,}"
+          echo "PREFIX=${REGISTRY}/${OWNER_LC}" >> $GITHUB_ENV
+
+      - name: Build and push codex
+        run: |
+          docker buildx build \
+            --platform ${PLATFORMS} \
+            --push \
+            --build-arg WORKER_BASE_IMAGE=${PREFIX}/worker-base:latest \
+            -t ${PREFIX}/codex:latest \
+            -f docker/codex/Dockerfile \
+            .

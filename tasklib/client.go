@@ -14,8 +14,8 @@ const (
 	LockTTL   = 2100 * time.Second   // REQUEST_TIMEOUT(1800) + 300s margin
 )
 
-// Valid worker types — must match task.py WORKERS.
-var WorkerTypes = []string{"claude", "copilot", "opencode"}
+// Valid worker types.
+var WorkerTypes = []string{"claude", "copilot", "opencode", "codex"}
 
 // KeyName helpers produce the same Redis key names as task.py.
 func TaskKey(taskID, field string) string   { return "task:" + taskID + ":" + field }
