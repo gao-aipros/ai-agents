@@ -1,5 +1,5 @@
 {{define "request-form"}}
-<form id="new-request"
+<form id="new-request" method="post"
       hx-post="/api/requests"
       hx-target="#request-form-container"
       hx-swap="innerHTML"

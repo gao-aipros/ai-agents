@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+const apiKeyCookieName = "webui_api_key"
+
 // ── auth ──────────────────────────────────────────────────────────────────
 
 var apiKey string
@@ -49,29 +51,53 @@ func sanitizeQueryMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// authMiddleware validates the Authorization: Bearer header or ?api_key= query
-// parameter when WEBUI_API_KEY is configured. Both read and write endpoints require auth.
+// authMiddleware validates the Authorization: Bearer header, ?api_key= query
+// parameter, or webui_api_key cookie when WEBUI_API_KEY is configured. When the
+// API key is provided via query string or header, it is persisted as a session
+// cookie so subsequent navigation (links, HTMX requests) stays authenticated.
 func authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Static assets don't require authentication
+		if strings.HasPrefix(r.URL.Path, "/static/") {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if apiKey == "" {
 			next.ServeHTTP(w, r)
 			return
 		}
 		token := ""
+		sourceIsQueryOrHeader := false
 		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
 			token = strings.TrimPrefix(auth, "Bearer ")
+			sourceIsQueryOrHeader = true
 		} else if v := r.Context().Value(ctxQueryAPIKey); v != nil {
 			token = v.(string)
+			sourceIsQueryOrHeader = true
 		} else if q := r.URL.Query().Get("api_key"); q != "" {
 			token = q
+			sourceIsQueryOrHeader = true
+		} else if ck, err := r.Cookie(apiKeyCookieName); err == nil && ck.Value != "" {
+			token = ck.Value
 		}
 		if token == "" {
-			Error(w, http.StatusUnauthorized, "missing API key (provide Authorization: Bearer header or ?api_key= query parameter)")
+			Error(w, http.StatusUnauthorized, "missing API key (provide Authorization: Bearer header, ?api_key= query parameter, or webui_api_key cookie)")
 			return
 		}
 		if token != apiKey {
 			Error(w, http.StatusUnauthorized, "invalid API key")
 			return
+		}
+		// Persist the API key as a session cookie so subsequent navigation works
+		// without re-sending ?api_key= on every link.
+		if sourceIsQueryOrHeader {
+			http.SetCookie(w, &http.Cookie{
+				Name:     apiKeyCookieName,
+				Value:    token,
+				Path:     "/",
+				HttpOnly: true,
+				SameSite: http.SameSiteStrictMode,
+			})
 		}
 		next.ServeHTTP(w, r)
 	})
