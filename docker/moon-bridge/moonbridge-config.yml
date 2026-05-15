@@ -4,15 +4,15 @@ server:
   addr: "0.0.0.0:38440"
 
 defaults:
-  model: "deepseek-v4-pro"
+  model: "moonbridge"
   max_tokens: 32768
 
 models:
   deepseek-v4-pro:
     context_window: 1000000
-    max_output_tokens: 32768
+    max_output_tokens: 128000
     display_name: "DeepSeek V4 Pro"
-    default_reasoning_level: "max"
+    default_reasoning_level: "high"
     supported_reasoning_levels:
       - effort: "low"
       - effort: "medium"
@@ -23,9 +23,9 @@ models:
 
 providers:
   deepseek:
-    base_url: "https://api.deepseek.com"
+    base_url: "https://api.deepseek.com/anthropic"
     api_key: "${DEEPSEEK_API_KEY}"
-    protocol: "openai-chat"
+    protocol: "anthropic"
     offers:
       - model: deepseek-v4-pro
         pricing:
@@ -33,10 +33,13 @@ providers:
           output_price: 1.10
 
 routes:
-  deepseek-v4-pro:
+  moonbridge:
     model: deepseek-v4-pro
     provider: deepseek
 
 extensions:
   deepseek_v4:
     enabled: true
+    config:
+      reinforce_instructions: true
+      reinforce_prompt: "[System Reminder]: Please pay close attention to the system instructions...\n[User]:"

@@ -1,3 +1,9 @@
-[openai]
+model = "moonbridge"
+model_provider = "moonbridge"
+model_context_window = 1000000
+model_max_output_tokens = 32768
+
+[model_providers.moonbridge]
+name = "Moon Bridge"
 base_url = "http://moon-bridge:38440/v1"
-api_key = "any-non-empty-value"
+wire_api = "responses"

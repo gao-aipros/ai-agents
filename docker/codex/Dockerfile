@@ -33,11 +33,12 @@ RUN mkdir -p /home/agent/.codex && chown -R agent:agent /home/agent/.codex
 
 # Codex config (static — always points at moon-bridge service)
 COPY --chown=agent:agent docker/codex/config.toml /home/agent/.codex/config.toml
+COPY --chown=agent:agent docker/codex/models_catalog.json /home/agent/.codex/models_catalog.json
 
-# Agent instructions
-COPY --chown=agent:agent docker/codex/AGENTS.md /home/agent/AGENTS.md
+# Agent instructions (global scope: ~/.codex/AGENTS.md)
+COPY --chown=agent:agent docker/codex/AGENTS.md /home/agent/.codex/AGENTS.md
 
-ENV AGENT_CMD="codex exec --model deepseek-v4-pro --yolo --sandbox danger-full-access --skip-git-repo-check"
+ENV AGENT_CMD="codex exec --yolo --sandbox danger-full-access --skip-git-repo-check"
 
 USER agent
 ENTRYPOINT ["worker-go", "codex"]
