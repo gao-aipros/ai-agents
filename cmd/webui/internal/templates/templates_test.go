@@ -57,11 +57,44 @@ func TestBaseData_NilInput(t *testing.T) {
 func TestBaseData_NonMapInput(t *testing.T) {
 	r := &Renderer{Theme: "light", CSRFToken: "tok", WorkerTypes: []string{}}
 
-	// Passing a non-map type should still produce a working map.
+	// Passing a non-map type should store it under the "Data" key.
 	result := r.baseData("not a map")
 
 	if result["Theme"] != "light" {
 		t.Errorf("Theme = %v, want 'light'", result["Theme"])
+	}
+	if result["Data"] != "not a map" {
+		t.Errorf("Data = %v, want 'not a map'", result["Data"])
+	}
+}
+
+func TestBaseData_SubmitResult(t *testing.T) {
+	r := &Renderer{Theme: "dark", CSRFToken: "tok", WorkerTypes: []string{}}
+
+	// The request-submitted template receives a *request.SubmitResult struct.
+	// Verify that its fields are accessible via .Data.
+	type SubmitResult struct {
+		ThreadID  string
+		RequestID string
+		Status    string
+	}
+	sr := &SubmitResult{
+		ThreadID:  "thread-abc-123",
+		RequestID: "req-xyz-456",
+		Status:    "submitted",
+	}
+	result := r.baseData(sr)
+
+	if result["Data"] != sr {
+		t.Error("Data should be the SubmitResult pointer itself")
+	}
+
+	data, ok := result["Data"].(*SubmitResult)
+	if !ok {
+		t.Fatal("Data is not a *SubmitResult")
+	}
+	if data.ThreadID != "thread-abc-123" {
+		t.Errorf("Data.ThreadID = %q, want 'thread-abc-123'", data.ThreadID)
 	}
 }
 

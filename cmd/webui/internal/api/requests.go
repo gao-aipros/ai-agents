@@ -66,7 +66,11 @@ func (rs *requestsResource) submit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if IsHTMX(r) {
-		Partial(w, rs.renderer, "request-submitted", result)
+		if r.FormValue("from_thread") == "true" {
+			Partial(w, rs.renderer, "reply-confirmed", result)
+		} else {
+			Partial(w, rs.renderer, "request-submitted", result)
+		}
 	} else {
 		Respond(w, r, http.StatusAccepted, result)
 	}

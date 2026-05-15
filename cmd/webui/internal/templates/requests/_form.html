@@ -39,10 +39,19 @@
     &mdash; <a href="/threads/{{.Data.ThreadID}}">View thread</a>
   </p>
 </div>
+{{if not .IsReply}}
 <button class="btn btn-sm mt-16"
         hx-get="/api/requests/_form"
         hx-target="#request-form-container"
         hx-swap="innerHTML">
   + New request
 </button>
+{{end}}
+{{end}}
+
+{{define "reply-confirmed"}}
+<div class="banner banner-info">
+  <strong>Follow-up submitted</strong>
+</div>
+<a href="/threads/{{.Data.ThreadID}}" class="btn btn-sm mt-16">Send another follow-up</a>
 {{end}}
