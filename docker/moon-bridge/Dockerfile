@@ -1,6 +1,10 @@
 FROM golang:1.26.3-trixie AS build
 
-RUN git clone https://github.com/ZhiYi-R/moon-bridge.git /src
+ARG MOON_BRIDGE_REF=0023e286e9bf
+
+RUN git clone https://github.com/ZhiYi-R/moon-bridge.git /src && \
+    cd /src && \
+    git checkout ${MOON_BRIDGE_REF}
 WORKDIR /src
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/moonbridge ./cmd/moonbridge
 

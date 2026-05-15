@@ -7,4 +7,4 @@ set -e
 sed "s|\${DEEPSEEK_API_KEY}|${DEEPSEEK_API_KEY}|g" \
     /etc/moonbridge/config.yml.tmpl > /tmp/config.yml
 
-exec moonbridge -config /tmp/config.yml -addr 0.0.0.0:38440
+exec moonbridge -config /tmp/config.yml
