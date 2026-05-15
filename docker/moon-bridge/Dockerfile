@@ -10,6 +10,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/moonbri
 
 FROM debian:trixie
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /out/moonbridge /usr/local/bin/moonbridge
 
 COPY docker/moon-bridge/moonbridge-config.yml /etc/moonbridge/config.yml.tmpl
