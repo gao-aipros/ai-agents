@@ -41,9 +41,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN mkdir -p /workspace /home/agent/.config && chown agent:agent /workspace /home/agent/.config
 
-ARG GH_TOKEN
-ARG GH_HOST=github.com
-ENV GH_TOKEN=${GH_TOKEN} \
-    GH_HOST=${GH_HOST}
+ENV GH_HOST=github.com
 
 WORKDIR /workspace
