@@ -50,7 +50,7 @@ var execCommand = func(ctx context.Context, args []string, dir string) (stdout, 
 
 func main() {
 	if len(os.Args) < 2 {
-		die("usage: worker <claude|copilot|opencode>")
+		die("usage: worker <claude|copilot|opencode|codex>")
 	}
 	workerType := os.Args[1]
 	if !validWorker(workerType) {

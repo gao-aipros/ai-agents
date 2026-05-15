@@ -1209,6 +1209,9 @@ func TestValidWorker(t *testing.T) {
 	if !validWorker("opencode") {
 		t.Error("opencode should be valid")
 	}
+	if !validWorker("codex") {
+		t.Error("codex should be valid")
+	}
 	if validWorker("invalid") {
 		t.Error("invalid should not be valid")
 	}

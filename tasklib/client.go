@@ -14,7 +14,7 @@ const (
 	LockTTL   = 2100 * time.Second   // REQUEST_TIMEOUT(1800) + 300s margin
 )
 
-// Valid worker types — must match task.py WORKERS.
+// Valid worker types.
 var WorkerTypes = []string{"claude", "copilot", "opencode", "codex"}
 
 // KeyName helpers produce the same Redis key names as task.py.

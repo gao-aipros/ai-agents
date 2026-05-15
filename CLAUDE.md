@@ -4,22 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture
 
-Multi-agent Docker orchestration where a master agent delegates tasks to worker agents (Claude Code, Copilot, OpenCode). All agents run in Docker containers, communicating via a Redis task queue (control plane) and a shared `/workspace` volume (data plane).
+Multi-agent Docker orchestration where a master agent delegates tasks to worker agents (Claude Code, Copilot, OpenCode, Codex). All agents run in Docker containers, communicating via a Redis task queue (control plane) and a shared `/workspace` volume (data plane).
 
 **Image dependency layers:**
 
 ```
 ai-base (debian:trixie + gh, git, jq, python3, redis-tools, curl, ssh)
   ├─ worker-base    (ai-base + Go SDK + gcc/make + worker-go)
-  │   ├─ copilot     (worker-base + copilot CLI)
-  │   ├─ opencode    (worker-base + opencode CLI)
-  │   └─ worker-claude (worker-base + claude CLI)
+  │   ├─ copilot         (worker-base + copilot CLI)
+  │   ├─ opencode        (worker-base + opencode CLI)
+  │   ├─ worker-claude   (worker-base + claude CLI)
+  │   └─ codex           (worker-base + codex CLI + moon-bridge)
   └─ master-agent   (ai-base + claude CLI + task-go + webui)
 ```
 
 The master agent delegates tasks via `task enqueue` to a Redis task queue. Long-running worker containers (one per agent type) dequeue tasks via `BLMOVE`, execute them with full thread context, and post results back to Redis. All containers share a `/workspace` volume for file exchange. Auth tokens (`ANTHROPIC_AUTH_TOKEN`, per-agent `GH_TOKEN`) are passed via environment variables.
 
-All agents use DeepSeek as the backend. Claude Code and Copilot use the Anthropic-compatible API (`https://api.deepseek.com/anthropic`); OpenCode uses DeepSeek's native API.
+All agents use DeepSeek as the backend. Claude Code and Copilot use the Anthropic-compatible API (`https://api.deepseek.com/anthropic`); OpenCode uses DeepSeek's native API; Codex uses the Chat Completions API via a moon-bridge proxy that translates OpenAI Responses API calls.
 
 Each agent gets its own GitHub token (`MASTER_GH_TOKEN`, `WORKER_CLAUDE_GH_TOKEN`, etc.) for isolation and rate limiting.
 
@@ -46,6 +47,7 @@ wait
 docker build --load -t copilot:latest -f docker/copilot/Dockerfile . &
 docker build --load -t opencode:latest -f docker/opencode/Dockerfile . &
 docker build --load -t worker-claude:latest -f docker/worker-claude/Dockerfile . &
+docker build --load -t codex:latest -f docker/codex/Dockerfile . &
 wait
 ```
 
@@ -92,6 +94,10 @@ docker buildx build --platform linux/amd64,linux/arm64 --push \
   --build-arg WORKER_BASE_IMAGE=ghcr.io/gao-aipros/worker-base:latest \
   -t ghcr.io/gao-aipros/worker-claude:latest \
   -f docker/worker-claude/Dockerfile . &
+docker buildx build --platform linux/amd64,linux/arm64 --push \
+  --build-arg WORKER_BASE_IMAGE=ghcr.io/gao-aipros/worker-base:latest \
+  -t ghcr.io/gao-aipros/codex:latest \
+  -f docker/codex/Dockerfile . &
 wait
 ```
 
@@ -112,7 +118,7 @@ Build stages use `debian:trixie` (Docker Hub), which is already multi-arch. Go b
 
 ## CI
 
-GitHub Actions workflow at `.github/workflows/build-images.yml`. Triggers on push to `main` or manual `workflow_dispatch`. Pushes to `ghcr.io/gao-aipros/<image>:latest`. Single job builds Go binaries first, then 5 images in 3 phases (phase 1: `ai-base`, phase 2: `worker-base` and `master-agent` in parallel, phase 3: `copilot`, `opencode`, `worker-claude` in parallel).
+GitHub Actions workflow at `.github/workflows/build-images.yml`. Triggers on push to `main` or manual `workflow_dispatch`. Pushes to `ghcr.io/gao-aipros/<image>:latest`. Single job builds Go binaries first, then 6 images in 3 phases (phase 1: `ai-base`, phase 2: `worker-base` and `master-agent` in parallel, phase 3: `copilot`, `opencode`, `worker-claude`, `codex` in parallel).
 
 ## Environment
 
@@ -120,4 +126,4 @@ See `.env.example` for all variables. Key ones:
 - `MASTER_GH_TOKEN` / `WORKER_CLAUDE_GH_TOKEN` / etc. — per-agent GitHub auth for `gh` CLI
 - `DEEPSEEK_API_KEY` — shared by all agents
 - `REDIS_HOST` / `REDIS_PORT` — Redis connection (task queue)
-- Docker image overrides (compose-level): `WORKER_CLAUDE_IMAGE`, `WORKER_COPILOT_IMAGE`, `WORKER_OPENCODE_IMAGE`, `MASTER_AGENT_IMAGE`
+- Docker image overrides (compose-level): `WORKER_CLAUDE_IMAGE`, `WORKER_COPILOT_IMAGE`, `WORKER_OPENCODE_IMAGE`, `WORKER_CODEX_IMAGE`, `MASTER_AGENT_IMAGE`
