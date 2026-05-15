@@ -1,7 +1,7 @@
 ARG WORKER_BASE_IMAGE=worker-base:latest
 
 # Stage 1: build moon-bridge from source
-FROM golang:1.25-bookworm AS moon-bridge-build
+FROM golang:1.26.3-trixie AS moon-bridge-build
 
 ARG MOON_BRIDGE_REF=0023e286e9bf
 
