@@ -37,7 +37,7 @@ COPY --chown=agent:agent docker/codex/config.toml /home/agent/.codex/config.toml
 # Agent instructions
 COPY --chown=agent:agent docker/codex/AGENTS.md /home/agent/AGENTS.md
 
-ENV AGENT_CMD="codex exec --model deepseek-v4-pro --yolo --sandbox danger-full-access --skip-git-repo-check"
+ENV AGENT_CMD="codex exec --yolo --sandbox danger-full-access --skip-git-repo-check"
 
 USER agent
 ENTRYPOINT ["worker-go", "codex"]
