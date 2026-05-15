@@ -32,11 +32,11 @@
 {{end}}
 
 {{define "request-submitted"}}
-<div class="banner banner-info" style="background:var(--color-info-bg);border-color:var(--color-info);color:var(--color-info)">
+<div class="banner banner-info">
   <strong>Request submitted</strong>
   <p style="margin-top:8px">
-    Thread: <a href="/threads/{{.ThreadID}}" class="mono">{{.ThreadID}}</a>
-    &mdash; <a href="/threads/{{.ThreadID}}">View thread</a>
+    Thread: <a href="/threads/{{.Data.ThreadID}}" class="mono">{{.Data.ThreadID}}</a>
+    &mdash; <a href="/threads/{{.Data.ThreadID}}">View thread</a>
   </p>
 </div>
 <button class="btn btn-sm mt-16"

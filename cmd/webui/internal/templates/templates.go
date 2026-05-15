@@ -80,12 +80,18 @@ func New() (*Renderer, error) {
 
 // baseData merges data with base template variables.
 // Always allocates a new map to avoid mutating caller's data.
+// For map data, keys are merged into the top level (templates access them
+// directly, e.g. {{.Threads}}). For non-map/non-nil data (e.g. a struct),
+// the value is stored under the key "Data" (templates access it via
+// {{.Data.FieldName}}).
 func (r *Renderer) baseData(data interface{}) map[string]interface{} {
 	m := make(map[string]interface{})
 	if existing, ok := data.(map[string]interface{}); ok {
 		for k, v := range existing {
 			m[k] = v
 		}
+	} else if data != nil {
+		m["Data"] = data
 	}
 	m["Theme"] = r.Theme
 	m["HtmxSrc"] = r.HtmxSrc
