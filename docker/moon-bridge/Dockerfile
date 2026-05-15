@@ -10,7 +10,6 @@ COPY --from=build /out/moonbridge /usr/local/bin/moonbridge
 
 COPY docker/moon-bridge/moonbridge-config.yml /etc/moonbridge/config.yml.tmpl
 COPY docker/moon-bridge/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
 
 EXPOSE 38440
 ENTRYPOINT ["/entrypoint.sh"]
