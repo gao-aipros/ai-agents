@@ -23,20 +23,52 @@ func init() {
 	}
 }
 
-// authMiddleware validates the Authorization: Bearer header when WEBUI_API_KEY
-// is configured. Both read and write endpoints require auth.
+type contextKey string
+
+const ctxQueryAPIKey contextKey = "query_api_key"
+
+// sanitizeQueryMiddleware strips sensitive query parameters (api_key) from
+// r.URL.RawQuery and r.RequestURI so they don't appear in logs. The value is
+// saved to request context so authMiddleware can read it later. Must run
+// before chimw.Logger.
+func sanitizeQueryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if key := q.Get("api_key"); key != "" {
+			r = r.WithContext(context.WithValue(r.Context(), ctxQueryAPIKey, key))
+			q.Del("api_key")
+			r.URL.RawQuery = q.Encode()
+			if r.RequestURI != "" {
+				r.RequestURI = r.URL.Path
+				if r.URL.RawQuery != "" {
+					r.RequestURI += "?" + r.URL.RawQuery
+				}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// authMiddleware validates the Authorization: Bearer header or ?api_key= query
+// parameter when WEBUI_API_KEY is configured. Both read and write endpoints require auth.
 func authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if apiKey == "" {
 			next.ServeHTTP(w, r)
 			return
 		}
-		auth := r.Header.Get("Authorization")
-		if !strings.HasPrefix(auth, "Bearer ") {
-			Error(w, http.StatusUnauthorized, "missing Authorization header")
+		token := ""
+		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+			token = strings.TrimPrefix(auth, "Bearer ")
+		} else if v := r.Context().Value(ctxQueryAPIKey); v != nil {
+			token = v.(string)
+		} else if q := r.URL.Query().Get("api_key"); q != "" {
+			token = q
+		}
+		if token == "" {
+			Error(w, http.StatusUnauthorized, "missing API key (provide Authorization: Bearer header or ?api_key= query parameter)")
 			return
 		}
-		token := strings.TrimPrefix(auth, "Bearer ")
 		if token != apiKey {
 			Error(w, http.StatusUnauthorized, "invalid API key")
 			return

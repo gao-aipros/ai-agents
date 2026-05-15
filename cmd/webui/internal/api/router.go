@@ -21,6 +21,7 @@ func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templ
 	r := chi.NewRouter()
 
 	// Middleware stack
+	r.Use(sanitizeQueryMiddleware)
 	r.Use(chimw.Logger)
 	r.Use(chimw.RealIP)
 	r.Use(recoverMiddleware)

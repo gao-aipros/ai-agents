@@ -86,6 +86,79 @@ func TestAuthMiddleware_KeySet_WrongBearer(t *testing.T) {
 	}
 }
 
+func TestAuthMiddleware_KeySet_ValidQueryParam(t *testing.T) {
+	oldKey := apiKey
+	apiKey = "test-secret"
+	defer func() { apiKey = oldKey }()
+
+	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r := httptest.NewRequest("GET", "/api/health?api_key=test-secret", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestAuthMiddleware_KeySet_WrongQueryParam(t *testing.T) {
+	oldKey := apiKey
+	apiKey = "test-secret"
+	defer func() { apiKey = oldKey }()
+
+	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r := httptest.NewRequest("GET", "/api/health?api_key=wrong-key", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAuthMiddleware_KeySet_EmptyQueryParam(t *testing.T) {
+	oldKey := apiKey
+	apiKey = "test-secret"
+	defer func() { apiKey = oldKey }()
+
+	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r := httptest.NewRequest("GET", "/api/health?api_key=", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d (empty api_key should fail)", w.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAuthMiddleware_KeySet_HeaderOverridesQueryParam(t *testing.T) {
+	oldKey := apiKey
+	apiKey = "test-secret"
+	defer func() { apiKey = oldKey }()
+
+	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r := httptest.NewRequest("GET", "/api/health?api_key=wrong-key", nil)
+	r.Header.Set("Authorization", "Bearer test-secret")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (header should take precedence over query param)", w.Code, http.StatusOK)
+	}
+}
+
 func TestAuthMiddleware_KeySet_WrongScheme(t *testing.T) {
 	oldKey := apiKey
 	apiKey = "test-secret"
@@ -332,6 +405,122 @@ func TestRecoverMiddleware_Panic(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+}
+
+// ── sanitize query middleware tests ─────────────────────────────────────────
+
+func TestSanitizeQuery_StripsAPIKeyFromRawQuery(t *testing.T) {
+	handler := sanitizeQueryMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RawQuery == "other=1" && !strings.Contains(r.URL.RawQuery, "api_key") {
+			w.WriteHeader(http.StatusOK)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+
+	r := httptest.NewRequest("GET", "/api/health?api_key=secret&other=1", nil)
+	// Simulate server parse: set RequestURI as real HTTP server does
+	r.RequestURI = r.URL.String()
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (RawQuery=%q)", w.Code, http.StatusOK, r.URL.RawQuery)
+	}
+}
+
+func TestSanitizeQuery_StripsAPIKeyFromRequestURI(t *testing.T) {
+	handler := sanitizeQueryMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.RequestURI, "api_key") && strings.Contains(r.RequestURI, "other=1") {
+			w.WriteHeader(http.StatusOK)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+
+	r := httptest.NewRequest("GET", "/api/health?api_key=secret&other=1", nil)
+	r.RequestURI = r.URL.String()
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (RequestURI=%q)", w.Code, http.StatusOK, r.RequestURI)
+	}
+}
+
+func TestSanitizeQuery_StoresAPIKeyInContext(t *testing.T) {
+	handler := sanitizeQueryMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		v := r.Context().Value(ctxQueryAPIKey)
+		if v == nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if v.(string) != "secret" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r := httptest.NewRequest("GET", "/api/health?api_key=secret", nil)
+	r.RequestURI = r.URL.String()
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestSanitizeQuery_NoAPIKeyUnchanged(t *testing.T) {
+	handler := sanitizeQueryMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RawQuery == "foo=bar" {
+			w.WriteHeader(http.StatusOK)
+		} else {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+
+	r := httptest.NewRequest("GET", "/api/health?foo=bar", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (RawQuery=%q)", w.Code, http.StatusOK, r.URL.RawQuery)
+	}
+}
+
+// TestSanitizeBeforeLogger verifies the middleware ordering: sanitize strips
+// api_key before Logger would see it, while authMiddleware still authenticates
+// successfully via the context value.
+func TestSanitizeBeforeLogger_AuthPasses(t *testing.T) {
+	oldKey := apiKey
+	apiKey = "test-secret"
+	defer func() { apiKey = oldKey }()
+
+	var loggedURI string
+
+	// Simulate full stack: sanitize → logger → auth
+	handler := sanitizeQueryMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Logger would see this RequestURI
+		loggedURI = r.RequestURI
+		// Then auth reads from context (set by sanitize)
+		authMiddleware(http.HandlerFunc(func(w2 http.ResponseWriter, r2 *http.Request) {
+			w2.WriteHeader(http.StatusOK)
+		})).ServeHTTP(w, r)
+	}))
+
+	r := httptest.NewRequest("GET", "/api/health?api_key=test-secret", nil)
+	r.RequestURI = r.URL.String()
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+	if strings.Contains(loggedURI, "api_key") {
+		t.Errorf("RequestURI visible to Logger still contains api_key: %q", loggedURI)
 	}
 }
 
