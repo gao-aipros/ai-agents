@@ -57,6 +57,11 @@ func sanitizeQueryMiddleware(next http.Handler) http.Handler {
 // cookie so subsequent navigation (links, HTMX requests) stays authenticated.
 func authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Static assets don't require authentication
+		if strings.HasPrefix(r.URL.Path, "/static/") {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if apiKey == "" {
 			next.ServeHTTP(w, r)
 			return
