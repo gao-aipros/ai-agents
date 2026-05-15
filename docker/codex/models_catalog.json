@@ -3,7 +3,25 @@
     {
       "slug": "deepseek-v4-pro",
       "display_name": "DeepSeek V4 Pro",
-      "supported_reasoning_levels": [],
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": ""
+        },
+        {
+          "effort": "medium",
+          "description": ""
+        },
+        {
+          "effort": "high",
+          "description": ""
+        },
+        {
+          "effort": "max",
+          "description": ""
+        }
+      ],
       "shell_type": "unified_exec",
       "visibility": "list",
       "supported_in_api": true,
@@ -36,7 +54,25 @@
     {
       "slug": "moonbridge",
       "display_name": "Moonbridge",
-      "supported_reasoning_levels": [],
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": ""
+        },
+        {
+          "effort": "medium",
+          "description": ""
+        },
+        {
+          "effort": "high",
+          "description": ""
+        },
+        {
+          "effort": "max",
+          "description": ""
+        }
+      ],
       "shell_type": "unified_exec",
       "visibility": "list",
       "supported_in_api": true,
