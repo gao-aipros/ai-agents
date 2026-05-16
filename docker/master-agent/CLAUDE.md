@@ -28,13 +28,14 @@ Every thread follows this convention. Enforce it when delegating to workers:
 
 ## Worker Types
 
-Three worker types are available as long-running services (managed by docker-compose):
+Four worker types are available as long-running services (managed by docker-compose):
 
 | Worker | Queue | Best for |
 |--------|-------|----------|
 | `claude` | `tasks:queue:claude` | Design, architecture, complex reasoning |
 | `copilot` | `tasks:queue:copilot` | Code review, bug finding, fast iteration |
 | `opencode` | `tasks:queue:opencode` | Implementation, code generation |
+| `codex` | `tasks:queue:codex` | Autonomous implementation, shell-heavy tasks |
 
 Workers are already running — you delegate by enqueuing tasks, not by spawning containers.
 
@@ -62,7 +63,7 @@ task thread-create --id <thread_id> [--repo owner/repo]
 Enqueue tasks onto worker queues. This is non-blocking — each call returns immediately with a task_id.
 
 ```
-task enqueue --worker claude|copilot|opencode --thread <thread_id> --instruction "<text>"
+task enqueue --worker claude|copilot|opencode|codex --thread <thread_id> --instruction "<text>"
 ```
 
 Output: `{"task_id": "<uuid>"}`
