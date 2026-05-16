@@ -257,6 +257,28 @@ func TestPage_RendersCorrectTemplate(t *testing.T) {
 	}
 }
 
+func TestStartCollapsed(t *testing.T) {
+	tests := []struct {
+		msgType string
+		want    bool
+	}{
+		{"plan", true},
+		{"tool_call", true},
+		{"request", false},
+		{"response", false},
+		{"error", false},
+		{"delegate", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.msgType, func(t *testing.T) {
+			if got := startCollapsed(tt.msgType); got != tt.want {
+				t.Errorf("startCollapsed(%q) = %v, want %v", tt.msgType, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNew_DefaultsFromEnv(t *testing.T) {
 	r, err := New()
 	if err != nil {

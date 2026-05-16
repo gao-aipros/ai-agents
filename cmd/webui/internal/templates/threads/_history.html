@@ -3,13 +3,13 @@
 <div class="timeline">
 {{range .Messages}}
   {{$roleClass := roleClass .Role .Type}}
-  <div class="msg {{$roleClass}} type-{{.Type}}">
-    <div class="msg-meta">
+  <details class="msg {{$roleClass}} type-{{.Type}}" {{if not (startCollapsed .Type)}}open{{end}}>
+    <summary class="msg-meta">
       <span>{{badgeForRole .Role .Type}}</span>
       <span>{{.Timestamp}}</span>
-    </div>
+    </summary>
     <div class="msg-content">{{.Content}}</div>
-  </div>
+  </details>
 {{end}}
 </div>
 {{else}}

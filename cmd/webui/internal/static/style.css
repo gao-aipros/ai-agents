@@ -461,6 +461,21 @@ td.mono, th.mono { font-family: var(--font-mono); font-size: 12px; }
   box-shadow: var(--shadow-sm);
 }
 
+/* <details>/<summary> for collapsible messages */
+.timeline details.msg > summary {
+  list-style: none;           /* hide default disclosure triangle */
+  cursor: pointer;
+}
+
+.timeline details.msg > summary::-webkit-details-marker {
+  display: none;              /* hide triangle in WebKit */
+}
+
+.timeline details.msg > summary::marker {
+  display: none;
+  content: "";
+}
+
 .timeline .msg .msg-meta {
   font-size: 11px;
   color: var(--color-text-muted);
@@ -468,6 +483,14 @@ td.mono, th.mono { font-family: var(--font-mono); font-size: 12px; }
   display: flex;
   gap: 10px;
   align-items: center;
+}
+
+.timeline details.msg[open] > .msg-meta {
+  margin-bottom: 6px;
+}
+
+.timeline details.msg:not([open]) > .msg-meta {
+  margin-bottom: 0;           /* no gap when collapsed */
 }
 
 .timeline .msg .msg-content {

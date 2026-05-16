@@ -351,6 +351,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 	}()
 
 	completed := false
+	lastWritten := "" // dedup: skip response if identical to last assistant message
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 64*1024) // 64KB line buffer
 
@@ -381,7 +382,9 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 			continue
 
 		case "assistant":
-			h.handleAssistantMessage(ctx, threadID, &msg)
+			if content := h.handleAssistantMessage(ctx, threadID, &msg); content != "" {
+				lastWritten = content
+			}
 
 		case "result":
 			completed = true
@@ -391,6 +394,8 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 					errContent = fmt.Sprintf("claude error: subtype=%s", msg.Subtype)
 				}
 				h.writeErrorMessage(ctx, threadID, errContent)
+			} else if msg.Result == lastWritten {
+				h.completeThread(ctx, threadID)
 			} else {
 				h.writeResponseMessage(ctx, threadID, msg.Result)
 			}
@@ -442,7 +447,8 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 
 // handleAssistantMessage classifies assistant output as "plan" or "tool_call"
 // and writes it to thread history for live progress display.
-func (h *Handler) handleAssistantMessage(ctx context.Context, threadID string, msg *streamMessage) {
+// Returns the content written (empty string if nothing was written).
+func (h *Handler) handleAssistantMessage(ctx context.Context, threadID string, msg *streamMessage) string {
 	msgType := "plan"
 	if msg.Message != nil && hasToolUse(msg.Message.Content) {
 		msgType = "tool_call"
@@ -450,7 +456,7 @@ func (h *Handler) handleAssistantMessage(ctx context.Context, threadID string, m
 
 	text := extractText(msg)
 	if text == "" {
-		return
+		return ""
 	}
 
 	cleanCtx, cleanCancel := cleanupCtx()
@@ -461,6 +467,7 @@ func (h *Handler) handleAssistantMessage(ctx context.Context, threadID string, m
 		Content:   text,
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 	})
+	return text
 }
 
 func (h *Handler) writeResponseMessage(ctx context.Context, threadID, content string) {
@@ -498,6 +505,20 @@ func (h *Handler) writeErrorMessage(ctx context.Context, threadID, content strin
 
 	h.client.UpdateThread(cleanCtx, threadID, map[string]string{
 		"status": "error",
+	})
+}
+
+// completeThread marks the thread complete without appending a message.
+// Used when the final result matches the last assistant message (dedup).
+func (h *Handler) completeThread(ctx context.Context, threadID string) {
+	h.logger.Printf("thread=%s completed successfully (dedup)", threadID)
+
+	cleanCtx, cleanCancel := cleanupCtx()
+	defer cleanCancel()
+
+	h.client.SetThreadComplete(cleanCtx, threadID)
+	h.client.UpdateThread(cleanCtx, threadID, map[string]string{
+		"status": "complete",
 	})
 }
 
