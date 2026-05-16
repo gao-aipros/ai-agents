@@ -306,6 +306,13 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Read session ID before deleting Redis keys, since DeleteThread
+	// removes the key that GetThreadSessionID reads.
+	sessionID, err := tr.client.GetThreadSessionID(r.Context(), threadID)
+	if err != nil {
+		log.Printf("[webui] get session id error thread=%s: %v", threadID, err)
+	}
+
 	// Delete thread-level Redis keys first, so if it fails files remain intact.
 	if err := tr.client.DeleteThread(cleanupContext(), threadID); err != nil {
 		log.Printf("[webui] delete thread keys error thread=%s: %v", threadID, err)
@@ -320,10 +327,6 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Delete session file.
-	sessionID, err := tr.client.GetThreadSessionID(r.Context(), threadID)
-	if err != nil {
-		log.Printf("[webui] get session id error thread=%s: %v", threadID, err)
-	}
 	if sessionID != "" {
 		removeSessionFile(sessionID)
 	}

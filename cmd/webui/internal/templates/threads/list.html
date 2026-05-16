@@ -37,7 +37,7 @@
                 hx-delete="/api/threads/{{.ThreadID}}?confirm=true"
                 hx-confirm="Delete thread {{.ThreadID}}? This removes all data and workspace files."
                 hx-target="closest tr"
-                hx-swap="outerHTML">
+                hx-swap="delete">
           Delete
         </button>
       </td>
