@@ -36,6 +36,7 @@
   </div>
 </div>
 <div id="waiting-banner" hx-swap-oob="true"></div>
+<div id="cancel-action" hx-swap-oob="true"></div>
 {{else if .Running}}
 <div id="response-banner" hx-swap-oob="true"></div>
 <div id="waiting-banner" hx-swap-oob="true">
@@ -48,9 +49,17 @@
     <span class="elapsed" data-start="{{$.NowUnix}}">0s elapsed</span>
   </div>
 </div>
+<div id="cancel-action" hx-swap-oob="true">
+  <button class="btn btn-danger"
+          hx-post="/api/threads/{{.Thread.ThreadID}}/cancel"
+          hx-swap="none">
+    Cancel request
+  </button>
+</div>
 {{else}}
 <div id="response-banner" hx-swap-oob="true"></div>
 <div id="waiting-banner" hx-swap-oob="true"></div>
+<div id="cancel-action" hx-swap-oob="true"></div>
 {{end}}
 <div class="state-panel">
   <div class="state-item">
