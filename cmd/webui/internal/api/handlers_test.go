@@ -584,6 +584,32 @@ func TestHandleDeleteThread_LockHeld(t *testing.T) {
 	}
 }
 
+func TestHandleDeleteThread_ThreadLockHeld(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	threadID := "delete-thread-locked"
+	th.Client.CreateThread(context.Background(), threadID, "")
+
+	// Hold a thread lock (as Enqueue does) — delete should be rejected
+	ok, err := th.Client.LockThread(context.Background(), threadID, "task-1", tasklib.LockTTL)
+	if err != nil {
+		t.Fatalf("LockThread: %v", err)
+	}
+	if !ok {
+		t.Fatal("should have acquired thread lock")
+	}
+	defer th.Client.UnlockThread(context.Background(), threadID)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("DELETE", "/api/threads/"+threadID+"?confirm=true", nil)
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusConflict {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusConflict, w.Body.String())
+	}
+}
+
 // ── tasks ──────────────────────────────────────────────────────────────────
 
 func TestHandleListTasks(t *testing.T) {

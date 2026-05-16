@@ -293,8 +293,20 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 	}
 	defer tr.client.ReleaseRequestLock(cleanupContext(), threadID)
 
-	// Delete all Redis keys for this thread first, so if it fails
-	// we haven't removed files yet.
+	// Re-check ThreadLockKey after acquiring request lock to close the
+	// TOCTOU window between ListTasks and AcquireRequestLock. If a task
+	// was enqueued in between, ThreadLockKey will be held by Enqueue.
+	locked, err := tr.client.IsThreadLocked(r.Context(), threadID)
+	if err != nil {
+		serverError(w, "internal error", err)
+		return
+	}
+	if locked {
+		Error(w, http.StatusConflict, "thread has a pending task")
+		return
+	}
+
+	// Delete thread-level Redis keys first, so if it fails files remain intact.
 	if err := tr.client.DeleteThread(cleanupContext(), threadID); err != nil {
 		log.Printf("[webui] delete thread keys error thread=%s: %v", threadID, err)
 		serverError(w, "failed to delete thread", err)
@@ -308,7 +320,10 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Delete session file.
-	sessionID, _ := tr.client.GetThreadSessionID(r.Context(), threadID)
+	sessionID, err := tr.client.GetThreadSessionID(r.Context(), threadID)
+	if err != nil {
+		log.Printf("[webui] get session id error thread=%s: %v", threadID, err)
+	}
 	if sessionID != "" {
 		removeSessionFile(sessionID)
 	}
