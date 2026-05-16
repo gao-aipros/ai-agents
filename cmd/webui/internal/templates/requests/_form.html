@@ -32,17 +32,26 @@
 {{end}}
 
 {{define "request-submitted"}}
-<div class="banner banner-info" style="background:var(--color-info-bg);border-color:var(--color-info);color:var(--color-info)">
+<div class="banner banner-info">
   <strong>Request submitted</strong>
   <p style="margin-top:8px">
-    Thread: <a href="/threads/{{.ThreadID}}" class="mono">{{.ThreadID}}</a>
-    &mdash; <a href="/threads/{{.ThreadID}}">View thread</a>
+    Thread: <a href="/threads/{{.Data.ThreadID}}" class="mono">{{.Data.ThreadID}}</a>
+    &mdash; <a href="/threads/{{.Data.ThreadID}}">View thread</a>
   </p>
 </div>
+{{if not .IsReply}}
 <button class="btn btn-sm mt-16"
         hx-get="/api/requests/_form"
         hx-target="#request-form-container"
         hx-swap="innerHTML">
   + New request
 </button>
+{{end}}
+{{end}}
+
+{{define "reply-confirmed"}}
+<div class="banner banner-info">
+  <strong>Follow-up submitted</strong>
+</div>
+<a href="/threads/{{.Data.ThreadID}}" class="btn btn-sm mt-16">Send another follow-up</a>
 {{end}}
