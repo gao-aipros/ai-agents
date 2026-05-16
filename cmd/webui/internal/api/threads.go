@@ -149,8 +149,25 @@ func (tr *threadsResource) history(w http.ResponseWriter, r *http.Request) {
 		serverError(w, "internal error", err)
 		return
 	}
+
+	running, _ := tr.client.IsRequestRunning(r.Context(), threadID)
+
 	if IsHTMX(r) {
-		Partial(w, tr.renderer, "thread-history", map[string]interface{}{"Messages": messages})
+		if q.Get("poll") == "1" {
+			Partial(w, tr.renderer, "thread-history-poll", map[string]interface{}{
+				"Messages":   messages,
+				"ThreadID":   threadID,
+				"Running":    running,
+				"NextOffset": offset + len(messages),
+			})
+		} else {
+			Partial(w, tr.renderer, "thread-history", map[string]interface{}{
+				"Messages": messages,
+				"ThreadID": threadID,
+				"Running":  running,
+				"MsgCount": len(messages),
+			})
+		}
 	} else {
 		Respond(w, r, http.StatusOK, messages)
 	}

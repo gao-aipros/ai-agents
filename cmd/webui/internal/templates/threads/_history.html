@@ -1,6 +1,6 @@
 {{define "thread-history"}}
 {{if .Messages}}
-<div class="timeline">
+<div class="timeline" id="thread-timeline">
 {{range .Messages}}
   {{$roleClass := roleClass .Role .Type}}
   <details class="msg {{$roleClass}} type-{{.Type}}" {{if not (startCollapsed .Type)}}open{{end}}>
@@ -12,7 +12,37 @@
   </details>
 {{end}}
 </div>
+{{if .Running}}
+<div id="history-poller"
+     hx-get="/api/threads/{{.ThreadID}}/history?offset={{.MsgCount}}&poll=1"
+     hx-trigger="every {{.PollThread}}s"
+     hx-swap="outerHTML">
+</div>
+{{end}}
 {{else}}
 <div class="text-center text-muted" style="padding:24px">No messages yet</div>
+{{end}}
+{{end}}
+
+{{define "thread-history-poll"}}
+{{$nextOffset := .NextOffset}}
+{{range .Messages}}
+<details class="msg {{roleClass .Role .Type}} type-{{.Type}}" {{if not (startCollapsed .Type)}}open{{end}}
+         hx-swap-oob="beforeend:#thread-timeline">
+  <summary class="msg-meta">
+    <span>{{badgeForRole .Role .Type}}</span>
+    <span>{{.Timestamp}}</span>
+  </summary>
+  <div class="msg-content">{{.Content}}</div>
+</details>
+{{end}}
+{{if .Running}}
+<div id="history-poller"
+     hx-get="/api/threads/{{.ThreadID}}/history?offset={{$nextOffset}}&poll=1"
+     hx-trigger="every {{.PollThread}}s"
+     hx-swap="outerHTML">
+</div>
+{{else}}
+<div id="history-poller" hx-swap-oob="true"></div>
 {{end}}
 {{end}}

@@ -54,4 +54,10 @@
   <strong>Follow-up submitted</strong>
 </div>
 <a href="/threads/{{.Data.ThreadID}}" class="btn btn-sm mt-16">Send another follow-up</a>
+<div id="thread-history" hx-swap-oob="true"
+     hx-get="/api/threads/{{.Data.ThreadID}}/history?tail=50"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+  <div class="text-center text-muted"><span class="spinner"></span> Loading...</div>
+</div>
 {{end}}

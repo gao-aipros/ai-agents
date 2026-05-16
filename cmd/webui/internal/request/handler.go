@@ -189,6 +189,15 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 	// Create a context for the subprocess lifecycle
 	procCtx, cancel := context.WithTimeout(context.Background(), h.cfg.RequestTimeout)
 
+	// Clear previous completion state and mark thread as running.
+	// Must happen before the UI polls the thread state.
+	if err := h.client.ClearThreadComplete(ctx, threadID); err != nil {
+		h.logger.Printf("thread=%s ClearThreadComplete error: %v", threadID, err)
+	}
+	if err := h.client.UpdateThread(ctx, threadID, map[string]string{"status": "running"}); err != nil {
+		h.logger.Printf("thread=%s UpdateThread error: %v", threadID, err)
+	}
+
 	// Register the cancel function for external cancellation
 	h.mu.Lock()
 	h.cancels[threadID] = cancel

@@ -33,11 +33,11 @@
       </div>
       <div class="card">
         {{if .Running}}
-        <button class="btn btn-danger"
-                hx-post="/api/threads/{{$thread.ThreadID}}/cancel"
-                hx-swap="none">
-          Cancel request
-        </button>
+        <span id="cancel-action">
+          {{template "cancel-button" $thread.ThreadID}}
+        </span>
+        {{else}}
+        <span id="cancel-action"></span>
         {{end}}
         <button class="btn"
                 hx-post="/api/threads/{{$thread.ThreadID}}/keep"
@@ -83,7 +83,7 @@
     <h2>Messages</h2>
     <div id="thread-history"
          hx-get="/api/threads/{{$thread.ThreadID}}/history?tail=50"
-         hx-trigger="load{{if .Running}}, every {{.PollThread}}s{{end}}"
+         hx-trigger="load"
          hx-swap="innerHTML">
       <div class="text-center text-muted"><span class="spinner"></span> Loading...</div>
     </div>
