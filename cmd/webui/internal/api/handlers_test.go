@@ -959,6 +959,55 @@ func TestHandleThreadHistory_PollRunning(t *testing.T) {
 	}
 }
 
+func TestHandleThreadHistory_PollPreservesMsgCSSClasses(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	ctx := context.Background()
+	th.Client.CreateThread(ctx, "poll-css-thread", "")
+	th.Client.AppendMessage(ctx, "poll-css-thread", tasklib.Message{
+		Role: "master", Type: "response", Content: "styled response",
+		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+	})
+	th.Client.AcquireRequestLock(ctx, "poll-css-thread", "req-1", tasklib.LockTTL)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/threads/poll-css-thread/history?offset=0&poll=1", nil)
+	r.Header.Set("HX-Request", "true")
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	bodyStr := w.Body.String()
+
+	// OOB swap must be on a wrapper container, not on <details> directly.
+	// HTMX strips the wrapper for non-outerHTML swap styles, so <details>
+	// must be children of the OOB container to retain their CSS classes.
+	if strings.Contains(bodyStr, "<details class=\"msg") && strings.Contains(bodyStr, "hx-swap-oob") {
+		// If <details> itself has hx-swap-oob, the wrapper gets stripped
+		// and .msg CSS classes are lost.
+		if strings.Contains(bodyStr, "class=\"msg") {
+			beforeDetails := strings.Index(bodyStr, "class=\"msg")
+			afterDetails := strings.Index(bodyStr[beforeDetails:], "hx-swap-oob")
+			if afterDetails > 0 && afterDetails < 200 {
+				t.Errorf("hx-swap-oob must be on wrapper container, not on <details> directly. CSS classes will be stripped by HTMX.\nGot: %s", bodyStr)
+			}
+		}
+	}
+
+	// The <details> element must have the full CSS class with role and type.
+	if !strings.Contains(bodyStr, "class=\"msg role-master type-response") {
+		t.Errorf("expected <details> with class=\"msg role-master type-response\", got: %s", bodyStr)
+	}
+
+	// The OOB container must target thread-timeline.
+	if !strings.Contains(bodyStr, "beforeend:#thread-timeline") {
+		t.Errorf("expected OOB container targeting beforeend:#thread-timeline, got: %s", bodyStr)
+	}
+}
+
 // ── follow-up request clears complete flag ─────────────────────────────────
 
 func TestHandleSubmitRequest_FollowUpClearsComplete(t *testing.T) {
