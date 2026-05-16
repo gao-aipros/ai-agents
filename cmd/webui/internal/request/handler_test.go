@@ -405,6 +405,15 @@ func TestSubmit_ErrorResult(t *testing.T) {
 		t.Fatal("timeout waiting for subprocess to complete")
 	}
 
+	// Thread should be marked complete even on error (so UI stops polling).
+	complete, err := handler.client.IsThreadComplete(ctx, "err-thread")
+	if err != nil {
+		t.Fatalf("IsThreadComplete: %v", err)
+	}
+	if !complete {
+		t.Error("thread should be marked complete after error")
+	}
+
 	msgs, _ := handler.client.GetThreadHistory(ctx, "err-thread", 0, 0)
 	if len(msgs) < 2 {
 		t.Fatalf("expected user + error messages, got %d", len(msgs))

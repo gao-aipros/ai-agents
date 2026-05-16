@@ -489,6 +489,8 @@ func (h *Handler) writeErrorMessage(ctx context.Context, threadID, content strin
 	cleanCtx, cleanCancel := cleanupCtx()
 	defer cleanCancel()
 
+	h.client.SetThreadComplete(cleanCtx, threadID)
+
 	h.client.AppendMessage(cleanCtx, threadID, tasklib.Message{
 		Role:      "master",
 		Type:      "error",
