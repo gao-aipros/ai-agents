@@ -191,8 +191,12 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 
 	// Clear previous completion state and mark thread as running.
 	// Must happen before the UI polls the thread state.
-	h.client.ClearThreadComplete(ctx, threadID)
-	h.client.UpdateThread(ctx, threadID, map[string]string{"status": "running"})
+	if err := h.client.ClearThreadComplete(ctx, threadID); err != nil {
+		h.logger.Printf("thread=%s ClearThreadComplete error: %v", threadID, err)
+	}
+	if err := h.client.UpdateThread(ctx, threadID, map[string]string{"status": "running"}); err != nil {
+		h.logger.Printf("thread=%s UpdateThread error: %v", threadID, err)
+	}
 
 	// Register the cancel function for external cancellation
 	h.mu.Lock()

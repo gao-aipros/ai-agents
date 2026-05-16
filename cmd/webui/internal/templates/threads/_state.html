@@ -27,6 +27,14 @@
 {{end}}
 {{end}}
 
+{{define "cancel-button"}}
+<button class="btn btn-danger"
+        hx-post="/api/threads/{{.}}/cancel"
+        hx-swap="none">
+  Cancel request
+</button>
+{{end}}
+
 {{define "thread-state-oob"}}
 {{if .Thread}}
 {{if .Complete}}
@@ -50,11 +58,7 @@
   </div>
 </div>
 <div id="cancel-action" hx-swap-oob="true">
-  <button class="btn btn-danger"
-          hx-post="/api/threads/{{.Thread.ThreadID}}/cancel"
-          hx-swap="none">
-    Cancel request
-  </button>
+  {{template "cancel-button" .Thread.ThreadID}}
 </div>
 {{else}}
 <div id="response-banner" hx-swap-oob="true"></div>

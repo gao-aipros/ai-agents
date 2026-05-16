@@ -34,11 +34,7 @@
       <div class="card">
         {{if .Running}}
         <span id="cancel-action">
-        <button class="btn btn-danger"
-                hx-post="/api/threads/{{$thread.ThreadID}}/cancel"
-                hx-swap="none">
-          Cancel request
-        </button>
+          {{template "cancel-button" $thread.ThreadID}}
         </span>
         {{else}}
         <span id="cancel-action"></span>
