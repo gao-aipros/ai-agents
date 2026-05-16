@@ -245,6 +245,96 @@ func (tr *threadsResource) keep(w http.ResponseWriter, r *http.Request) {
 	Respond(w, r, http.StatusOK, map[string]string{"status": "kept"})
 }
 
+// DELETE /api/threads/{thread_id}
+func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) {
+	threadID := r.PathValue("thread_id")
+
+	if !request.ValidThreadID(threadID) {
+		Error(w, http.StatusBadRequest, "invalid thread_id")
+		return
+	}
+
+	if r.URL.Query().Get("confirm") != "true" {
+		Error(w, http.StatusBadRequest, "require ?confirm=true")
+		return
+	}
+
+	exists, err := tr.client.ThreadExists(r.Context(), threadID)
+	if err != nil {
+		serverError(w, "internal error", err)
+		return
+	}
+	if !exists {
+		Error(w, http.StatusNotFound, "thread not found")
+		return
+	}
+
+	tasks, err := tr.client.ListTasks(r.Context(), "", "", threadID, 0, 0)
+	if err != nil {
+		serverError(w, "internal error", err)
+		return
+	}
+	for _, t := range tasks {
+		switch t.Status {
+		case "running", "queued", "pending":
+			Error(w, http.StatusBadRequest, "thread has active tasks")
+			return
+		}
+	}
+
+	ok, err := tr.client.AcquireRequestLock(r.Context(), threadID, "deleting", tasklib.LockTTL)
+	if err != nil {
+		serverError(w, "internal error", err)
+		return
+	}
+	if !ok {
+		Error(w, http.StatusConflict, "thread is in use")
+		return
+	}
+	defer tr.client.ReleaseRequestLock(cleanupContext(), threadID)
+
+	// Re-check ThreadLockKey after acquiring request lock to close the
+	// TOCTOU window between ListTasks and AcquireRequestLock. If a task
+	// was enqueued in between, ThreadLockKey will be held by Enqueue.
+	locked, err := tr.client.IsThreadLocked(r.Context(), threadID)
+	if err != nil {
+		serverError(w, "internal error", err)
+		return
+	}
+	if locked {
+		Error(w, http.StatusConflict, "thread has a pending task")
+		return
+	}
+
+	// Read session ID before deleting Redis keys, since DeleteThread
+	// removes the key that GetThreadSessionID reads.
+	sessionID, err := tr.client.GetThreadSessionID(r.Context(), threadID)
+	if err != nil {
+		log.Printf("[webui] get session id error thread=%s: %v", threadID, err)
+	}
+
+	// Delete thread-level Redis keys before files, so if it fails files remain intact.
+	if err := tr.client.DeleteThread(cleanupContext(), threadID); err != nil {
+		log.Printf("[webui] delete thread keys error thread=%s: %v", threadID, err)
+		serverError(w, "failed to delete thread", err)
+		return
+	}
+
+	// Delete workspace files if they exist.
+	wp := workspacePath(threadID)
+	if err := removeWorkspace(wp); err != nil {
+		log.Printf("[webui] workspace delete error thread=%s dir=%s: %v", threadID, wp, err)
+	}
+
+	// Delete session file.
+	if sessionID != "" {
+		removeSessionFile(sessionID)
+	}
+
+	log.Printf("[webui] thread deleted thread=%s", threadID)
+	Respond(w, r, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
 // POST /api/threads/{thread_id}/reset-session
 func (tr *threadsResource) resetSession(w http.ResponseWriter, r *http.Request) {
 	threadID := r.PathValue("thread_id")

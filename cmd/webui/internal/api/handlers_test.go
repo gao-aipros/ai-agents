@@ -485,6 +485,131 @@ func TestHandleResetSession(t *testing.T) {
 	}
 }
 
+func TestHandleDeleteThread_NoConfirm(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	th.Client.CreateThread(context.Background(), "del-noconfirm", "")
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("DELETE", "/api/threads/del-noconfirm", nil)
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+}
+
+func TestHandleDeleteThread_NotFound(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("DELETE", "/api/threads/nonexistent?confirm=true", nil)
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusNotFound, w.Body.String())
+	}
+}
+
+func TestHandleDeleteThread_InvalidID(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("DELETE", "/api/threads/invalid:thread?confirm=true", nil)
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+}
+
+func TestHandleDeleteThread_Success(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	ctx := context.Background()
+	threadID := "delete-success"
+	th.Client.CreateThread(ctx, threadID, "repo/test")
+	th.Client.SetThreadSessionID(ctx, threadID, "session-to-delete")
+	th.Client.SetThreadComplete(ctx, threadID)
+	th.Client.AppendMessage(ctx, threadID, tasklib.Message{
+		Role: "user", Type: "request", Content: "hello",
+		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+	})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("DELETE", "/api/threads/"+threadID+"?confirm=true", nil)
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	// Thread should be gone from Redis
+	exists, err := th.Client.ThreadExists(ctx, threadID)
+	if err != nil {
+		t.Fatalf("ThreadExists after delete: %v", err)
+	}
+	if exists {
+		t.Error("thread should not exist in Redis after delete")
+	}
+}
+
+func TestHandleDeleteThread_LockHeld(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	threadID := "delete-locked"
+	th.Client.CreateThread(context.Background(), threadID, "")
+
+	// Hold a request lock — delete should be rejected
+	ok, err := th.Client.AcquireRequestLock(context.Background(), threadID, "req-1", tasklib.LockTTL)
+	if err != nil {
+		t.Fatalf("AcquireRequestLock: %v", err)
+	}
+	if !ok {
+		t.Fatal("should have acquired lock")
+	}
+	defer th.Client.ReleaseRequestLock(context.Background(), threadID)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("DELETE", "/api/threads/"+threadID+"?confirm=true", nil)
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusConflict {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusConflict, w.Body.String())
+	}
+}
+
+func TestHandleDeleteThread_ThreadLockHeld(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	threadID := "delete-thread-locked"
+	th.Client.CreateThread(context.Background(), threadID, "")
+
+	// Hold a thread lock (as Enqueue does) — delete should be rejected
+	ok, err := th.Client.LockThread(context.Background(), threadID, "task-1", tasklib.LockTTL)
+	if err != nil {
+		t.Fatalf("LockThread: %v", err)
+	}
+	if !ok {
+		t.Fatal("should have acquired thread lock")
+	}
+	defer th.Client.UnlockThread(context.Background(), threadID)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("DELETE", "/api/threads/"+threadID+"?confirm=true", nil)
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusConflict {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusConflict, w.Body.String())
+	}
+}
+
 // ── tasks ──────────────────────────────────────────────────────────────────
 
 func TestHandleListTasks(t *testing.T) {

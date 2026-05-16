@@ -211,6 +211,12 @@ func (c *Client) LockThread(ctx context.Context, threadID, taskID string, ttl ti
 	return c.rdb.SetNX(ctx, ThreadLockKey(threadID), taskID, ttl).Result()
 }
 
+// IsThreadLocked checks whether the thread lock key exists (a task is enqueued/pending).
+func (c *Client) IsThreadLocked(ctx context.Context, threadID string) (bool, error) {
+	exists, err := c.rdb.Exists(ctx, ThreadLockKey(threadID)).Result()
+	return exists > 0, err
+}
+
 // UnlockThread releases a thread lock. Safe to call multiple times (DEL is idempotent).
 func (c *Client) UnlockThread(ctx context.Context, threadID string) error {
 	return c.rdb.Del(ctx, ThreadLockKey(threadID)).Err()
@@ -251,6 +257,20 @@ func (c *Client) GetActiveTasks(ctx context.Context) (map[string]*TaskInfo, erro
 func (c *Client) ThreadExists(ctx context.Context, threadID string) (bool, error) {
 	exists, err := c.rdb.Exists(ctx, ThreadStateKey(threadID)).Result()
 	return exists > 0, err
+}
+
+// DeleteThread removes all Redis keys for a thread.
+func (c *Client) DeleteThread(ctx context.Context, threadID string) error {
+	keys := []string{
+		ThreadStateKey(threadID),
+		ThreadMessagesKey(threadID),
+		ThreadCompleteKey(threadID),
+		ThreadRunningKey(threadID),
+		ThreadLockKey(threadID),
+		ThreadSessionIDKey(threadID),
+		ThreadLastActivityKey(threadID),
+	}
+	return c.rdb.Del(ctx, keys...).Err()
 }
 
 // SetThreadTTL sets or refreshes TTL on all thread keys.

@@ -45,6 +45,9 @@
 </div>
 <div id="waiting-banner" hx-swap-oob="true"></div>
 <div id="cancel-action" hx-swap-oob="true"></div>
+<div id="followup-section" hx-swap-oob="true">
+  {{template "followup-form" .Thread.ThreadID}}
+</div>
 {{else if .Running}}
 <div id="response-banner" hx-swap-oob="true"></div>
 <div id="waiting-banner" hx-swap-oob="true">
