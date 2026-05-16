@@ -405,6 +405,15 @@ func TestSubmit_ErrorResult(t *testing.T) {
 		t.Fatal("timeout waiting for subprocess to complete")
 	}
 
+	// Thread should be marked complete even on error (so UI stops polling).
+	complete, err := handler.client.IsThreadComplete(ctx, "err-thread")
+	if err != nil {
+		t.Fatalf("IsThreadComplete: %v", err)
+	}
+	if !complete {
+		t.Error("thread should be marked complete after error")
+	}
+
 	msgs, _ := handler.client.GetThreadHistory(ctx, "err-thread", 0, 0)
 	if len(msgs) < 2 {
 		t.Fatalf("expected user + error messages, got %d", len(msgs))
@@ -689,6 +698,100 @@ func TestRequestError(t *testing.T) {
 	}
 	if ErrNoRunningRequest.Status != 404 {
 		t.Errorf("Status = %d, want 404", ErrNoRunningRequest.Status)
+	}
+}
+
+func TestDedup_ResponseMatchesLastAssistant(t *testing.T) {
+	handler, _, notify := newTestHandler(t)
+
+	// Emit an assistant message followed by a result with identical content.
+	// This is the normal Claude Code behavior: the final assistant message
+	// and the result carry the same text.
+	lines := []string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"The bug was on line 42, fixed it."}]}}`,
+		`{"type":"result","subtype":"success","is_error":false,"result":"The bug was on line 42, fixed it."}`,
+	}
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, lines, 0)
+
+	ctx := context.Background()
+	_, err := handler.Submit(ctx, "dedup-thread", "Fix the bug", "")
+	if err != nil {
+		t.Fatalf("Submit failed: %v", err)
+	}
+
+	_, ok := waitForNotification(notify, 5*time.Second)
+	if !ok {
+		t.Fatal("timeout waiting for subprocess")
+	}
+
+	// Thread should be complete.
+	complete, err := handler.client.IsThreadComplete(ctx, "dedup-thread")
+	if err != nil {
+		t.Fatalf("IsThreadComplete: %v", err)
+	}
+	if !complete {
+		t.Error("thread should be marked complete")
+	}
+
+	msgs, err := handler.client.GetThreadHistory(ctx, "dedup-thread", 0, 0)
+	if err != nil {
+		t.Fatalf("GetThreadHistory: %v", err)
+	}
+
+	// Should have: user request + assistant/plan, NO duplicate response.
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages (user + plan), got %d", len(msgs))
+	}
+	if msgs[0].Type != "request" {
+		t.Errorf("msg[0] type = %q, want request", msgs[0].Type)
+	}
+	if msgs[1].Type != "plan" {
+		t.Errorf("msg[1] type = %q, want plan (response should be dedup'd)", msgs[1].Type)
+	}
+	if msgs[1].Content != "The bug was on line 42, fixed it." {
+		t.Errorf("msg[1] content = %q", msgs[1].Content)
+	}
+}
+
+func TestDedup_ResponseDiffersFromLastAssistant(t *testing.T) {
+	handler, _, notify := newTestHandler(t)
+
+	// When the result differs from the last assistant message, we still
+	// emit a separate response message.
+	lines := []string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"Let me think about this..."}]}}`,
+		`{"type":"result","subtype":"success","is_error":false,"result":"Done! Here is the final answer."}`,
+	}
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, lines, 0)
+
+	ctx := context.Background()
+	_, err := handler.Submit(ctx, "nodup-thread", "Question", "")
+	if err != nil {
+		t.Fatalf("Submit failed: %v", err)
+	}
+
+	_, ok := waitForNotification(notify, 5*time.Second)
+	if !ok {
+		t.Fatal("timeout waiting for subprocess")
+	}
+
+	msgs, err := handler.client.GetThreadHistory(ctx, "nodup-thread", 0, 0)
+	if err != nil {
+		t.Fatalf("GetThreadHistory: %v", err)
+	}
+
+	// Should have: user request + plan + response = 3
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 messages (user + plan + response), got %d", len(msgs))
+	}
+	last := msgs[len(msgs)-1]
+	if last.Type != "response" {
+		t.Errorf("last message type = %q, want response", last.Type)
+	}
+	if last.Content != "Done! Here is the final answer." {
+		t.Errorf("last message content = %q", last.Content)
 	}
 }
 

@@ -47,10 +47,11 @@ func New() (*Renderer, error) {
 	}
 
 	tmpl := template.New("").Funcs(template.FuncMap{
-		"statusBadge":  statusBadge,
-		"roleClass":    roleClass,
-		"badgeForRole": badgeForRole,
-		"or":           orDefault,
+		"statusBadge":    statusBadge,
+		"roleClass":      roleClass,
+		"badgeForRole":   badgeForRole,
+		"or":             orDefault,
+		"startCollapsed": startCollapsed,
 	})
 
 	err := fs.WalkDir(templateFS, ".", func(path string, d fs.DirEntry, err error) error {
@@ -174,4 +175,10 @@ func orDefault(val, def string) string {
 		return def
 	}
 	return val
+}
+
+// startCollapsed returns true if messages of this type should start collapsed.
+// Plan and tool_call messages (intermediate thinking) are verbose, so collapse them.
+func startCollapsed(msgType string) bool {
+	return msgType == "plan" || msgType == "tool_call"
 }
