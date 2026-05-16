@@ -26,15 +26,18 @@
 
 {{define "thread-history-poll"}}
 {{$nextOffset := .NextOffset}}
+{{if .Messages}}
+<div hx-swap-oob="beforeend:#thread-timeline">
 {{range .Messages}}
-<details class="msg {{roleClass .Role .Type}} type-{{.Type}}" {{if not (startCollapsed .Type)}}open{{end}}
-         hx-swap-oob="beforeend:#thread-timeline">
+<details class="msg {{roleClass .Role .Type}} type-{{.Type}}" {{if not (startCollapsed .Type)}}open{{end}}>
   <summary class="msg-meta">
     <span>{{badgeForRole .Role .Type}}</span>
     <span>{{.Timestamp}}</span>
   </summary>
   <div class="msg-content">{{.Content}}</div>
 </details>
+{{end}}
+</div>
 {{end}}
 {{if .Running}}
 <div id="history-poller"
