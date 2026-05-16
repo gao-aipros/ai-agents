@@ -176,7 +176,7 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 	// Build claude -p command. -p consumes the next argument as the prompt,
 	// so it must come after all other flags and be followed by the prompt text.
 	args := []string{
-		"--dangerously-skip-permissions", "--bare",
+		"--dangerously-skip-permissions",
 		"--output-format", "stream-json", "--verbose",
 	}
 	if useResume {
