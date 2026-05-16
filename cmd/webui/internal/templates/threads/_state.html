@@ -36,7 +36,19 @@
   </div>
 </div>
 <div id="waiting-banner" hx-swap-oob="true"></div>
-{{else if not .Running}}
+{{else if .Running}}
+<div id="response-banner" hx-swap-oob="true"></div>
+<div id="waiting-banner" hx-swap-oob="true">
+  <div class="banner banner-waiting"
+       hx-get="/api/threads/{{.Thread.ThreadID}}/history?tail=1"
+       hx-trigger="every {{$.PollThread}}s"
+       hx-swap="none">
+    <span class="status-dot running"></span>
+    <strong>Waiting for master...</strong>
+    <span class="elapsed" data-start="{{$.NowUnix}}">0s elapsed</span>
+  </div>
+</div>
+{{else}}
 <div id="response-banner" hx-swap-oob="true"></div>
 <div id="waiting-banner" hx-swap-oob="true"></div>
 {{end}}

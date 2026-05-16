@@ -64,6 +64,13 @@ func (c *Client) SetThreadComplete(ctx context.Context, threadID string) error {
 	return c.rdb.Set(ctx, ThreadCompleteKey(threadID), "1", TTLThread).Err()
 }
 
+// ClearThreadComplete removes the completion marker for a thread.
+// Must be called when a follow-up request starts so the UI no longer
+// shows the thread as "complete".
+func (c *Client) ClearThreadComplete(ctx context.Context, threadID string) error {
+	return c.rdb.Del(ctx, ThreadCompleteKey(threadID)).Err()
+}
+
 // IsThreadComplete checks whether the thread has a completed response.
 func (c *Client) IsThreadComplete(ctx context.Context, threadID string) (bool, error) {
 	exists, err := c.rdb.Exists(ctx, ThreadCompleteKey(threadID)).Result()

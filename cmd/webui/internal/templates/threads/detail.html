@@ -83,7 +83,7 @@
     <h2>Messages</h2>
     <div id="thread-history"
          hx-get="/api/threads/{{$thread.ThreadID}}/history?tail=50"
-         hx-trigger="load{{if .Running}}, every {{.PollThread}}s{{end}}"
+         hx-trigger="load"
          hx-swap="innerHTML">
       <div class="text-center text-muted"><span class="spinner"></span> Loading...</div>
     </div>

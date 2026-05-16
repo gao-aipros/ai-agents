@@ -895,3 +895,165 @@ func TestAuthRequired_ValidQueryParamAuth(t *testing.T) {
 		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
 	}
 }
+
+// ── history poll (incremental message loading) ─────────────────────────────
+
+func TestHandleThreadHistory_Poll(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	ctx := context.Background()
+	th.Client.CreateThread(ctx, "poll-thread", "")
+	for i := 0; i < 3; i++ {
+		th.Client.AppendMessage(ctx, "poll-thread", tasklib.Message{
+			Role: "user", Type: "request", Content: fmt.Sprintf("msg %d", i),
+			Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		})
+	}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/threads/poll-thread/history?offset=0&poll=1", nil)
+	r.Header.Set("HX-Request", "true")
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	bodyStr := w.Body.String()
+	// Poll response should contain the OOB-targeted details and a replacement poller
+	if !strings.Contains(bodyStr, "history-poller") {
+		t.Errorf("expected history-poller in poll response, got: %s", bodyStr)
+	}
+	if !strings.Contains(bodyStr, "thread-timeline") {
+		t.Errorf("expected thread-timeline OOB target in poll response, got: %s", bodyStr)
+	}
+}
+
+func TestHandleThreadHistory_PollRunning(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	ctx := context.Background()
+	th.Client.CreateThread(ctx, "poll-running-thread", "")
+	th.Client.AppendMessage(ctx, "poll-running-thread", tasklib.Message{
+		Role: "user", Type: "request", Content: "hello",
+		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+	})
+	// Acquire request lock so IsRequestRunning returns true
+	th.Client.AcquireRequestLock(ctx, "poll-running-thread", "req-1", tasklib.LockTTL)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/threads/poll-running-thread/history?offset=0&poll=1", nil)
+	r.Header.Set("HX-Request", "true")
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	bodyStr := w.Body.String()
+	// When running, the poll response should include a history-poller with hx-get for the next poll
+	if !strings.Contains(bodyStr, "history-poller") {
+		t.Errorf("expected history-poller when running, got: %s", bodyStr)
+	}
+}
+
+// ── follow-up request clears complete flag ─────────────────────────────────
+
+func TestHandleSubmitRequest_FollowUpClearsComplete(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	th.setFakeClaude(t, []string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"result","subtype":"success","is_error":false,"result":"Done"}`,
+	}, 0)
+
+	ctx := context.Background()
+	// Create a thread that has already completed
+	th.Client.CreateThread(ctx, "followup-thread", "")
+	th.Client.SetThreadComplete(ctx, "followup-thread")
+	th.Client.UpdateThread(ctx, "followup-thread", map[string]string{"status": "complete"})
+
+	// Verify it's complete before
+	complete, _ := th.Client.IsThreadComplete(ctx, "followup-thread")
+	if !complete {
+		t.Fatal("thread should be complete before follow-up")
+	}
+
+	// Submit follow-up via HTMX form
+	body := strings.NewReader("request=Follow-up+question&thread_id=followup-thread&from_thread=true")
+	r := httptest.NewRequest("POST", "/api/requests", body)
+	r.Header.Set("HX-Request", "true")
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("X-CSRF-Token", th.Renderer.CSRFToken)
+	w := httptest.NewRecorder()
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	// Should show follow-up confirmation
+	bodyStr := w.Body.String()
+	if !strings.Contains(bodyStr, "Follow-up submitted") {
+		t.Errorf("expected 'Follow-up submitted', got: %s", bodyStr)
+	}
+	// Should include OOB swap to re-trigger history fetch with polling
+	if !strings.Contains(bodyStr, "thread-history") || !strings.Contains(bodyStr, "hx-swap-oob") {
+		t.Errorf("expected thread-history OOB re-trigger in reply-confirmed, got: %s", bodyStr)
+	}
+
+	// Complete flag must be cleared
+	complete, _ = th.Client.IsThreadComplete(ctx, "followup-thread")
+	if complete {
+		t.Error("thread should NOT be complete after follow-up submission")
+	}
+
+	// Status must be updated to running
+	thread, err := th.Client.GetThread(ctx, "followup-thread")
+	if err != nil {
+		t.Fatalf("get thread: %v", err)
+	}
+	if thread.Status != "running" {
+		t.Errorf("thread status = %q, want %q", thread.Status, "running")
+	}
+
+	// Wait for subprocess
+	waitForNotification(th.Notify, 10*time.Second)
+}
+
+func TestHandleSubmitRequest_FollowUpHTMXReplyConfirmed(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	th.setFakeClaude(t, []string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"result","subtype":"success","is_error":false,"result":"Done"}`,
+	}, 0)
+
+	// Submit a new request from the thread detail page (from_thread=true)
+	body := strings.NewReader("request=Do+something&thread_id=reply-thread&from_thread=true")
+	r := httptest.NewRequest("POST", "/api/requests", body)
+	r.Header.Set("HX-Request", "true")
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("X-CSRF-Token", th.Renderer.CSRFToken)
+	w := httptest.NewRecorder()
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	bodyStr := w.Body.String()
+	if !strings.Contains(bodyStr, "Follow-up submitted") {
+		t.Errorf("expected reply-confirmed partial, got: %s", bodyStr)
+	}
+	// The reply-confirmed template links back to the thread detail page
+	if !strings.Contains(bodyStr, "/threads/reply-thread") {
+		t.Errorf("expected link back to thread, got: %s", bodyStr)
+	}
+
+	waitForNotification(th.Notify, 10*time.Second)
+}

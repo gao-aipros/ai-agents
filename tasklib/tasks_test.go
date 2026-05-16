@@ -708,6 +708,32 @@ func TestThreadComplete(t *testing.T) {
 	}
 }
 
+func TestClearThreadComplete(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Set complete, then clear it
+	c.SetThreadComplete(ctx(), "thr1")
+	err := c.ClearThreadComplete(ctx(), "thr1")
+	if err != nil {
+		t.Fatalf("ClearThreadComplete failed: %v", err)
+	}
+
+	complete, _ := c.IsThreadComplete(ctx(), "thr1")
+	if complete {
+		t.Error("expected thread NOT complete after clear")
+	}
+}
+
+func TestClearThreadComplete_Idempotent(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Clearing a key that doesn't exist should not error
+	err := c.ClearThreadComplete(ctx(), "nonexistent")
+	if err != nil {
+		t.Fatalf("ClearThreadComplete on missing key should not error: %v", err)
+	}
+}
+
 // ── thread last activity tests ──────────────────────────────────────────────
 
 func TestThreadLastActivity(t *testing.T) {
