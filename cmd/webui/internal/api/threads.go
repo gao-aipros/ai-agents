@@ -269,14 +269,17 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	tasks, err := tr.client.ListTasks(r.Context(), "", "running", threadID, 1, 0)
+	tasks, err := tr.client.ListTasks(r.Context(), "", "", threadID, 0, 0)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
 	}
-	if len(tasks) > 0 {
-		Error(w, http.StatusBadRequest, "thread has running tasks")
-		return
+	for _, t := range tasks {
+		switch t.Status {
+		case "running", "queued", "pending":
+			Error(w, http.StatusBadRequest, "thread has active tasks")
+			return
+		}
 	}
 
 	ok, err := tr.client.AcquireRequestLock(r.Context(), threadID, "deleting", tasklib.LockTTL)
@@ -290,6 +293,14 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 	}
 	defer tr.client.ReleaseRequestLock(cleanupContext(), threadID)
 
+	// Delete all Redis keys for this thread first, so if it fails
+	// we haven't removed files yet.
+	if err := tr.client.DeleteThread(cleanupContext(), threadID); err != nil {
+		log.Printf("[webui] delete thread keys error thread=%s: %v", threadID, err)
+		serverError(w, "failed to delete thread", err)
+		return
+	}
+
 	// Delete workspace files if they exist.
 	wp := workspacePath(threadID)
 	if err := removeWorkspace(wp); err != nil {
@@ -300,13 +311,6 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 	sessionID, _ := tr.client.GetThreadSessionID(r.Context(), threadID)
 	if sessionID != "" {
 		removeSessionFile(sessionID)
-	}
-
-	// Delete all Redis keys for this thread.
-	if err := tr.client.DeleteThread(cleanupContext(), threadID); err != nil {
-		log.Printf("[webui] delete thread keys error thread=%s: %v", threadID, err)
-		serverError(w, "failed to delete thread", err)
-		return
 	}
 
 	log.Printf("[webui] thread deleted thread=%s", threadID)

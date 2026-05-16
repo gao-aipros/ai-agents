@@ -65,25 +65,7 @@
 
   {{if not .Running}}
   <section id="followup-section">
-    <h2>Follow-up</h2>
-    <div class="card" id="reply-form-container">
-      <form method="post"
-            hx-post="/api/requests"
-            hx-target="#reply-form-container"
-            hx-swap="outerHTML"
-            hx-indicator="#reply-spinner">
-        <input type="hidden" name="thread_id" value="{{$thread.ThreadID}}">
-        <input type="hidden" name="from_thread" value="true">
-        <div class="form-group mb-8">
-          <textarea name="request" rows="2" required
-                    placeholder="Ask a follow-up question..."></textarea>
-        </div>
-        <button type="submit" class="btn btn-primary btn-sm">
-          <span id="reply-spinner" class="spinner htmx-indicator" style="width:14px;height:14px"></span>
-          Send
-        </button>
-      </form>
-    </div>
+    {{template "followup-form" $thread.ThreadID}}
   </section>
   {{else}}
   <section id="followup-section"></section>
