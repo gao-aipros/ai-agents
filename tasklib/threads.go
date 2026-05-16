@@ -253,6 +253,20 @@ func (c *Client) ThreadExists(ctx context.Context, threadID string) (bool, error
 	return exists > 0, err
 }
 
+// DeleteThread removes all Redis keys for a thread.
+func (c *Client) DeleteThread(ctx context.Context, threadID string) error {
+	keys := []string{
+		ThreadStateKey(threadID),
+		ThreadMessagesKey(threadID),
+		ThreadCompleteKey(threadID),
+		ThreadRunningKey(threadID),
+		ThreadLockKey(threadID),
+		ThreadSessionIDKey(threadID),
+		ThreadLastActivityKey(threadID),
+	}
+	return c.rdb.Del(ctx, keys...).Err()
+}
+
 // SetThreadTTL sets or refreshes TTL on all thread keys.
 func (c *Client) SetThreadTTL(ctx context.Context, threadID string, ttl time.Duration) error {
 	pipe := c.rdb.Pipeline()

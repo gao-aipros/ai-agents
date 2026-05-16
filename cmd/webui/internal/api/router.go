@@ -73,6 +73,8 @@ func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templ
 		r.Get("/threads/{thread_id}", thr.get)
 		r.Get("/threads/{thread_id}/history", thr.history)
 		r.With(rateLimitMiddleware(defaultLimiter)).
+			Delete("/threads/{thread_id}", thr.deleteThread)
+		r.With(rateLimitMiddleware(defaultLimiter)).
 			Delete("/threads/{thread_id}/workspace", thr.deleteWorkspace)
 		r.With(rateLimitMiddleware(defaultLimiter)).
 			Post("/threads/{thread_id}/keep", thr.keep)

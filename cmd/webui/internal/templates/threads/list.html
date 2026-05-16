@@ -31,7 +31,16 @@
       <td class="text-muted">{{or .GHRepo "-"}}</td>
       <td class="text-muted">{{or .GHPRNumber "-"}}</td>
       <td class="text-muted">{{or .UpdatedAt "-"}}</td>
-      <td><a href="/threads/{{.ThreadID}}" class="btn btn-sm">View</a></td>
+      <td>
+        <a href="/threads/{{.ThreadID}}" class="btn btn-sm">View</a>
+        <button class="btn btn-danger btn-sm"
+                hx-delete="/api/threads/{{.ThreadID}}?confirm=true"
+                hx-confirm="Delete thread {{.ThreadID}}? This removes all data and workspace files."
+                hx-target="closest tr"
+                hx-swap="outerHTML">
+          Delete
+        </button>
+      </td>
     </tr>
   {{end}}
   </tbody>
