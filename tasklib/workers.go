@@ -21,10 +21,9 @@ type WorkerStats map[string]*WorkerInfo
 // GetWorkerStats retrieves stats for all worker types via SCAN on heartbeat keys.
 // Reports online count based on heartbeat key existence (TTL-based liveness).
 func (c *Client) GetWorkerStats(ctx context.Context) (WorkerStats, error) {
-	stats := WorkerStats{
-		"claude":   {Instances: 0, Online: 0, TotalActive: 0},
-		"copilot":  {Instances: 0, Online: 0, TotalActive: 0},
-		"opencode": {Instances: 0, Online: 0, TotalActive: 0},
+	stats := make(WorkerStats)
+	for _, wt := range WorkerTypes {
+		stats[wt] = &WorkerInfo{}
 	}
 
 	// Scan for heartbeat keys: worker:<type>:<hostname>:heartbeat
