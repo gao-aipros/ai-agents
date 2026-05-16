@@ -128,12 +128,14 @@ The `moon-bridge` image is an exception: it builds from source (`FROM golang:1.2
 
 ## CI
 
-GitHub Actions workflow at `.github/workflows/build-images.yml`. Triggers on push to `main` or manual `workflow_dispatch`. Pushes to `ghcr.io/gao-aipros/<image>:latest`. Single job builds Go binaries first, then 7 images in 3 phases (phase 1: `ai-base` and `moon-bridge` in parallel, phase 2: `worker-base` and `master-agent` in parallel, phase 3: `copilot`, `opencode`, `worker-claude`, `codex` in parallel).
+GitHub Actions workflow at `.github/workflows/build-images.yml`. Triggers on push to `main` or manual `workflow_dispatch`. Pushes to `ghcr.io/gao-aipros/<image>:latest`. Single job builds Go binaries first, then 8 images in 3 phases (phase 1: `ai-base` and `moon-bridge` in parallel, phase 2: `worker-base` and `master-agent` in parallel, phase 3: `copilot`, `opencode`, `worker-claude`, `codex` in parallel).
 
 ## Environment
 
 See `.env.example` for all variables. Key ones:
-- `MASTER_GH_TOKEN` / `WORKER_CLAUDE_GH_TOKEN` / etc. — per-agent GitHub auth for `gh` CLI
-- `DEEPSEEK_API_KEY` — shared by all agents
+- `MASTER_GH_TOKEN`, `WORKER_CLAUDE_GH_TOKEN`, `WORKER_COPILOT_GH_TOKEN`, `WORKER_OPENCODE_GH_TOKEN`, `WORKER_CODEX_GH_TOKEN` — per-agent GitHub auth for `gh` CLI
+- `DEEPSEEK_API_KEY` — used by opencode and codex (via moon-bridge)
+- `ANTHROPIC_AUTH_TOKEN` — used by master-agent and worker-claude (Anthropic-compatible API via DeepSeek)
 - `REDIS_HOST` / `REDIS_PORT` — Redis connection (task queue)
+- `CLOUDFLARED_TUNNEL_TOKEN` — Cloudflare Tunnel token for web UI access
 - Docker image overrides (compose-level): `WORKER_CLAUDE_IMAGE`, `WORKER_COPILOT_IMAGE`, `WORKER_OPENCODE_IMAGE`, `WORKER_CODEX_IMAGE`, `MASTER_AGENT_IMAGE`, `MOON_BRIDGE_IMAGE`
