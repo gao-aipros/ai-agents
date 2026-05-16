@@ -313,7 +313,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 		log.Printf("[webui] get session id error thread=%s: %v", threadID, err)
 	}
 
-	// Delete thread-level Redis keys first, so if it fails files remain intact.
+	// Delete thread-level Redis keys before files, so if it fails files remain intact.
 	if err := tr.client.DeleteThread(cleanupContext(), threadID); err != nil {
 		log.Printf("[webui] delete thread keys error thread=%s: %v", threadID, err)
 		serverError(w, "failed to delete thread", err)
