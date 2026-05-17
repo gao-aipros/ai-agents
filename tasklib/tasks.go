@@ -285,7 +285,9 @@ func (c *Client) ListTasks(ctx context.Context, worker, status, threadID string,
 }
 
 // WaitTask polls until the task reaches a terminal status or timeout expires.
-// Releases the thread lock on timeout (same behavior as task.py finally block).
+// On terminal status, updates thread status (done→complete, failed→error,
+// cancelled→cancelled) and releases the thread lock. Releases the lock on
+// timeout/cancellation as well.
 func (c *Client) WaitTask(ctx context.Context, taskID, threadID string, timeout time.Duration) (*Task, error) {
 	exists, err := c.rdb.Exists(ctx, TaskKey(taskID, "status")).Result()
 	if err != nil {
