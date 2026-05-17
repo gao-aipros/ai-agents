@@ -1,6 +1,6 @@
 FROM golang:1.26.3-trixie AS build
 
-ARG MOON_BRIDGE_REF=0023e286e9bf
+ARG MOON_BRIDGE_REF=f68cceb2c8
 
 RUN git clone https://github.com/ZhiYi-R/moon-bridge.git /src && \
     cd /src && \
