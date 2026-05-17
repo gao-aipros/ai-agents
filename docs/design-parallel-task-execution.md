@@ -11,7 +11,7 @@ The lock is necessary for sequential phases (implement → revise → merge) whe
 
 ## Solution
 
-Add a **parallel enqueue mode** that bypasses the thread lock, allowing the master to fan out independent tasks to multiple workers simultaneously. The master waits for ALL parallel tasks to finish before proceeding to the next sequential phase.
+Introduce **task groups** — a lightweight concept that lets the master fan out independent tasks to multiple workers under a named group label. The group tracks task membership explicitly and computes aggregate status once when all member tasks complete.
 
 ### Workflow with parallel phases
 
@@ -25,83 +25,198 @@ Design → [Review: copilot ∥ opencode ∥ codex ∥ worker-claude] → Revise
                                                               Revise → Re-review → Merge
 ```
 
-`∥` = parallel, `→` = sequential
+`∥` = parallel (task group), `→` = sequential (thread lock)
+
+## Design Decisions
+
+This design was revised after review feedback. The original proposal used `--no-lock` + `wait-all` (scan-based discovery). Reviewers identified gaps: thread status races, underspecified discovery, missing error semantics. Three alternative approaches were evaluated:
+
+| Approach | Discovery | Status Race | New Concepts | Verdict |
+|----------|-----------|-------------|--------------|---------|
+| `--no-lock` + `wait-all` | SCAN (fragile) | Yes | 2 (flag + command) | Rejected |
+| Reference-counted lock (INCR/DECR) | SCAN (fragile) | Yes | 0 | Lighter but still SCAN |
+| Sub-threads per reviewer | Explicit (thread list) | No | 3+ (parent, child, aggregate) | Overkill for 4 workers |
+| **Task groups** | Explicit (Redis set) | No | 2 (--group, group-wait) | **Chosen** |
+
+Task groups were the consensus recommendation across reviews — they solve the discovery and status-race problems with minimal new surface area.
 
 ## Implementation
 
-### 1. New `EnqueueParallel` method in `tasklib`
+### 1. Task group concept
 
-Refactor `Enqueue` to extract common logic into a private `enqueue(ctx, worker, threadID, instruction, acquireLock bool)` method. `Enqueue` calls `enqueue(..., true)`, `EnqueueParallel` calls `enqueue(..., false)`.
+A task group is a named collection of tasks on the same thread. The group label distinguishes parallel phases (e.g., `"design-review"` vs `"code-review"`).
 
-The only difference: `EnqueueParallel` skips `SET NX` on `thread:<id>:lock`. Everything else — appending to thread history, LPUSH to worker queue, initializing per-task keys — is identical.
+**Redis keys:**
+
+```
+thread:<id>:group:<label>:tasks     → Redis SET of task IDs
+thread:<id>:group:<label>:status    → aggregate status (pending → running → complete/error/cancelled)
+```
+
+**Lifecycle:**
+
+1. Master enqueues N tasks with `--group <label>` — each enqueue `SADD`s the task ID into the group set and sets group status to `running`
+2. Workers process tasks normally (no worker-side changes)
+3. When each task completes, the worker's post-processing updates its per-task status as today. A Lua script atomically checks if all tasks in the group are terminal; if so, computes aggregate status and updates the group status key
+4. Master calls `task group-wait --thread X --group <label>` which polls the group status key until terminal or timeout
+
+### 2. `tasklib`: Group-aware enqueue and group-wait
+
+**`Enqueue` changes** — add optional `groupLabel` parameter:
 
 ```go
-func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction string) (*Task, error) {
-    return c.enqueue(ctx, worker, threadID, instruction, true)
-}
+func (c *Client) Enqueue(ctx context.Context, worker, threadID, groupLabel, instruction string) (*Task, error) {
+    // Generate taskID, acquire thread lock (unchanged)
+    // ... existing logic ...
 
-func (c *Client) EnqueueParallel(ctx context.Context, worker, threadID, instruction string) (*Task, error) {
-    return c.enqueue(ctx, worker, threadID, instruction, false)
+    // If groupLabel is set, add task to group set and init group status
+    if groupLabel != "" {
+        c.rdb.SAdd(ctx, GroupTasksKey(threadID, groupLabel), taskID)
+        c.rdb.Set(ctx, GroupStatusKey(threadID, groupLabel), "running", TTLTask)
+    }
+    // ... rest unchanged ...
 }
 ```
 
-### 2. CLI: `--no-lock` flag on `task enqueue`
+**`WaitTask` changes** — after task completes and status is set, check group membership:
+
+```go
+// After setting task status to terminal:
+if groupLabel != "" {
+    // Lua script: check if all tasks in group set are terminal.
+    // If yes, compute aggregate status (all done → complete, any failed → error, any cancelled → cancelled)
+    // and update group status key.
+    // If the task was the last one, also compute and set thread status once.
+    c.checkAndUpdateGroup(ctx, threadID, groupLabel, taskID)
+}
+```
+
+**New `GroupWait` method:**
+
+```go
+func (c *Client) GroupWait(ctx context.Context, threadID, groupLabel string, timeout time.Duration) (*GroupResult, error)
+
+type GroupResult struct {
+    Status   string            // complete | error | cancelled | timeout
+    Tasks    map[string]string // taskID → status
+    FailedAt string            // set if timeout
+}
+```
+
+### 3. CLI: `--group` flag and `group-wait` command
 
 ```bash
-# Sequential (default — acquires thread lock)
+# Sequential (no group — acquires thread lock as before)
 task enqueue --worker claude --thread my-thread --instruction "implement..."
 
-# Parallel (no lock — fan out to multiple workers)
-task enqueue --worker copilot --thread my-thread --instruction "review..." --no-lock
-task enqueue --worker opencode --thread my-thread --instruction "review..." --no-lock
+# Parallel fan-out with task group
+task enqueue --worker copilot   --thread my-thread --group "design-review" --instruction "..."
+task enqueue --worker opencode  --thread my-thread --group "design-review" --instruction "..."
+task enqueue --worker codex     --thread my-thread --group "design-review" --instruction "..."
+task enqueue --worker claude    --thread my-thread --group "design-review" --instruction "..."
+
+# Wait for group to complete
+task group-wait --thread my-thread --group "design-review" --timeout 600
 ```
 
-When `--no-lock` is set, the CLI calls `EnqueueParallel`. Default behavior is unchanged.
+**`group-wait` output** (JSON):
 
-### 3. CLI: `task wait-all` command
+```json
+{
+  "status": "complete",
+  "tasks": {
+    "task-abc-123": "done",
+    "task-def-456": "done",
+    "task-ghi-789": "done",
+    "task-jkl-012": "failed"
+  }
+}
+```
 
-Convenience command that polls all tasks on a thread until none are in `pending` or `running` status:
+**`group-wait` exit codes:**
+- `0` — all tasks done (`status: "complete"`)
+- `1` — any task failed, cancelled, or timeout (`status: "error"` / `"cancelled"` / `"timeout"`)
+
+**`group-wait` polling**: Uses `GET group:<label>:status` every 2s. No scanning — the group status key is updated atomically by the completion Lua script. Terminal tasks from earlier phases are irrelevant because they aren't in the group's SET.
+
+**Timeout behavior**: If `group-wait` times out with pending/running tasks, it returns `status: "timeout"` with a per-task breakdown showing which tasks are still pending/running. The master can then decide to cancel pending tasks, requeue-stale, or abort the phase.
+
+### 4. Thread status aggregation
+
+When the last task in a group completes, the Lua script sets thread status once based on aggregate outcome:
+
+| Group outcome | Thread status |
+|---------------|---------------|
+| All tasks `done` | `complete` |
+| Any task `failed` | `error` |
+| All tasks `cancelled` | `cancelled` |
+| Mixed done + cancelled | `complete` (cancelled tasks excluded from aggregate) |
+
+If a task fails, the remaining tasks in the group continue to completion — `group-wait` doesn't preempt them. The master can inspect per-task statuses in the output to decide whether to retry individual failures or abort the phase.
+
+### 5. Master workflow (CLAUDE.md instructions)
+
+For parallel phases (design review, code review):
 
 ```bash
-task wait-all --thread my-thread --timeout 600
+THREAD="my-feature"
+
+# Fan out parallel review tasks under a named group
+task enqueue --worker copilot  --thread $THREAD --group "design-review" --instruction "..."
+task enqueue --worker opencode --thread $THREAD --group "design-review" --instruction "..."
+task enqueue --worker codex    --thread $THREAD --group "design-review" --instruction "..."
+task enqueue --worker claude   --thread $THREAD --group "design-review" --instruction "..."
+
+# Wait for group to finish; capture aggregate result
+RESULT=$(task group-wait --thread $THREAD --group "design-review" --timeout 600)
+if echo "$RESULT" | jq -e '.status == "error"' > /dev/null; then
+  # Handle failure: inspect .tasks for which ones failed, retry if needed
+  FAILED=$(echo "$RESULT" | jq -r '.tasks | to_entries | map(select(.value != "done")) | .[].key')
+  for TID in $FAILED; do
+    task enqueue --worker ... --thread $THREAD --group "design-review-retry" --instruction "..."
+  done
+  task group-wait --thread $THREAD --group "design-review-retry" --timeout 600
+fi
 ```
 
-Returns when all tasks are terminal (`done`/`failed`/`cancelled`) or timeout expires. The master can also use `task wait --id <taskID>` per task — both work; `wait-all` is simpler for scripts.
-
-### 4. Master workflow (CLAUDE.md instructions)
-
-For parallel phases:
-
-```bash
-# Enqueue parallel review tasks
-ID1=$(task enqueue --worker copilot --thread $THREAD --no-lock --instruction "review..." | jq -r .task_id)
-ID2=$(task enqueue --worker opencode --thread $THREAD --no-lock --instruction "review..." | jq -r .task_id)
-ID3=$(task enqueue --worker codex --thread $THREAD --no-lock --instruction "review..." | jq -r .task_id)
-
-# Wait for all to complete
-task wait-all --thread $THREAD --timeout 600
-```
-
-For sequential phases, continue using default locked enqueue:
+For sequential phases (implement, revise, merge), continue using default locked enqueue (no `--group`):
 
 ```bash
 task enqueue --worker claude --thread $THREAD --instruction "implement..."
-task wait --id $(...) --timeout 1800
+task wait --id $TASK_ID --timeout 1800
 ```
+
+**Thread state transitions** the master should set via `task thread-update`:
+
+| Phase | Thread status |
+|-------|---------------|
+| Design started | `designing` |
+| Design review (group-wait) | `reviewing` → `complete` or `error` |
+| Implementation | `implementing` |
+| Code review (group-wait) | `reviewing` → `complete` or `error` |
+| Done | `complete` |
 
 ## Rationale
 
-### Why not sub-threads?
-Sub-threads would require creating separate Redis keys, thread state, and history for each parallel branch. This adds complexity (tracking parent/child relationships, aggregating results) and the cost isn't justified — parallel review tasks are simple read-and-report operations that don't need thread isolation.
+### Why task groups over sub-threads?
+Sub-threads (one thread per reviewer) work today with zero code changes — the master creates `thread:my-feature/review-copilot`, `.../review-opencode`, etc., and enqueues normally. This is viable for 4 workers. However, sub-threads scatter state across N thread keys, making it harder to observe "what phase is this feature in?" at a glance. Task groups keep all tasks on one thread, with the group label providing phase-level observability. Sub-threads remain a valid fallback if task groups prove insufficient.
 
-### Why not a batch task primitive?
-A batch/fan-out primitive would be a first-class concept in the task system (enqueue once, auto-fan-out to N workers, aggregate results). This is the right long-term solution but premature — the current 4-worker setup is small enough that explicit per-worker enqueue with `--no-lock` is sufficient and more transparent.
+### Why task groups over reference-counted locks?
+Reference-counted locks (INCR/DECR on `thread:<id>:lock`) eliminate the `--no-lock` flag but don't solve discovery — the master still needs to find and poll all tasks on a thread. The group SET provides explicit membership, avoiding SCAN-based discovery entirely.
+
+### Why task groups over batch/fan-out primitives?
+A single `task enqueue --workers copilot,opencode,codex` that auto-fans-out is ergonomic but hides the per-worker nature of the delegation. Explicit per-worker enqueue with a shared group label keeps the master in control of which workers get which instructions (important when routing reviews away from the implementer).
 
 ### Thread history interleaving
-During parallel phases, worker outputs are appended to the same thread history list. Since all workers write to different review files and their messages are timestamped, interleaving is harmless. The master reads all review files after `wait-all` completes — message order in history doesn't matter.
+During parallel phases, worker outputs are appended to the same thread history list in completion order. This means messages from different workers will be interleaved. This is acceptable because:
+- The master reads review results from **files** (`docs/design-review-copilot.md`, etc.), not from thread history. Output files are the correctness barrier.
+- Workers read thread history for context, but a revising implementer won't read interleaved review messages — they read the review files directly.
+- If debugging is needed, each message in thread history is timestamped and tagged with `role` and `task_id`, making it possible to reconstruct per-worker timelines.
 
 ### Safety
-- `WaitTask` already handles missing locks gracefully (`DEL` on nonexistent key is a no-op)
-- Workers don't interact with the thread lock at all — only the master does
-- `task requeue-stale` works identically for both locked and unlocked tasks
-- If a worker crashes during a parallel task, the master's `wait-all` will time out — same recovery path as locked tasks
+- **No lock interference**: Task groups don't touch `thread:<id>:lock`. Sequential phases with locks work exactly as before.
+- **No worker changes**: Workers process tasks identically — they don't know about groups. The group logic runs in `WaitTask`'s post-completion path.
+- **`task requeue-stale`**: Works identically. Tasks in a group that are requeued remain in the group SET until they complete.
+- **Lock TTL (2100s)**: Unchanged. Sequential tasks acquire and release the lock normally. The lock is never held during parallel phases.
+- **Crash recovery**: If a worker crashes during a parallel task, the task remains in the group SET as `pending`. `group-wait` will timeout, reporting the stuck task. The master can requeue-stale or cancel and re-enqueue.
+- **Accidental parallelism guard**: Tasks with `--group` do NOT skip the thread lock — they still require `SET NX`. This means a group cannot be started while a sequential task holds the lock, and vice versa. Parallel phases are explicitly gated by the master releasing the lock after the previous sequential phase completes.
