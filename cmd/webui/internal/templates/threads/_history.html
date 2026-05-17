@@ -47,8 +47,8 @@
 </div>
 {{else}}
 <div id="history-poller" hx-swap-oob="true"></div>
-<div id="followup-section" hx-swap-oob="true">
-  {{template "followup-form" .ThreadID}}
-</div>
+<section id="followup-section" class="followup-sticky" hx-swap-oob="true">
+  {{template "followup-form" dict "ThreadID" .ThreadID "Running" false}}
+</section>
 {{end}}
 {{end}}
