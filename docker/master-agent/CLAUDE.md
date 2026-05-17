@@ -199,19 +199,20 @@ IMPL=$(task enqueue --worker claude --thread add-oauth2 \
     --instruction "Implement OAuth2 per docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md. Write unit tests. Push branch and create PR. Report PR number." | jq -r '.task_id')
 task wait --id "$IMPL"
 # Extract PR number from result
+PR=$(task result --id "$IMPL" | grep -oP 'PR #\K\d+' || task result --id "$IMPL" | grep -oP 'github\.com/\S+/pull/\K\d+')
 task thread-update --id add-oauth2 --status in_review --pr "$PR"
 
 # Phase 3: Review loop — codex, copilot, and opencode review the PR (one at a time)
 R1=$(task enqueue --worker codex --thread add-oauth2 \
-    --instruction "Review PR #$PR. Submit via 'gh pr review 42 --approve|--request-changes --body-file docs/code-review-codex.md'. Write summary to docs/code-review-codex.md." | jq -r '.task_id')
+    --instruction "Review PR #$PR. Submit via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-codex.md'. Write summary to docs/code-review-codex.md." | jq -r '.task_id')
 task wait --id "$R1"
 
 R2=$(task enqueue --worker copilot --thread add-oauth2 \
-    --instruction "Review PR #$PR. Submit via 'gh pr review 42 --approve|--request-changes --body-file docs/code-review-copilot.md'. Write summary to docs/code-review-copilot.md." | jq -r '.task_id')
+    --instruction "Review PR #$PR. Submit via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-copilot.md'. Write summary to docs/code-review-copilot.md." | jq -r '.task_id')
 task wait --id "$R2"
 
 R3=$(task enqueue --worker opencode --thread add-oauth2 \
-    --instruction "Review PR #$PR. Submit via 'gh pr review 42 --approve|--request-changes --body-file docs/code-review-opencode.md'. Write summary to docs/code-review-opencode.md." | jq -r '.task_id')
+    --instruction "Review PR #$PR. Submit via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-opencode.md'. Write summary to docs/code-review-opencode.md." | jq -r '.task_id')
 task wait --id "$R3"
 
 # If changes requested, ask claude to revise
