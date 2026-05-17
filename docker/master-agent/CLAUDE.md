@@ -204,15 +204,15 @@ task thread-update --id add-oauth2 --status in_review --pr "$PR"
 
 # Phase 3: Review loop — codex, copilot, and opencode review the PR (one at a time)
 R1=$(task enqueue --worker codex --thread add-oauth2 \
-    --instruction "Review PR #$PR. Submit via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-codex.md'. Write summary to docs/code-review-codex.md." | jq -r '.task_id')
+    --instruction "Review PR #$PR. Write summary to docs/code-review-codex.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-codex.md'." | jq -r '.task_id')
 task wait --id "$R1"
 
 R2=$(task enqueue --worker copilot --thread add-oauth2 \
-    --instruction "Review PR #$PR. Submit via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-copilot.md'. Write summary to docs/code-review-copilot.md." | jq -r '.task_id')
+    --instruction "Review PR #$PR. Write summary to docs/code-review-copilot.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-copilot.md'." | jq -r '.task_id')
 task wait --id "$R2"
 
 R3=$(task enqueue --worker opencode --thread add-oauth2 \
-    --instruction "Review PR #$PR. Submit via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-opencode.md'. Write summary to docs/code-review-opencode.md." | jq -r '.task_id')
+    --instruction "Review PR #$PR. Write summary to docs/code-review-opencode.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-opencode.md'." | jq -r '.task_id')
 task wait --id "$R3"
 
 # If changes requested, ask claude to revise

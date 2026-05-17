@@ -38,7 +38,7 @@ moon-bridge (independent, golang:1.26.3-trixie + moon-bridge binary)
 4. **Code review** — Master sends the PR to all workers **except the implementer**. Each reviewer inspects the PR and submits their review as a comment via `gh pr review`. Reviewers also write summary files to `docs/code-review-<worker>.md`.
 5. **Revise** — Master asks the implementing worker to read all review feedback and address the issues. The worker pushes updated commits to the same PR.
 6. **Re-review** — Master sends the updated PR back to the reviewers. Steps 4-5 loop until every reviewer approves.
-7. **Merge** — Master instructs the implementing worker to merge the PR. The implementing worker runs `gh pr merge ... --squash`. Only the implementing worker merges.
+7. **Merge** — Master instructs the implementing worker to merge the PR. The implementing worker runs `gh pr merge ... --squash --delete-branch`. Only the implementing worker merges.
 
 **No self-review**: No worker may review their own PR. The master routes reviews only to workers who did not write the code.
 
