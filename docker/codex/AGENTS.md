@@ -38,6 +38,7 @@ The current directory is `/workspace/<thread_id>/`. Keep it clean:
 - **Branch**: `cd repo && git checkout -b feature/<task-name>`
 - **Commit**: `git add -A && git commit -m "<descriptive message>"`
 - **Push**: `git push -u origin HEAD`
+- **Checkout PR**: `cd repo && gh pr checkout <number>` (for reviewing others' PRs)
 - **Create PR**: `gh pr create --title "..." --body "<summary>"`
 - **Review PR**: `gh pr review <number> --approve|--request-changes --body-file <file>`
 - **Check PR status**: `gh pr status`
