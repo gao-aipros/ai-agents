@@ -122,19 +122,9 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 		}
 	}
 
-	// Write user request to thread history
-	userMsg := tasklib.Message{
-		Role:      "user",
-		Type:      "request",
-		Content:   userRequest,
-		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
-	}
-	if err := h.client.AppendMessage(ctx, threadID, userMsg); err != nil {
-		<-h.sem
-		return nil, fmt.Errorf("append user message: %w", err)
-	}
-
-	// Acquire request lock (SET NX thread:<id>:running)
+	// Acquire request lock (SET NX thread:<id>:running) BEFORE writing
+	// the user message so a failed lock acquisition doesn't leave an
+	// orphaned message that would duplicate on retry.
 	acquired, err := h.client.AcquireRequestLock(ctx, threadID, requestID, tasklib.LockTTL)
 	if err != nil {
 		<-h.sem
@@ -143,6 +133,19 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 	if !acquired {
 		<-h.sem
 		return nil, ErrThreadBusy
+	}
+
+	// Write user request to thread history
+	userMsg := tasklib.Message{
+		Role:      "user",
+		Type:      "request",
+		Content:   userRequest,
+		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+	}
+	if err := h.client.AppendMessage(ctx, threadID, userMsg); err != nil {
+		h.client.ReleaseRequestLock(ctx, threadID)
+		<-h.sem
+		return nil, fmt.Errorf("append user message: %w", err)
 	}
 
 	// Determine session approach: --session-id (new) or --resume (existing)
@@ -341,8 +344,11 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 	// Read stdout line by line, parse stream-json.
 	// stderr is collected in a background goroutine for error reporting.
 	var stderrMu sync.Mutex
+	var stderrWg sync.WaitGroup
 	var lastStderr strings.Builder
+	stderrWg.Add(1)
 	go func() {
+		defer stderrWg.Done()
 		scanner := bufio.NewScanner(stderr)
 		scanner.Buffer(make([]byte, 64*1024), 64*1024)
 		for scanner.Scan() {
@@ -410,12 +416,47 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 			}
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		h.logger.Printf("thread=%s stdout scanner error: %v", threadID, err)
+	}
+
+	// Wait for the process to exit (or kill it if timeout/cancelled).
+	// Must do this before reading lastStderr so the stderr pipe is closed
+	// and the collector goroutine has consumed all output.
+	if ctx.Err() != nil {
+		// Give claude a 10s grace period to exit on SIGTERM, then SIGKILL.
+		// Use a goroutine so cmd.Wait() is only called once (double-Wait
+		// is an error in Go's os/exec).
+		done := make(chan struct{})
+		go func() {
+			cmd.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			cmd.Process.Signal(syscall.SIGKILL)
+			<-done
+		}
+	} else {
+		cmd.Wait()
+	}
+
+	// Wait for stderr collector to finish now that the process exited
+	// and the pipe is closed.
+	stderrWg.Wait()
 
 	if !completed {
 		// Subprocess exited without emitting a result message
 		stderrMu.Lock()
-		errContent := lastStderr.String()
+		errContent := strings.TrimSpace(lastStderr.String())
 		stderrMu.Unlock()
+
+		// Log stderr for debugging
+		if errContent != "" {
+			h.logger.Printf("thread=%s claude stderr: %s", threadID, errContent)
+		}
+
 		if errContent == "" {
 			errContent = "claude exited without emitting a result message"
 		}
@@ -431,24 +472,6 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		} else {
 			h.writeErrorMessage(ctx, threadID, "Request cancelled")
 		}
-	}
-
-	// Wait for the process to exit (or kill it if timeout/cancelled)
-	if ctx.Err() != nil {
-		// Give claude a 10s grace period to exit on SIGTERM
-		done := make(chan struct{})
-		go func() {
-			cmd.Wait()
-			close(done)
-		}()
-		select {
-		case <-done:
-		case <-time.After(10 * time.Second):
-			cmd.Process.Signal(syscall.SIGKILL)
-			cmd.Wait()
-		}
-	} else {
-		cmd.Wait()
 	}
 }
 

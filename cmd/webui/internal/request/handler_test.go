@@ -234,6 +234,27 @@ func writeFakeClaude(dir string, lines []string, exitCode int) string {
 	return path
 }
 
+// writeFakeClaudeWithStderr creates a shell script that echoes the given JSON
+// lines to stdout, writes stderrLines to stderr, and exits with the given code.
+func writeFakeClaudeWithStderr(dir string, lines []string, stderrLines []string, exitCode int) string {
+	path := filepath.Join(dir, "fake-claude-stderr")
+	var script strings.Builder
+	script.WriteString("#!/bin/bash\n")
+	for _, line := range lines {
+		script.WriteString("echo '")
+		script.WriteString(strings.ReplaceAll(line, "'", "'\\''"))
+		script.WriteString("'\n")
+	}
+	for _, line := range stderrLines {
+		script.WriteString("echo '")
+		script.WriteString(strings.ReplaceAll(line, "'", "'\\''"))
+		script.WriteString("' >&2\n")
+	}
+	fmt.Fprintf(&script, "exit %d\n", exitCode)
+	os.WriteFile(path, []byte(script.String()), 0755)
+	return path
+}
+
 // waitForNotification waits for a notification on the given channel or times out.
 func waitForNotification(ch <-chan string, timeout time.Duration) (string, bool) {
 	select {
@@ -792,6 +813,124 @@ func TestDedup_ResponseDiffersFromLastAssistant(t *testing.T) {
 	}
 	if last.Content != "Done! Here is the final answer." {
 		t.Errorf("last message content = %q", last.Content)
+	}
+}
+
+func TestStderrCapturedOnCrash(t *testing.T) {
+	handler, _, notify := newTestHandler(t)
+
+	// Fake claude that writes an API error to stderr then exits without
+	// emitting a result message (simulating a crash).
+	lines := []string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"Working on it..."}]}}`,
+	}
+	stderrLines := []string{
+		`Error: DeepSeek API returned 500 Internal Server Error`,
+		`event=api_error status=500 retry=false`,
+	}
+	handler.cfg.ClaudePath = writeFakeClaudeWithStderr(handler.cfg.WorkspaceDir, lines, stderrLines, 1)
+
+	ctx := context.Background()
+	_, err := handler.Submit(ctx, "stderr-crash-thread", "Do something", "")
+	if err != nil {
+		t.Fatalf("Submit failed: %v", err)
+	}
+
+	_, ok := waitForNotification(notify, 5*time.Second)
+	if !ok {
+		t.Fatal("timeout waiting for subprocess to complete")
+	}
+
+	msgs, err := handler.client.GetThreadHistory(ctx, "stderr-crash-thread", 0, 0)
+	if err != nil {
+		t.Fatalf("GetThreadHistory: %v", err)
+	}
+
+	// Should have: user request + plan + error message
+	if len(msgs) < 3 {
+		t.Fatalf("expected at least 3 messages, got %d", len(msgs))
+	}
+
+	last := msgs[len(msgs)-1]
+	if last.Type != "error" {
+		t.Fatalf("last message type = %q, want error", last.Type)
+	}
+
+	// The error message must contain the stderr content, not the generic
+	// "claude exited without emitting a result message" fallback.
+	if !strings.Contains(last.Content, "DeepSeek API returned 500 Internal Server Error") {
+		t.Errorf("error message should contain stderr output, got: %q", last.Content)
+	}
+	if strings.Contains(last.Content, "exited without emitting a result message") {
+		t.Errorf("error message should NOT be the generic fallback, got: %q", last.Content)
+	}
+}
+
+func TestSubmit_ThreadBusyNoOrphanedMessage(t *testing.T) {
+	handler, _, notify := newTestHandler(t)
+
+	ctx := context.Background()
+
+	// Manually acquire the request lock to simulate a busy thread.
+	acquired, err := handler.client.AcquireRequestLock(ctx, "orphan-thread", "existing-request", tasklib.LockTTL)
+	if err != nil {
+		t.Fatalf("AcquireRequestLock: %v", err)
+	}
+	if !acquired {
+		t.Fatal("expected lock to be acquired")
+	}
+
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir,
+		[]string{`{"type":"result","subtype":"success","is_error":false,"result":"ok"}`}, 0)
+
+	// Submit should fail because the thread is busy.
+	_, err = handler.Submit(ctx, "orphan-thread", "This should fail", "")
+	if err != ErrThreadBusy {
+		t.Fatalf("expected ErrThreadBusy, got %v", err)
+	}
+
+	// Key assertion: no user message was appended because the lock was
+	// acquired before AppendMessage. If the lock check had come after
+	// AppendMessage, there would be an orphaned message here.
+	msgs, err := handler.client.GetThreadHistory(ctx, "orphan-thread", 0, 0)
+	if err != nil {
+		t.Fatalf("GetThreadHistory: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected 0 messages (no orphaned user request), got %d", len(msgs))
+	}
+
+	// Release the lock so a retry can succeed.
+	if err := handler.client.ReleaseRequestLock(ctx, "orphan-thread"); err != nil {
+		t.Fatalf("ReleaseRequestLock: %v", err)
+	}
+
+	// Retry — this time it should succeed.
+	_, err = handler.Submit(ctx, "orphan-thread", "This should fail", "")
+	if err != nil {
+		t.Fatalf("retry Submit failed: %v", err)
+	}
+
+	_, ok := waitForNotification(notify, 5*time.Second)
+	if !ok {
+		t.Fatal("timeout waiting for subprocess after retry")
+	}
+
+	// After successful submission: exactly 1 user request + 1 response.
+	msgs, err = handler.client.GetThreadHistory(ctx, "orphan-thread", 0, 0)
+	if err != nil {
+		t.Fatalf("GetThreadHistory after retry: %v", err)
+	}
+	requestCount := 0
+	for _, m := range msgs {
+		if m.Type == "request" {
+			requestCount++
+		}
+	}
+	if requestCount != 1 {
+		t.Errorf("expected exactly 1 user request message after retry, got %d (total messages: %d)",
+			requestCount, len(msgs))
 	}
 }
 
