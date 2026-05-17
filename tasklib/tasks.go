@@ -324,8 +324,9 @@ func (c *Client) WaitTask(ctx context.Context, taskID, threadID string, timeout 
 					t.CompletedAt = val
 				}
 			}
-			// Release thread lock on completion (matching task.py finally block)
+			// Update thread status and release lock on completion
 			if threadID != "" {
+				c.updateThreadStatus(ctx, threadID, status)
 				c.rdb.Del(ctx, ThreadLockKey(threadID))
 			}
 			return t, nil
@@ -412,4 +413,24 @@ func (c *Client) RequeueStale(ctx context.Context, worker string, olderThan time
 	}
 
 	return requeued, nil
+}
+
+// updateThreadStatus sets the thread status based on terminal task status.
+// Silently ignores errors — best-effort, same as lock release.
+func (c *Client) updateThreadStatus(ctx context.Context, threadID, taskStatus string) {
+	threadStatus := threadStatusFromTask(taskStatus)
+	_ = c.UpdateThread(ctx, threadID, map[string]string{"status": threadStatus})
+}
+
+func threadStatusFromTask(taskStatus string) string {
+	switch taskStatus {
+	case "done":
+		return "complete"
+	case "failed":
+		return "error"
+	case "cancelled":
+		return "cancelled"
+	default:
+		return taskStatus
+	}
 }
