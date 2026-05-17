@@ -1,9 +1,18 @@
 model = "moonbridge"
 model_provider = "moonbridge"
 model_context_window = 1000000
-model_max_output_tokens = 32768
+model_max_output_tokens = 128000
+model_catalog_json = "/home/agent/.codex/models_catalog.json"
 
 [model_providers.moonbridge]
 name = "Moon Bridge"
 base_url = "http://moon-bridge:38440/v1"
 wire_api = "responses"
+
+[mcp_servers.deepwiki]
+url = "https://mcp.deepwiki.com/mcp"
+startup_timeout_sec = 3600
+tool_timeout_sec = 3600
+
+[projects."/home/admin/work/github/ai-agents"]
+trust_level = "trusted"
