@@ -421,7 +421,9 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 	// Must do this before reading lastStderr so the stderr pipe is closed
 	// and the collector goroutine has consumed all output.
 	if ctx.Err() != nil {
-		// Give claude a 10s grace period to exit on SIGTERM
+		// Give claude a 10s grace period to exit on SIGTERM, then SIGKILL.
+		// Use a goroutine so cmd.Wait() is only called once (double-Wait
+		// is an error in Go's os/exec).
 		done := make(chan struct{})
 		go func() {
 			cmd.Wait()
@@ -431,7 +433,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		case <-done:
 		case <-time.After(10 * time.Second):
 			cmd.Process.Signal(syscall.SIGKILL)
-			cmd.Wait()
+			<-done
 		}
 	} else {
 		cmd.Wait()
