@@ -42,6 +42,11 @@ moon-bridge (independent, golang:1.26.3-trixie + moon-bridge binary)
 
 **No self-review**: No worker may review their own PR. The master routes reviews only to workers who did not write the code.
 
+## Permissions
+
+- **Allowed directories**: Only the repository root and `/tmp`. All file reads, writes, and modifications must stay within these two locations.
+- **No sudo**: Never run `sudo` or attempt to gain elevated privileges. If a command requires root, stop and report it.
+
 ## Build, Test, and Lint
 
 ### Build
