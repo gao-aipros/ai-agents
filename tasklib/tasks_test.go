@@ -760,6 +760,11 @@ func TestThreadLastActivity(t *testing.T) {
 func TestWaitTaskImmediateCompletion(t *testing.T) {
 	c, _ := setupTestClient(t)
 
+	// Create thread first so UpdateThread succeeds
+	if _, err := c.CreateThread(ctx(), "thr1", ""); err != nil {
+		t.Fatalf("CreateThread failed: %v", err)
+	}
+
 	// Set up a task that's already done
 	c.rdb.Set(ctx(), TaskKey("w1", "status"), "done", 0)
 	c.rdb.Set(ctx(), TaskKey("w1", "worker"), "claude", 0)
@@ -772,6 +777,15 @@ func TestWaitTaskImmediateCompletion(t *testing.T) {
 	}
 	if task.Status != "done" {
 		t.Errorf("expected status done, got %s", task.Status)
+	}
+
+	// Verify thread status was updated
+	thread, err := c.GetThread(ctx(), "thr1")
+	if err != nil {
+		t.Fatalf("GetThread failed: %v", err)
+	}
+	if thread.Status != "complete" {
+		t.Errorf("expected thread status complete, got %s", thread.Status)
 	}
 }
 
@@ -833,6 +847,45 @@ func TestWaitTaskTerminalStates(t *testing.T) {
 			}
 			if task.Status != tt.status {
 				t.Errorf("expected status %s, got %s", tt.status, task.Status)
+			}
+		})
+	}
+}
+
+func TestWaitTaskUpdatesThreadStatus(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	tests := []struct {
+		taskStatus   string
+		threadStatus string
+	}{
+		{"done", "complete"},
+		{"failed", "error"},
+		{"cancelled", "cancelled"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.taskStatus, func(t *testing.T) {
+			threadID := "thr-" + tt.taskStatus
+			taskID := "t-" + tt.taskStatus
+
+			if _, err := c.CreateThread(ctx(), threadID, ""); err != nil {
+				t.Fatalf("CreateThread failed: %v", err)
+			}
+			c.rdb.Set(ctx(), TaskKey(taskID, "status"), tt.taskStatus, 0)
+			c.rdb.Set(ctx(), TaskKey(taskID, "worker"), "claude", 0)
+			c.rdb.Set(ctx(), TaskKey(taskID, "thread_id"), threadID, 0)
+
+			_, err := c.WaitTask(ctx(), taskID, threadID, 5*time.Second)
+			if err != nil {
+				t.Fatalf("WaitTask for %s failed: %v", tt.taskStatus, err)
+			}
+
+			thread, err := c.GetThread(ctx(), threadID)
+			if err != nil {
+				t.Fatalf("GetThread failed: %v", err)
+			}
+			if thread.Status != tt.threadStatus {
+				t.Errorf("expected thread status %s, got %s", tt.threadStatus, thread.Status)
 			}
 		})
 	}
