@@ -48,8 +48,7 @@ Four worker types are available as long-running services (managed by docker-comp
 - **Auth**: Already authenticated via `GH_TOKEN` env var. Run `gh auth status` to verify.
 - **Clone**: `gh repo clone owner/repo /workspace/<thread_id>/repo`
 - **Check issues**: `gh issue list -R owner/repo`
-> **Note**: PR creation, PR review, and PR merging are all delegated to workers. Master never creates, reviews, or merges PRs directly.
-# Commit/push is done by the implementing worker — master writes to shared workspace, not git repos
+> **Note**: PR creation, PR review, PR merging, and Commit/push are all delegated to workers. Master writes design docs to the shared workspace — never creates, reviews, merges, or pushes to git repos.
 
 ## Workflow
 
