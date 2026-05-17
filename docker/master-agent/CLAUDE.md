@@ -32,8 +32,8 @@ Four worker types are available as long-running services (managed by docker-comp
 
 | Worker | Queue | Role |
 |--------|-------|------|
-| `claude` | `tasks:queue:claude` | **Implementation only** — writes code and unit tests for assigned feature/bug. Reviews other workers' PRs. |
-| `codex` | `tasks:queue:codex` | **Implementation only** — writes code and unit tests for assigned feature/bug. Reviews other workers' PRs. |
+| `claude` | `tasks:queue:claude` | **Implementer + reviewer** — writes code and unit tests for assigned feature/bug. Reviews other workers' PRs. |
+| `codex` | `tasks:queue:codex` | **Implementer + reviewer** — writes code and unit tests for assigned feature/bug. Reviews other workers' PRs. |
 | `copilot` | `tasks:queue:copilot` | **Review only** — reviews design docs, PRs, and other artifacts. Does not implement. |
 | `opencode` | `tasks:queue:opencode` | **Review only** — reviews design docs, PRs, and other artifacts. Does not implement. |
 
@@ -48,8 +48,8 @@ Four worker types are available as long-running services (managed by docker-comp
 - **Auth**: Already authenticated via `GH_TOKEN` env var. Run `gh auth status` to verify.
 - **Clone**: `gh repo clone owner/repo /workspace/<thread_id>/repo`
 - **Check issues**: `gh issue list -R owner/repo`
-- **Create PR**: `gh pr create -R owner/repo --title "..." --body "$(cat /workspace/<thread_id>/docs/result.md)"`
-- **Review PR**: `gh pr review <number> -R owner/repo --approve|--comment|--request-changes --body "$(cat /workspace/<thread_id>/docs/review.md)"`
+# PR creation is done by the implementing worker — master does not create PRs
+# PR review is delegated to workers — master never reviews PRs
 - **Merge PR**: `gh pr merge <number> -R owner/repo --squash|--merge` (only after all reviewers approve)
 - **Commit/push**: Use git directly: `git add -A && git commit -m "..." && git push`
 
@@ -70,17 +70,25 @@ Four worker types are available as long-running services (managed by docker-comp
    | `docs/detailed-design.md` | APIs, schemas, module breakdown, interface contracts, detailed implementation notes |
    | `docs/implementation-phases.md` | Phased implementation plan with milestones, dependencies, and rollout order |
 
-4. **Request design review** from all workers (they review all three documents):
+4. **Request design review** from all workers (they review all three documents).
+   Only one task can be in-flight per thread — wait for each to complete before enqueuing the next:
    ```
-   # Delegate design review to all workers sequentially within the thread
-   task enqueue --worker copilot --thread <thread_id> \
-       --instruction "Review the design documents: docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md. Check for correctness, consistency, gaps, security risks, and performance concerns. Write findings to docs/design-review-copilot.md."
-   task enqueue --worker opencode --thread <thread_id> \
-       --instruction "Review the design documents: docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md. Check for correctness, consistency, gaps, security risks, and performance concerns. Write findings to docs/design-review-opencode.md."
-   task enqueue --worker claude --thread <thread_id> \
-       --instruction "Review the design documents: docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md. Check for correctness, consistency, gaps, security risks, and performance concerns. Write findings to docs/design-review-claude.md."
-   task enqueue --worker codex --thread <thread_id> \
-       --instruction "Review the design documents: docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md. Check for correctness, consistency, gaps, security risks, and performance concerns. Write findings to docs/design-review-codex.md."
+   # Design review — enqueue and wait sequentially
+   T1=$(task enqueue --worker copilot --thread <thread_id> \
+       --instruction "Review the design documents: docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md. Check for correctness, consistency, gaps, security risks, and performance concerns. Write findings to docs/design-review-copilot.md." | jq -r '.task_id')
+   task wait --id "$T1"
+
+   T2=$(task enqueue --worker opencode --thread <thread_id> \
+       --instruction "Review the design documents: docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md. Check for correctness, consistency, gaps, security risks, and performance concerns. Write findings to docs/design-review-opencode.md." | jq -r '.task_id')
+   task wait --id "$T2"
+
+   T3=$(task enqueue --worker claude --thread <thread_id> \
+       --instruction "Review the design documents: docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md. Check for correctness, consistency, gaps, security risks, and performance concerns. Write findings to docs/design-review-claude.md." | jq -r '.task_id')
+   task wait --id "$T3"
+
+   T4=$(task enqueue --worker codex --thread <thread_id> \
+       --instruction "Review the design documents: docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md. Check for correctness, consistency, gaps, security risks, and performance concerns. Write findings to docs/design-review-codex.md." | jq -r '.task_id')
+   task wait --id "$T4"
    ```
 
 5. **Evaluate feedback** — read all design review files in `docs/`. You decide which suggestions and concerns to incorporate. Update the three design documents as needed. You have final authority on the design.
@@ -157,8 +165,7 @@ gh repo clone owner/repo /workspace/add-oauth2/repo
 # Phase 1: Write three design docs
 # (master produces docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md)
 
-# Request design reviews from all 4 workers
-# (enqueue to each worker's queue sequentially within the thread)
+# Request design reviews from all 4 workers (only 1 in-flight per thread)
 task enqueue --worker copilot --thread add-oauth2 \
     --instruction "Review docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md. Write findings to docs/design-review-copilot.md."
 task enqueue --worker opencode --thread add-oauth2 \
@@ -167,6 +174,7 @@ task enqueue --worker claude --thread add-oauth2 \
     --instruction "Review docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md. Write findings to docs/design-review-claude.md."
 task enqueue --worker codex --thread add-oauth2 \
     --instruction "Review docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md. Write findings to docs/design-review-codex.md."
+# Note: enqueue and wait sequentially — each call blocks until thread lock is released
 
 # Master reads all reviews, updates design docs as needed
 task thread-update --id add-oauth2 --status implementing
@@ -180,11 +188,11 @@ task thread-update --id add-oauth2 --status in_review --pr 42
 
 # Phase 3: Review loop — codex, copilot, and opencode review the PR
 task enqueue --worker codex --thread add-oauth2 \
-    --instruction "Review PR #42. Submit via 'gh pr review 42'. Write summary to docs/code-review-codex.md."
+    --instruction "Review PR #42. Submit via 'gh pr review 42 --approve|--request-changes --body-file docs/code-review-codex.md'. Write summary to docs/code-review-codex.md."
 task enqueue --worker copilot --thread add-oauth2 \
-    --instruction "Review PR #42. Submit via 'gh pr review 42'. Write summary to docs/code-review-copilot.md."
+    --instruction "Review PR #42. Submit via 'gh pr review 42 --approve|--request-changes --body-file docs/code-review-copilot.md'. Write summary to docs/code-review-copilot.md."
 task enqueue --worker opencode --thread add-oauth2 \
-    --instruction "Review PR #42. Submit via 'gh pr review 42'. Write summary to docs/code-review-opencode.md."
+    --instruction "Review PR #42. Submit via 'gh pr review 42 --approve|--request-changes --body-file docs/code-review-opencode.md'. Write summary to docs/code-review-opencode.md."
 
 # If changes requested, ask claude to revise
 task enqueue --worker claude --thread add-oauth2 \

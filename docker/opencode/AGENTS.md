@@ -30,7 +30,6 @@ The current directory is `/workspace/<thread_id>/`. Keep it clean:
 ## GitHub Workflow
 
 - **Auth**: Already authenticated via `GH_TOKEN` env var. Run `gh auth status` to verify.
-- **Clone**: `gh repo clone owner/repo repo` (cwd is already `/workspace/<thread_id>/`)
 - **Checkout PR**: `cd repo && gh pr checkout <number>`
 - **Review PR**: `gh pr review <number> --approve|--request-changes --body-file docs/code-review-opencode.md`
 - **Check PR status**: `gh pr status`

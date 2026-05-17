@@ -53,8 +53,10 @@ GOOS=linux go build -o out/amd64/worker-go ./cmd/worker/
 GOOS=linux go build -o out/amd64/task-go   ./cmd/task/
 GOOS=linux go build -o out/amd64/webui     ./cmd/webui/
 
-# Phase 1 — base image
-docker build --load -t ai-base:latest docker/base/
+# Phase 1 — base images (parallel, no deps)
+docker build --load -t ai-base:latest docker/base/ &
+docker build --load -t moon-bridge:latest -f docker/moon-bridge/Dockerfile . &
+wait
 
 # Phase 2 — worker-base and master-agent (parallel, both FROM ai-base)
 docker build --load -t worker-base:latest -f docker/worker-base/Dockerfile . &
@@ -65,10 +67,11 @@ wait
 docker build --load -t copilot:latest -f docker/copilot/Dockerfile . &
 docker build --load -t opencode:latest -f docker/opencode/Dockerfile . &
 docker build --load -t worker-claude:latest -f docker/worker-claude/Dockerfile . &
+docker build --load -t codex:latest -f docker/codex/Dockerfile . &
 wait
 ```
 
-CI (`.github/workflows/build-images.yml`) pre-builds Go binaries for both architectures, then builds 5 multi-arch images (`linux/amd64,linux/arm64`) in 3 parallel phases and pushes to `ghcr.io/gao-aipros/<image>:latest`.
+CI (`.github/workflows/build-images.yml`) pre-builds Go binaries for both architectures, then builds 8 multi-arch images (`linux/amd64,linux/arm64`) in 3 parallel phases and pushes to `ghcr.io/gao-aipros/<image>:latest`.
 
 ### Multi-arch builds (CI pattern)
 
@@ -81,9 +84,13 @@ GOOS=linux GOARCH=arm64 go build -o out/arm64/worker-go ./cmd/worker/
 GOOS=linux GOARCH=arm64 go build -o out/arm64/task-go   ./cmd/task/
 GOOS=linux GOARCH=arm64 go build -o out/arm64/webui     ./cmd/webui/
 
-# Phase 1
+# Phase 1 (parallel)
 docker buildx build --platform linux/amd64,linux/arm64 --push \
-  -t ghcr.io/gao-aipros/ai-base:latest docker/base/
+  -t ghcr.io/gao-aipros/ai-base:latest docker/base/ &
+docker buildx build --platform linux/amd64,linux/arm64 --push \
+  -t ghcr.io/gao-aipros/moon-bridge:latest \
+  -f docker/moon-bridge/Dockerfile . &
+wait
 
 # Phase 2 (parallel)
 docker buildx build --platform linux/amd64,linux/arm64 --push \
@@ -109,6 +116,10 @@ docker buildx build --platform linux/amd64,linux/arm64 --push \
   --build-arg WORKER_BASE_IMAGE=ghcr.io/gao-aipros/worker-base:latest \
   -t ghcr.io/gao-aipros/worker-claude:latest \
   -f docker/worker-claude/Dockerfile . &
+docker buildx build --platform linux/amd64,linux/arm64 --push \
+  --build-arg WORKER_BASE_IMAGE=ghcr.io/gao-aipros/worker-base:latest \
+  -t ghcr.io/gao-aipros/codex:latest \
+  -f docker/codex/Dockerfile . &
 wait
 ```
 

@@ -63,7 +63,7 @@ Run builds and tests inside the cloned repo. Verify tests pass before committing
 - **Design review**: Review all three design documents (`docs/high-level-design.md`, `docs/detailed-design.md`, `docs/implementation-phases.md`) for correctness, consistency, gaps, and risks. Output to `docs/design-review-codex.md`.
 - **Code implementation**: Check out the repo into `repo/`, create a feature branch, implement changes per the design documents in `docs/` (high-level-design.md, detailed-design.md, implementation-phases.md). **Write unit tests for every new module, function, and code path you add.** Build, test, verify all tests pass. Push branch and create PR. Report the PR number clearly in your output.
 - **Address review feedback**: Read review comments from other workers (in `docs/code-review-*.md` and on the PR). Address each concern — fix bugs, improve tests, refactor as needed. Push updated commits to the same PR.
-- **Merge**: Only merge a PR after all non-implementing reviewers have approved. Use `gh pr merge <number> --squash`.
+- **Merge**: Only merge a PR after all reviewing workers (those who did not write the code) have approved. Use `gh pr merge <number> --squash --delete-branch`.
 
 **Code review (review others' work only):**
 
