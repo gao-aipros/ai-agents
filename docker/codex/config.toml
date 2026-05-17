@@ -1,7 +1,5 @@
 model = "moonbridge"
 model_provider = "moonbridge"
-model_context_window = 1000000
-model_max_output_tokens = 128000
 model_catalog_json = "/home/agent/.codex/models_catalog.json"
 
 [model_providers.moonbridge]
