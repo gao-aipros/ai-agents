@@ -40,7 +40,7 @@ The current directory is `/workspace/<thread_id>/`. Keep it clean:
 
 ## Task Types
 
-- **Design review**: Review a design document in `docs/` for correctness, consistency, gaps, security risks, and performance concerns. Output findings to `docs/design-review-copilot.md`.
+- **Design review**: Review all three design documents (`docs/high-level-design.md`, `docs/detailed-design.md`, `docs/implementation-phases.md`) for correctness, consistency, gaps, security risks, and performance concerns. Output findings to `docs/design-review-copilot.md`.
 - **Code review**: Review a PR created by an implementing worker. Checkout the PR with `gh pr checkout <number>`, inspect the code for correctness, style, performance, security, and test coverage. Submit review via `gh pr review <number> --approve|--request-changes --body-file docs/code-review-copilot.md`. Write summary to `docs/code-review-copilot.md`.
 
 ## The No-Self-Review Rule
