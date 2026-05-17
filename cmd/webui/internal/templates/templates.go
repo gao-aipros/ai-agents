@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
+	"fmt"
 	"html/template"
 	"io"
 	"io/fs"
@@ -52,6 +53,7 @@ func New() (*Renderer, error) {
 		"badgeForRole":   badgeForRole,
 		"or":             orDefault,
 		"startCollapsed": startCollapsed,
+		"dict":           dict,
 	})
 
 	err := fs.WalkDir(templateFS, ".", func(path string, d fs.DirEntry, err error) error {
@@ -181,4 +183,17 @@ func orDefault(val, def string) string {
 // Plan and tool_call messages (intermediate thinking) are verbose, so collapse them.
 func startCollapsed(msgType string) bool {
 	return msgType == "plan" || msgType == "tool_call"
+}
+
+// dict creates a map from alternating key/value pairs. Used by templates
+// to pass multiple named arguments to a sub-template. Ignores trailing
+// unpaired value if called with an odd number of arguments.
+func dict(values ...interface{}) map[string]interface{} {
+	n := len(values) / 2 * 2 // ignore trailing unpaired value
+	m := make(map[string]interface{}, n/2)
+	for i := 0; i < n; i += 2 {
+		key := fmt.Sprint(values[i])
+		m[key] = values[i+1]
+	}
+	return m
 }

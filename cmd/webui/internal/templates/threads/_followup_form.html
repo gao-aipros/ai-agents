@@ -1,18 +1,19 @@
 {{define "followup-form"}}
 <h2>Follow-up</h2>
-<div class="card" id="reply-form-container">
+<div class="card followup-card {{if .Running}}followup-disabled{{end}}" id="reply-form-container">
   <form method="post"
         hx-post="/api/requests"
         hx-target="#reply-form-container"
         hx-swap="outerHTML"
         hx-indicator="#reply-spinner">
-    <input type="hidden" name="thread_id" value="{{.}}">
+    <input type="hidden" name="thread_id" value="{{.ThreadID}}">
     <input type="hidden" name="from_thread" value="true">
     <div class="form-group mb-8">
       <textarea name="request" rows="2" required
-                placeholder="Ask a follow-up question..."></textarea>
+                placeholder="{{if .Running}}Agent is working...{{else}}Ask a follow-up question...{{end}}"
+                {{if .Running}}disabled{{end}}></textarea>
     </div>
-    <button type="submit" class="btn btn-primary btn-sm">
+    <button type="submit" class="btn btn-primary btn-sm" {{if .Running}}disabled{{end}}>
       <span id="reply-spinner" class="spinner htmx-indicator" style="width:14px;height:14px"></span>
       Send
     </button>

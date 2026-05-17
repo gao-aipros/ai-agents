@@ -829,6 +829,37 @@ pre {
   animation: fadeIn 0.3s ease;
 }
 
+
+/* ── Follow-up Form (sticky bottom bar) ──────────────────────────────────── */
+
+.followup-sticky {
+  position: sticky;
+  bottom: 0;
+  z-index: 50;
+  padding: 12px 0 20px;
+  margin-bottom: 0;
+  background: linear-gradient(to top, var(--color-bg) 85%, transparent);
+}
+
+.followup-sticky > h2 {
+  margin-bottom: 10px;
+}
+
+.followup-card {
+  box-shadow: var(--shadow-md);
+}
+
+.followup-disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+textarea:disabled,
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* ── Responsive ───────────────────────────────────────────────────────────── */
 
 @media (max-width: 768px) {
