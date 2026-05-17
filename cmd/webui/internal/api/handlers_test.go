@@ -1133,6 +1133,71 @@ func TestHandleThreadHistory_PollPreservesMsgCSSClasses(t *testing.T) {
 	}
 }
 
+// TestHandleGetThread_StatePollDoesNotReplaceFollowupForm verifies that
+// the thread-state-oob poll response for a complete thread does not OOB-swap
+// the followup-section. Swapping it on every poll would wipe any text the
+// user is typing into the follow-up form.
+func TestHandleGetThread_StatePollDoesNotReplaceFollowupForm(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	ctx := context.Background()
+	th.Client.CreateThread(ctx, "state-nofollowup", "repo/test")
+	th.Client.SetThreadComplete(ctx, "state-nofollowup")
+	th.Client.UpdateThread(ctx, "state-nofollowup", map[string]string{"status": "complete"})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/threads/state-nofollowup", nil)
+	r.Header.Set("HX-Request", "true")
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	bodyStr := w.Body.String()
+	if !strings.Contains(bodyStr, "Response ready") {
+		t.Errorf("expected 'Response ready' banner for complete thread, got: %s", bodyStr)
+	}
+	if strings.Contains(bodyStr, `id="followup-section"`) {
+		t.Errorf("state poll must not OOB-swap #followup-section (it would wipe user input on every poll), got: %s", bodyStr)
+	}
+}
+
+// TestHandleThreadHistory_PollCompleteInjectsFollowupForm verifies that
+// when the history poll detects the thread is no longer running (transition
+// from running to complete), it injects the follow-up form via OOB swap.
+// This fires exactly once because the history poller stops after completion.
+func TestHandleThreadHistory_PollCompleteInjectsFollowupForm(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	ctx := context.Background()
+	th.Client.CreateThread(ctx, "hist-complete-followup", "")
+	th.Client.AppendMessage(ctx, "hist-complete-followup", tasklib.Message{
+		Role: "user", Type: "request", Content: "hello",
+		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+	})
+	th.Client.SetThreadComplete(ctx, "hist-complete-followup")
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/threads/hist-complete-followup/history?offset=0&poll=1", nil)
+	r.Header.Set("HX-Request", "true")
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	bodyStr := w.Body.String()
+	if !strings.Contains(bodyStr, `id="followup-section"`) {
+		t.Errorf("history poll should inject #followup-section when thread completes, got: %s", bodyStr)
+	}
+	if !strings.Contains(bodyStr, `name="thread_id" value="hist-complete-followup"`) {
+		t.Errorf("expected followup form with thread_id=hist-complete-followup, got: %s", bodyStr)
+	}
+}
+
 // ── follow-up request clears complete flag ─────────────────────────────────
 
 func TestHandleSubmitRequest_FollowUpClearsComplete(t *testing.T) {
