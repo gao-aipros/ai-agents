@@ -48,10 +48,8 @@ Four worker types are available as long-running services (managed by docker-comp
 - **Auth**: Already authenticated via `GH_TOKEN` env var. Run `gh auth status` to verify.
 - **Clone**: `gh repo clone owner/repo /workspace/<thread_id>/repo`
 - **Check issues**: `gh issue list -R owner/repo`
-# PR creation is done by the implementing worker — master does not create PRs
-# PR review is delegated to workers — master never reviews PRs
-# PR merging is delegated to the implementing worker — master never merges directly
-- **Commit/push**: Use git directly: `git add -A && git commit -m "..." && git push`
+> **Note**: PR creation, PR review, and PR merging are all delegated to workers. Master never creates, reviews, or merges PRs directly.
+# Commit/push is done by the implementing worker — master writes to shared workspace, not git repos
 
 ## Workflow
 
@@ -126,7 +124,7 @@ Four worker types are available as long-running services (managed by docker-comp
    task wait --id "$R3"
    ```
 
-   **If `codex` implemented instead**, swap the reviewer list: `claude`, `copilot`, and `opencode` review; `codex` does not. Substitute `--worker codex` for `--worker claude` in steps 9-10 below.
+   **If `codex` implemented instead**, swap the reviewer list: `claude`, `copilot`, and `opencode` review; `codex` does not. Use `--worker codex` instead of `--worker claude` in steps 9-10 below.
 
 9. **If any reviewer requests changes**, ask the implementer to address the feedback:
    ```
@@ -141,6 +139,7 @@ Four worker types are available as long-running services (managed by docker-comp
     MERGE_TASK=$(task enqueue --worker claude --thread <thread_id> \
         --instruction "All reviewers have approved PR #$PR at owner/repo. Merge it: gh pr merge $PR -R owner/repo --squash --delete-branch." | jq -r '.task_id')
     task wait --id "$MERGE_TASK"
+    # Before merge, verify all reviewers approved: gh pr view $PR -R owner/repo --json reviewDecision
     # Verify merge succeeded: gh pr view $PR -R owner/repo --json state --jq '.state'
     ```
     You never merge PRs yourself. Only the implementing worker merges.
@@ -204,15 +203,15 @@ task thread-update --id add-oauth2 --status in_review --pr "$PR"
 
 # Phase 3: Review loop — codex, copilot, and opencode review the PR (one at a time)
 R1=$(task enqueue --worker codex --thread add-oauth2 \
-    --instruction "Review PR #$PR. Write summary to docs/code-review-codex.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-codex.md'." | jq -r '.task_id')
+    --instruction "Review PR #$PR at owner/repo. Write summary to docs/code-review-codex.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-codex.md'." | jq -r '.task_id')
 task wait --id "$R1"
 
 R2=$(task enqueue --worker copilot --thread add-oauth2 \
-    --instruction "Review PR #$PR. Write summary to docs/code-review-copilot.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-copilot.md'." | jq -r '.task_id')
+    --instruction "Review PR #$PR at owner/repo. Write summary to docs/code-review-copilot.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-copilot.md'." | jq -r '.task_id')
 task wait --id "$R2"
 
 R3=$(task enqueue --worker opencode --thread add-oauth2 \
-    --instruction "Review PR #$PR. Write summary to docs/code-review-opencode.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-opencode.md'." | jq -r '.task_id')
+    --instruction "Review PR #$PR at owner/repo. Write summary to docs/code-review-opencode.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-opencode.md'." | jq -r '.task_id')
 task wait --id "$R3"
 
 # If changes requested, ask claude to revise
