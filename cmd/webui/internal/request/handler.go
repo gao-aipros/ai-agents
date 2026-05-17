@@ -416,6 +416,9 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 			}
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		h.logger.Printf("thread=%s stdout scanner error: %v", threadID, err)
+	}
 
 	// Wait for the process to exit (or kill it if timeout/cancelled).
 	// Must do this before reading lastStderr so the stderr pipe is closed
