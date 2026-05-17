@@ -26,6 +26,31 @@ All agents use DeepSeek as the backend. Claude Code and Copilot use the Anthropi
 
 Each agent gets its own GitHub token (`MASTER_GH_TOKEN`, `WORKER_CLAUDE_GH_TOKEN`, etc.) for isolation and rate limiting.
 
+
+## Agent Roles and Workflow
+
+### Role assignments
+
+| Agent | Role |
+|-------|------|
+| **master-agent** | Design and planning only. Never writes implementation code or submits reviews. Creates design docs, coordinates the workflow, delegates tasks, and makes final design decisions. |
+| **worker-claude** | Implementer + reviewer. Writes code and unit tests when assigned. Reviews PRs and design docs from other workers. Never reviews own code. |
+| **codex** | Implementer + reviewer. Writes code and unit tests when assigned. Reviews PRs and design docs from other workers. Never reviews own code. |
+| **copilot** | Reviewer only. Reviews design docs and PRs. Does not write implementation code. |
+| **opencode** | Reviewer only. Reviews design docs and PRs. Does not write implementation code. |
+
+### Workflow
+
+1. **Design** — Master analyzes the request and produces a design document in `docs/design.md`.
+2. **Design review** — Master sends the design to all 4 workers for review. Workers produce `docs/design-review-<worker>.md`. Master reads all reviews, decides which feedback to incorporate, and updates the design.
+3. **Implementation** — Master assigns the implementation to either `worker-claude` or `codex`. The implementing worker writes code, **writes unit tests for their own code**, pushes a branch, and creates a PR. The worker reports the PR number back.
+4. **Code review** — Master sends the PR to all workers **except the implementer**. Each reviewer inspects the PR and submits their review as a comment via `gh pr review`. Reviewers also write summary files to `docs/code-review-<worker>.md`.
+5. **Revise** — Master asks the implementing worker to read all review feedback and address the issues. The worker pushes updated commits to the same PR.
+6. **Re-review** — Master sends the updated PR back to the reviewers. Steps 4-5 loop until every reviewer approves.
+7. **Merge** — Master instructs the implementing worker to merge the PR. The implementing worker runs `gh pr merge ... --squash`. Only the implementing worker merges.
+
+**No self-review**: No worker may review their own PR. The master routes reviews only to workers who did not write the code.
+
 ## Commands
 
 ### Build images locally (single-arch)

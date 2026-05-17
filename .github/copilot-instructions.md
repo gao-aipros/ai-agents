@@ -2,20 +2,45 @@
 
 ## Architecture
 
-Multi-agent Docker orchestration where a master agent (Claude Code) delegates tasks to worker agents (Claude Code, Copilot, OpenCode). All agents run in Docker containers, communicating via a Redis task queue (control plane) and a shared `/workspace` volume (data plane).
+Multi-agent Docker orchestration where a master agent (Claude Code) delegates tasks to worker agents (Claude Code, Codex, Copilot, OpenCode). All agents run in Docker containers, communicating via a Redis task queue (control plane) and a shared `/workspace` volume (data plane).
 
 **Image dependency layers:**
 
 ```
 ai-base (debian:trixie + gh, git, jq, python3, redis-tools, curl, ssh)
-  ├─ worker-base    (ai-base + Go SDK + gcc/make + worker-go)
-  │   ├─ copilot     (worker-base + copilot CLI)
-  │   ├─ opencode    (worker-base + opencode CLI)
-  │   └─ worker-claude (worker-base + claude CLI)
-  └─ master-agent   (ai-base + claude CLI + task-go + webui)
+  ├─ master-agent   (ai-base + claude CLI + task-go + webui)
+  └─ worker-base    (ai-base + Go SDK + gcc/make + worker-go)
+       ├─ copilot         (worker-base + copilot CLI)
+       ├─ opencode        (worker-base + opencode CLI)
+       ├─ worker-claude   (worker-base + claude CLI)
+       └─ codex           (worker-base + codex CLI)
+
+moon-bridge (independent, golang:1.26.3-trixie + moon-bridge binary)
 ```
 
-The master agent runs a web UI (chi router, HTMX + Go templates on port 8000) and delegates tasks via `task enqueue`. Workers dequeue tasks via `BLMOVE`, execute agent subprocesses with thread context, and post results back to Redis. All agents use DeepSeek as the backend (Anthropic-compatible API). Auth tokens are passed via environment variables. Each agent gets its own GitHub token for isolation and rate limiting.
+## Agent Roles and Workflow
+
+### Role assignments
+
+| Agent | Role |
+|-------|------|
+| **master-agent** | Design and planning only. Never writes implementation code or submits reviews. Creates design docs, coordinates the workflow, delegates tasks, and makes final design decisions. |
+| **worker-claude** | Implementer + reviewer. Writes code and unit tests when assigned. Reviews PRs and design docs from other workers. Never reviews own code. |
+| **codex** | Implementer + reviewer. Writes code and unit tests when assigned. Reviews PRs and design docs from other workers. Never reviews own code. |
+| **copilot** | Reviewer only. Reviews design docs and PRs. Does not write implementation code. |
+| **opencode** | Reviewer only. Reviews design docs and PRs. Does not write implementation code. |
+
+### Workflow
+
+1. **Design** — Master analyzes the request and produces a design document in `docs/design.md`.
+2. **Design review** — Master sends the design to all 4 workers for review. Workers produce `docs/design-review-<worker>.md`. Master reads all reviews, decides which feedback to incorporate, and updates the design.
+3. **Implementation** — Master assigns the implementation to either `worker-claude` or `codex`. The implementing worker writes code, **writes unit tests for their own code**, pushes a branch, and creates a PR. The worker reports the PR number back.
+4. **Code review** — Master sends the PR to all workers **except the implementer**. Each reviewer inspects the PR and submits their review as a comment via `gh pr review`. Reviewers also write summary files to `docs/code-review-<worker>.md`.
+5. **Revise** — Master asks the implementing worker to read all review feedback and address the issues. The worker pushes updated commits to the same PR.
+6. **Re-review** — Master sends the updated PR back to the reviewers. Steps 4-5 loop until every reviewer approves.
+7. **Merge** — Master instructs the implementing worker to merge the PR. The implementing worker runs `gh pr merge ... --squash`. Only the implementing worker merges.
+
+**No self-review**: No worker may review their own PR. The master routes reviews only to workers who did not write the code.
 
 ## Build, Test, and Lint
 
