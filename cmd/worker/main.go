@@ -67,7 +67,6 @@ func main() {
 	taskTimeout := envIntDefault("TASK_TIMEOUT", 1800)
 	historyWindow := envIntDefault("HISTORY_WINDOW", 10)
 	workspaceDir := envDefault("WORKSPACE_DIR", "/workspace")
-	homeDir := envDefault("HOME", "/home/agent")
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr: fmt.Sprintf("%s:%d", redisHost, redisPort),
@@ -135,7 +134,7 @@ func main() {
 		}
 
 		processOneTask(log, client, rdb, result, workerType, agentCmd,
-			taskTimeout, historyWindow, workspaceDir, homeDir, processingKey, hostname)
+			taskTimeout, historyWindow, workspaceDir, processingKey, hostname)
 	}
 
 	log.log("info", "worker shutting down")
@@ -149,7 +148,7 @@ func processOneTask(
 	rdb *redis.Client,
 	taskJSON, workerType, agentCmd string,
 	defaultTimeout, defaultHistoryWindow int,
-	workspaceDir, homeDir, processingKey, hostname string,
+	workspaceDir, processingKey, hostname string,
 ) {
 	var taskPayload struct {
 		TaskID        string `json:"task_id"`
