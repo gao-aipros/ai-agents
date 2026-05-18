@@ -29,7 +29,8 @@ ENV COPILOT_PROVIDER_TYPE=anthropic \
     COPILOT_PROVIDER_MAX_OUTPUT_TOKENS=128000 \
     AGENT_CMD="copilot --yolo -p"
 
-COPY --chown=agent:agent docker/copilot/AGENTS.md /home/agent/AGENTS.md
+RUN mkdir -p /home/agent/.copilot && chown -R agent:agent /home/agent/.copilot
+COPY --chown=agent:agent docker/copilot/copilot-instructions.md /home/agent/.copilot/copilot-instructions.md
 
 USER agent
 ENTRYPOINT ["/usr/local/bin/worker-go", "copilot"]
