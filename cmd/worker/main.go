@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -68,7 +67,6 @@ func main() {
 	taskTimeout := envIntDefault("TASK_TIMEOUT", 1800)
 	historyWindow := envIntDefault("HISTORY_WINDOW", 10)
 	workspaceDir := envDefault("WORKSPACE_DIR", "/workspace")
-	homeDir := envDefault("HOME", "/home/agent")
 
 	rdb := redis.NewClient(&redis.Options{
 		Addr: fmt.Sprintf("%s:%d", redisHost, redisPort),
@@ -136,7 +134,7 @@ func main() {
 		}
 
 		processOneTask(log, client, rdb, result, workerType, agentCmd,
-			taskTimeout, historyWindow, workspaceDir, homeDir, processingKey, hostname)
+			taskTimeout, historyWindow, workspaceDir, processingKey, hostname)
 	}
 
 	log.log("info", "worker shutting down")
@@ -150,7 +148,7 @@ func processOneTask(
 	rdb *redis.Client,
 	taskJSON, workerType, agentCmd string,
 	defaultTimeout, defaultHistoryWindow int,
-	workspaceDir, homeDir, processingKey, hostname string,
+	workspaceDir, processingKey, hostname string,
 ) {
 	var taskPayload struct {
 		TaskID        string `json:"task_id"`
@@ -232,11 +230,6 @@ func processOneTask(
 	// Ensure workspace
 	workspace := filepath.Join(workspaceDir, threadID)
 	os.MkdirAll(workspace, 0755)
-
-	// Copy agent instructions from home to workspace.
-	// Codex reads AGENTS.md from ~/.codex/ (global scope, per agents_md.rs).
-	// Claude Code reads CLAUDE.md from ~/ (home directory).
-	copyAgentInstructions(homeDir, workspace)
 
 	// Check cancel flag before starting subprocess
 	if cancelFlag, _ := rdb.Get(context.Background(), tasklib.TaskKey(taskID, "cancel")).Result(); cancelFlag != "" {
@@ -381,40 +374,6 @@ func envIntDefault(key string, def int) int {
 	return def
 }
 
-
-// copyAgentInstructions copies agent-specific instruction files from the
-// home directory to the workspace so they are visible to the agent at runtime.
-// Codex reads AGENTS.md from ~/.codex/ (global scope, per agents_md.rs).
-// Claude Code reads CLAUDE.md from ~/ (home directory).
-func copyAgentInstructions(homeDir, workspace string) {
-	type srcDest struct {
-		src  string
-		dest string
-	}
-	entries := []srcDest{
-		{filepath.Join(homeDir, ".codex", "AGENTS.md"), filepath.Join(workspace, "AGENTS.md")},
-		{filepath.Join(homeDir, "CLAUDE.md"), filepath.Join(workspace, "CLAUDE.md")},
-	}
-	for _, e := range entries {
-		if _, err := os.Stat(e.src); err == nil {
-			copyFile(e.src, e.dest)
-		}
-	}
-}
-
-func copyFile(src, dst string) {
-	s, err := os.Open(src)
-	if err != nil {
-		return
-	}
-	defer s.Close()
-	d, err := os.Create(dst)
-	if err != nil {
-		return
-	}
-	defer d.Close()
-	io.Copy(d, s)
-}
 
 // ── structured JSON-line logging ──────────────────────────────────────────────
 

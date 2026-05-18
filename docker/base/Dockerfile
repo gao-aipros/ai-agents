@@ -34,12 +34,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     wget \
     vim \
+    xxd \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g "$AGENT_GID" agent \
     && useradd -m -d /home/agent -s /bin/bash -u "$AGENT_UID" -g "$AGENT_GID" agent
 
 RUN mkdir -p /workspace /home/agent/.config && chown agent:agent /workspace /home/agent/.config
+VOLUME /workspace
 
 ENV GH_HOST=github.com
 

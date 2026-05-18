@@ -36,6 +36,7 @@ COPY out/${TARGETARCH}/task-go /usr/local/bin/task
 COPY out/${TARGETARCH}/webui /usr/local/bin/webui
 
 RUN mkdir -p /home/agent/.claude && chown agent:agent /home/agent/.claude
+VOLUME /home/agent/.claude
 COPY --chown=agent:agent docker/master-agent/CLAUDE.md /home/agent/.claude/CLAUDE.md
 
 USER agent
