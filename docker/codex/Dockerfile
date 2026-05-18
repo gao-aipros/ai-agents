@@ -30,9 +30,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ARG SKILLS_REF=67bce91c80cd1020a4f068ced32d0281656842ad
-RUN git clone --depth 1 --filter=blob:none \
-    --branch "$SKILLS_REF" \
+RUN git clone --filter=blob:none \
     https://github.com/mattpocock/skills.git /tmp/skills \
+    && git -C /tmp/skills checkout "$SKILLS_REF" \
     && mkdir -p /tmp/skills-out \
     && for skill in \
       engineering/grill-with-docs \
