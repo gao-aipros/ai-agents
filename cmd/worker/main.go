@@ -394,6 +394,7 @@ func copyAgentInstructions(homeDir, workspace string) {
 	entries := []srcDest{
 		{filepath.Join(homeDir, ".codex", "AGENTS.md"), filepath.Join(workspace, "AGENTS.md")},
 		{filepath.Join(homeDir, "CLAUDE.md"), filepath.Join(workspace, "CLAUDE.md")},
+		{filepath.Join(homeDir, "AGENTS.md"), filepath.Join(workspace, "AGENTS.md")},
 	}
 	for _, e := range entries {
 		if _, err := os.Stat(e.src); err == nil {
