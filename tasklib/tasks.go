@@ -126,6 +126,115 @@ func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction stri
 	}, nil
 }
 
+// EnqueueGroup pushes a task to a worker queue as part of a named group.
+// Uses a gate-check lock (acquired and immediately released) so multiple
+// group tasks can fan out concurrently on the same thread. Group membership
+// keys are set before the queue push — if they fail, the task is never
+// dequeued, so there is no risk of lost tasks.
+//
+// WARNING: Do not use WaitTask on group tasks until Phase 3 (WaitTask
+// gating) is implemented. WaitTask unconditionally updates thread status
+// and releases the thread lock on all exit paths. For group tasks this
+// is incorrect — the first group task to complete would prematurely
+// update thread status, and a timed-out/cancelled group task would
+// release a lock that may be held by a subsequent sequential task.
+// Use GroupWait instead.
+func (c *Client) EnqueueGroup(ctx context.Context, worker, threadID, groupLabel, instruction string) (*Task, error) {
+	// Validate group label before any Redis operations
+	if strings.ContainsAny(groupLabel, ":\t\n\r ") {
+		return nil, fmt.Errorf("invalid group label %q: must not contain ':' or whitespace", groupLabel)
+	}
+
+	taskID, err := NewUUID()
+	if err != nil {
+		return nil, fmt.Errorf("generate task id: %w", err)
+	}
+	now := ts()
+
+	// Gate-check: acquire thread lock momentarily to ensure no sequential
+	// task holds it, then release immediately. Short TTL (10s) prevents
+	// blocking sequential enqueues if DEL fails.
+	lockKey := ThreadLockKey(threadID)
+	ok, err := c.rdb.SetNX(ctx, lockKey, taskID, 10*time.Second).Result()
+	if err != nil {
+		return nil, fmt.Errorf("lock gate-check: %w", err)
+	}
+	if !ok {
+		holder, _ := c.rdb.Get(ctx, lockKey).Result()
+		return nil, fmt.Errorf("thread '%s' is locked (holder task: %s). Wait for it to complete or run 'task unlock --thread %s'", threadID, holder, threadID)
+	}
+	c.rdb.Del(ctx, lockKey)
+
+	// Append instruction to thread history
+	msg, err := json.Marshal(map[string]interface{}{
+		"role":      "master",
+		"content":   instruction,
+		"timestamp": now,
+		"metadata":  map[string]string{"task_id": taskID},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal message: %w", err)
+	}
+	if err := c.rdb.RPush(ctx, ThreadMessagesKey(threadID), string(msg)).Err(); err != nil {
+		return nil, fmt.Errorf("thread history append: %w", err)
+	}
+	c.rdb.Expire(ctx, ThreadMessagesKey(threadID), TTLThread)
+
+	// Prevent duplicate group membership
+	if existing, _ := c.rdb.Get(ctx, TaskKey(taskID, "group")).Result(); existing != "" {
+		return nil, fmt.Errorf("task %s is already in group %q", taskID, existing)
+	}
+
+	// Set group membership before pushing to queue — if these fail, the
+	// task is never dequeued by workers, so no lost-task risk.
+	groupSetKey := GroupTasksKey(threadID, groupLabel)
+	if err := c.rdb.SAdd(ctx, groupSetKey, taskID).Err(); err != nil {
+		return nil, fmt.Errorf("group SADD: %w", err)
+	}
+	c.rdb.Expire(ctx, groupSetKey, TTLThread)
+	if err := c.rdb.Set(ctx, TaskKey(taskID, "group"), groupLabel, TTLTask).Err(); err != nil {
+		c.rdb.SRem(ctx, groupSetKey, taskID) // best-effort rollback
+		return nil, fmt.Errorf("group membership set: %w", err)
+	}
+
+	// Enqueue task
+	payload, err := json.Marshal(TaskPayload{
+		TaskID:      taskID,
+		ThreadID:    threadID,
+		Instruction: instruction,
+	})
+	if err != nil {
+		c.rdb.SRem(ctx, groupSetKey, taskID) // best-effort rollback
+		return nil, fmt.Errorf("marshal payload: %w", err)
+	}
+	if err := c.rdb.LPush(ctx, QueueKey(worker), string(payload)).Err(); err != nil {
+		c.rdb.SRem(ctx, groupSetKey, taskID) // best-effort rollback
+		return nil, fmt.Errorf("queue push: %w", err)
+	}
+
+	// Initialize task keys
+	pipe := c.rdb.Pipeline()
+	pipe.Set(ctx, TaskKey(taskID, "status"), "pending", TTLTask)
+	pipe.Set(ctx, TaskKey(taskID, "worker"), worker, TTLTask)
+	pipe.Set(ctx, TaskKey(taskID, "thread_id"), threadID, TTLTask)
+	pipe.Set(ctx, TaskKey(taskID, "description"), instruction, TTLTask)
+	pipe.Set(ctx, TaskKey(taskID, "created_at"), now, TTLTask)
+	if _, err := pipe.Exec(ctx); err != nil {
+		c.rdb.SRem(ctx, groupSetKey, taskID) // best-effort rollback
+		return nil, fmt.Errorf("task init: %w", err)
+	}
+
+	return &Task{
+		TaskID:      taskID,
+		ThreadID:    threadID,
+		Instruction: instruction,
+		Worker:      worker,
+		Status:      "pending",
+		Description: instruction,
+		CreatedAt:   now,
+	}, nil
+}
+
 // GetTask retrieves a task by ID from Redis.
 func (c *Client) GetTask(ctx context.Context, taskID string) (*Task, error) {
 	keys := []string{"status", "worker", "thread_id", "description", "result", "exit_code", "created_at", "completed_at"}
