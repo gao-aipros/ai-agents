@@ -59,6 +59,7 @@ ENV AGENT_CMD="opencode -m ${OPENCODE_PROVIDER}/${OPENCODE_MODEL} run --dangerou
 COPY --chown=agent:agent docker/opencode/AGENTS.md /home/agent/.config/opencode/AGENTS.md
 COPY --chown=agent:agent docker/opencode/opencode.json /home/agent/.config/opencode/opencode.json
 COPY --from=skills-download --chown=agent:agent /tmp/skills-out /home/agent/.config/opencode/skills/
+COPY --chown=agent:agent docs/agents/ /home/agent/.config/opencode/agents-config/
 
 USER agent
 RUN opencode models --refresh

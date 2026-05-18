@@ -65,6 +65,7 @@ COPY --chown=agent:agent docker/codex/models_catalog.json /home/agent/.codex/mod
 # Agent instructions (global scope: ~/.codex/AGENTS.md)
 COPY --chown=agent:agent docker/codex/AGENTS.md /home/agent/.codex/AGENTS.md
 COPY --from=skills-download --chown=agent:agent /tmp/skills-out /home/agent/.codex/skills/
+COPY --chown=agent:agent docs/agents/ /home/agent/.codex/agents-config/
 
 ENV AGENT_CMD="codex exec --yolo --sandbox danger-full-access --skip-git-repo-check"
 

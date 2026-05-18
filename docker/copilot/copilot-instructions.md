@@ -15,7 +15,9 @@ Skill reference files are at `~/.copilot/skills/`. When a task involves one of t
 **Engineering:** `diagnose` `grill-with-docs` `improve-codebase-architecture` `prototype` `to-issues` `to-prd` `triage` `zoom-out`
 **Productivity:** `handoff` `caveman` `grill-me`
 
-Project configuration: `docs/agents/issue-tracker.md` `docs/agents/triage-labels.md` `docs/agents/domain.md`
+Project defaults: `~/.copilot/agents-config/issue-tracker.md` `~/.copilot/agents-config/triage-labels.md` `~/.copilot/agents-config/domain.md`
+
+Per-project overrides (take precedence): `docs/agents/` in the workspace repo.
 
 ## How You Work
 

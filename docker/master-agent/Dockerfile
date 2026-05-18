@@ -66,6 +66,7 @@ RUN mkdir -p /home/agent/.claude && chown agent:agent /home/agent/.claude
 VOLUME /home/agent/.claude
 COPY --chown=agent:agent docker/master-agent/CLAUDE.md /home/agent/.claude/CLAUDE.md
 COPY --from=skills-download --chown=agent:agent /tmp/skills-out /home/agent/.claude/skills/
+COPY --chown=agent:agent docs/agents/ /home/agent/.claude/agents-config/
 
 USER agent
 ENTRYPOINT ["webui"]

@@ -59,6 +59,7 @@ ENV COPILOT_PROVIDER_TYPE=anthropic \
 RUN mkdir -p /home/agent/.copilot && chown -R agent:agent /home/agent/.copilot
 COPY --chown=agent:agent docker/copilot/copilot-instructions.md /home/agent/.copilot/copilot-instructions.md
 COPY --from=skills-download --chown=agent:agent /tmp/skills-out /home/agent/.copilot/skills/
+COPY --chown=agent:agent docs/agents/ /home/agent/.copilot/agents-config/
 
 USER agent
 ENTRYPOINT ["/usr/local/bin/worker-go", "copilot"]

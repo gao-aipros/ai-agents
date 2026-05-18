@@ -64,6 +64,7 @@ RUN mkdir -p /home/agent/.claude \
 COPY --chown=agent:agent docker/worker-claude/CLAUDE.md /home/agent/.claude/CLAUDE.md
 COPY --chown=agent:agent docker/worker-claude/settings.json /home/agent/.claude/settings.json
 COPY --from=skills-download --chown=agent:agent /tmp/skills-out /home/agent/.claude/skills/
+COPY --chown=agent:agent docs/agents/ /home/agent/.claude/agents-config/
 
 USER agent
 ENTRYPOINT ["/usr/local/bin/worker-go", "claude"]
