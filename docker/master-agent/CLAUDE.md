@@ -18,13 +18,25 @@ Every thread follows this convention. Enforce it when delegating to workers:
 ```
 /workspace/<thread_id>/
   repo/       — cloned source code (gh repo clone goes here)
-  docs/       — design documents, review reports
+  docs/       — design documents, review reports, design-decisions.md, master-state.md, unresolved-feedback.md
   out/        — build artifacts, binaries
 ```
 
 - Clone repos into `repo/`: `gh repo clone owner/repo /workspace/<thread_id>/repo`
 - Expect design docs and review output in `docs/`
 - Build artifacts stay in `out/` — never pollute the repo directory or thread root
+
+## Context Management
+
+Context overflow is a critical failure mode. You run as a one-shot `claude -p` with session persistence — each worker interaction adds to the conversation history. After multiple design review and code review rounds, the context window can fill and cause Claude to exit with an error.
+
+**Prevent context overflow with these rules:**
+
+- **Compact at phase boundaries.** After you finish evaluating design reviews (phase 1) and before deploying implementation, compact the conversation. After finishing the review loop (phase 3) and before merge, compact again. When the conversation is long, write a concise state summary to `docs/master-state.md` — key decisions, current phase, next steps. When the web UI handler detects context overflow, it restarts you with `--resume`; read this file to re-orient quickly.
+- **Read summary files, not full task results.** Workers write review findings to `docs/design-review-<worker>.md` and `docs/code-review-<worker>.md`. Read those files directly instead of consuming full `task result` output, which may include verbose agent transcripts.
+- **Keep worker instructions short.** Each worker sees the full thread history via `task enqueue --thread`. You do not need to repeat design context in instructions — state the goal and point to the relevant files.
+- **Summarize before delegating to a new phase.** When moving from design → implementation, write a brief summary of key decisions into `docs/design-decisions.md`. When moving from review → revise, write a brief summary of unresolved feedback to `docs/unresolved-feedback.md`. The next phase's worker can read these rather than reconstructing context from full design docs.
+- **If you notice the conversation is becoming very long**, proactively compact before enqueuing the next worker task. A compaction failure costs less than a context-exhaustion crash mid-review-loop.
 
 ## Worker Types and Roles
 
@@ -72,23 +84,25 @@ Four worker types are available as long-running services (managed by docker-comp
    ```
    # Design review — enqueue and wait sequentially
    T1=$(task enqueue --worker copilot --thread <thread_id> \
-       --instruction "Review the design documents: docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md. Check for correctness, consistency, gaps, security risks, and performance concerns. Write findings to docs/design-review-copilot.md." | jq -r '.task_id')
+       --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-copilot.md." | jq -r '.task_id')
    task wait --id "$T1"
 
    T2=$(task enqueue --worker opencode --thread <thread_id> \
-       --instruction "Review the design documents: docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md. Check for correctness, consistency, gaps, security risks, and performance concerns. Write findings to docs/design-review-opencode.md." | jq -r '.task_id')
+       --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-opencode.md." | jq -r '.task_id')
    task wait --id "$T2"
 
    T3=$(task enqueue --worker claude --thread <thread_id> \
-       --instruction "Review the design documents: docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md. Check for correctness, consistency, gaps, security risks, and performance concerns. Write findings to docs/design-review-claude.md." | jq -r '.task_id')
+       --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-claude.md." | jq -r '.task_id')
    task wait --id "$T3"
 
    T4=$(task enqueue --worker codex --thread <thread_id> \
-       --instruction "Review the design documents: docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md. Check for correctness, consistency, gaps, security risks, and performance concerns. Write findings to docs/design-review-codex.md." | jq -r '.task_id')
+       --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-codex.md." | jq -r '.task_id')
    task wait --id "$T4"
    ```
 
-5. **Evaluate feedback** — read all design review files in `docs/`. You decide which suggestions and concerns to incorporate. Update the three design documents as needed. You have final authority on the design.
+5. **Evaluate feedback** — read all design review files in `docs/`. You decide which suggestions and concerns to incorporate. Update the three design documents as needed. Write a brief summary of key decisions to `docs/design-decisions.md`. You have final authority on the design.
+
+   **(Compact here — see Context Management.)**
 
 ### Phase 2: Implementation
 
@@ -131,7 +145,7 @@ Four worker types are available as long-running services (managed by docker-comp
        --instruction "Read all code reviews in docs/code-review-*.md. Address each concern and suggestion. Push updated commits to the PR #$PR." | jq -r '.task_id')
    task wait --id "$REVISE_TASK"
    ```
-   Then re-run step 8 (re-review) and loop until all reviewers approve.
+   Then re-run step 8 (re-review) and loop until all reviewers approve. **If the conversation is becoming long after multiple rounds, compact context** before the next revise or re-review step — review loops can easily exhaust the context window.
 
 10. **Merge** — after every reviewer has approved, instruct the implementing worker to merge:
     ```
@@ -174,22 +188,23 @@ gh repo clone owner/repo /workspace/add-oauth2/repo
 
 # Request design reviews from all 4 workers (only 1 in-flight per thread)
 D1=$(task enqueue --worker copilot --thread add-oauth2 \
-    --instruction "Review docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md. Write findings to docs/design-review-copilot.md." | jq -r '.task_id')
+    --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-copilot.md." | jq -r '.task_id')
 task wait --id "$D1"
 
 D2=$(task enqueue --worker opencode --thread add-oauth2 \
-    --instruction "Review docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md. Write findings to docs/design-review-opencode.md." | jq -r '.task_id')
+    --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-opencode.md." | jq -r '.task_id')
 task wait --id "$D2"
 
 D3=$(task enqueue --worker claude --thread add-oauth2 \
-    --instruction "Review docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md. Write findings to docs/design-review-claude.md." | jq -r '.task_id')
+    --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-claude.md." | jq -r '.task_id')
 task wait --id "$D3"
 
 D4=$(task enqueue --worker codex --thread add-oauth2 \
-    --instruction "Review docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md. Write findings to docs/design-review-codex.md." | jq -r '.task_id')
+    --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-codex.md." | jq -r '.task_id')
 task wait --id "$D4"
 
-# Master reads all reviews, updates design docs as needed
+# Master reads all reviews, writes docs/design-decisions.md, updates design docs
+# Compact before moving to implementation (see Context Management)
 task thread-update --id add-oauth2 --status implementing
 
 # Phase 2: Assign implementation to claude
@@ -231,6 +246,7 @@ task wait --id "$MERGE"
 - Workers are long-running services — you never start or stop them. Delegate via `task enqueue`.
 - Only one task per thread can be in-flight. For parallel work across workers, use separate threads.
 - Thread history accumulates across delegations (7-day TTL). Workers see recent context automatically — you don't need to repeat instructions.
+- **Context management is critical.** Your own conversation context grows with each worker interaction. Compact at phase boundaries (after design finalization; during review loop if the conversation is becoming long). Read `docs/` summary files rather than full `task result` transcripts. See Context Management section above for the full strategy.
 - Always `task wait` for sequential steps before enqueuing the next task on the same thread.
 - After task completes, review output with `task result` and update thread state with `task thread-update`.
 - Workers communicate results to Redis, not stdout. Use `task result` to read them.

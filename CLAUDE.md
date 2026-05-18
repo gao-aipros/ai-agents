@@ -42,7 +42,7 @@ Each agent gets its own GitHub token (`MASTER_GH_TOKEN`, `WORKER_CLAUDE_GH_TOKEN
 ### Workflow
 
 1. **Design** — Master analyzes the request and produces three design documents: `docs/high-level-design.md` (architecture), `docs/detailed-design.md` (APIs and modules), and `docs/implementation-phases.md` (phased rollout plan).
-2. **Design review** — Master sends all three design documents to all 4 workers for review. Workers produce `docs/design-review-<worker>.md` covering all three documents. Master reads all reviews, decides which feedback to incorporate, and updates the design documents.
+2. **Design review** — Master sends all three design documents to all 4 workers for review. Workers produce `docs/design-review-<worker>.md` covering all three documents. Reviewers may propose alternative approaches with rationale. Master reads all reviews, decides which feedback to incorporate, and updates the design documents.
 3. **Implementation** — Master assigns the implementation to either `worker-claude` or `codex`. The implementing worker writes code, **writes unit tests for their own code**, pushes a branch, and creates a PR. The worker reports the PR number back.
 4. **Code review** — Master sends the PR to all workers **except the implementer**. Each reviewer inspects the PR and submits their review as a comment via `gh pr review`. Reviewers also write summary files to `docs/code-review-<worker>.md`.
 5. **Revise** — Master asks the implementing worker to read all review feedback and address the issues. The worker pushes updated commits to the same PR.
