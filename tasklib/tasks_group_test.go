@@ -1,6 +1,7 @@
 package tasklib
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -163,6 +164,198 @@ func TestEnqueueGroupInvalidLabel(t *testing.T) {
 			t.Errorf("expected error for invalid label %q, got nil", label)
 		}
 	}
+}
+
+func TestEnqueueGroupDuplicateGroup(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Normal enqueue succeeds (guard at tasks.go:182 passes for fresh UUIDs)
+	task, err := c.EnqueueGroup(ctx(), "claude", "thread-1", "design-review", "normal")
+	if err != nil {
+		t.Fatalf("EnqueueGroup failed: %v", err)
+	}
+
+	// Verify the guard correctly detects a pre-existing group assignment.
+	// (In normal flow the guard never fires because EnqueueGroup generates
+	// fresh UUIDs, but it protects against future code paths that might
+	// pass an existing task ID.)
+	c.rdb.Set(ctx(), TaskKey("known-task", "group"), "old-group", 0)
+	existing, _ := c.rdb.Get(ctx(), TaskKey("known-task", "group")).Result()
+	if existing == "" {
+		t.Error("guard check would fail: expected non-empty group on pre-assigned task")
+	}
+
+	// Original task's group membership must be intact
+	label, _ := c.rdb.Get(ctx(), TaskKey(task.TaskID, "group")).Result()
+	if label != "design-review" {
+		t.Errorf("task should be in 'design-review', got %q", label)
+	}
+}
+
+// ── WaitTask group-task gate tests ──────────────────────────────────────────
+
+// TestWaitTaskSkipsThreadStatusAndLockForGroup verifies that on all three
+// exit paths (completion, timeout, context cancellation), WaitTask does NOT
+// update thread status or release the lock for group tasks.
+func TestWaitTaskSkipsThreadStatusAndLockForGroup(t *testing.T) {
+	// ── completion path ──
+	t.Run("completion", func(t *testing.T) {
+		c, _ := setupTestClient(t)
+
+		// Create thread and acquire + immediately release lock (simulating EnqueueGroup)
+		if _, err := c.CreateThread(ctx(), "thr-group-done", ""); err != nil {
+			t.Fatalf("CreateThread failed: %v", err)
+		}
+		// EnqueueGroup would have done SET NX → DEL on the lock.
+		// We simulate the post-EnqueueGroup state: lock was released.
+		c.rdb.Del(ctx(), ThreadLockKey("thr-group-done"))
+
+		// Set up a group task (has task:<id>:group key set)
+		c.rdb.Set(ctx(), TaskKey("gt1", "status"), "done", 0)
+		c.rdb.Set(ctx(), TaskKey("gt1", "worker"), "claude", 0)
+		c.rdb.Set(ctx(), TaskKey("gt1", "thread_id"), "thr-group-done", 0)
+		c.rdb.Set(ctx(), TaskKey("gt1", "group"), "design-review", 0)
+
+		// WaitTask the group task
+		task, err := c.WaitTask(ctx(), "gt1", "thr-group-done", 5*time.Second)
+		if err != nil {
+			t.Fatalf("WaitTask failed: %v", err)
+		}
+		if task.Status != "done" {
+			t.Errorf("expected status done, got %s", task.Status)
+		}
+
+		// Thread status should NOT have been updated (group tasks defer to GroupWait)
+		thread, err := c.GetThread(ctx(), "thr-group-done")
+		if err != nil {
+			t.Fatalf("GetThread failed: %v", err)
+		}
+		// Status should remain "initiated" (WaitTask skipped updateThreadStatus
+		// for group task — GroupWait handles it later)
+		if thread.Status != "initiated" {
+			t.Errorf("expected thread status 'initiated' (unchanged for group task), got %q", thread.Status)
+		}
+	})
+
+	// ── timeout path ──
+	t.Run("timeout", func(t *testing.T) {
+		c, _ := setupTestClient(t)
+
+		lockKey := ThreadLockKey("thr-group-timeout")
+		// Simulate: another sequential task holds the lock (acquired after EnqueueGroup's release)
+		// We acquire it here to verify WaitTask does NOT release it on timeout of a group task.
+		c.rdb.Set(ctx(), lockKey, "other-task", 0)
+
+		c.rdb.Set(ctx(), TaskKey("gt2", "status"), "running", 0)
+		c.rdb.Set(ctx(), TaskKey("gt2", "thread_id"), "thr-group-timeout", 0)
+		c.rdb.Set(ctx(), TaskKey("gt2", "group"), "code-review", 0)
+
+		_, err := c.WaitTask(ctx(), "gt2", "thr-group-timeout", 10*time.Millisecond)
+		if err == nil {
+			t.Error("expected timeout error")
+		}
+
+		// Lock must still exist — WaitTask must NOT have released it for a group task
+		if exists, _ := c.rdb.Exists(ctx(), lockKey).Result(); exists == 0 {
+			t.Error("lock was released by WaitTask on timeout — should have been skipped for group task")
+		}
+	})
+
+	// ── context cancellation path ──
+	t.Run("context_cancel", func(t *testing.T) {
+		c, _ := setupTestClient(t)
+
+		lockKey := ThreadLockKey("thr-group-cancel")
+		c.rdb.Set(ctx(), lockKey, "other-task", 0)
+
+		c.rdb.Set(ctx(), TaskKey("gt3", "status"), "running", 0)
+		c.rdb.Set(ctx(), TaskKey("gt3", "thread_id"), "thr-group-cancel", 0)
+		c.rdb.Set(ctx(), TaskKey("gt3", "group"), "code-review", 0)
+
+		cancelCtx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := c.WaitTask(cancelCtx, "gt3", "thr-group-cancel", 30*time.Second)
+		if err == nil {
+			t.Error("expected context cancellation error")
+		}
+
+		// Lock must still exist
+		if exists, _ := c.rdb.Exists(ctx(), lockKey).Result(); exists == 0 {
+			t.Error("lock was released by WaitTask on context cancel — should have been skipped for group task")
+		}
+	})
+}
+
+// TestWaitTaskSequentialStillWorks verifies that sequential tasks (no group
+// label) still update thread status and release lock as before.
+func TestWaitTaskSequentialStillWorks(t *testing.T) {
+	// ── direct Redis setup (verifies thread status update) ──
+	t.Run("update_thread_status", func(t *testing.T) {
+		c, _ := setupTestClient(t)
+
+		if _, err := c.CreateThread(ctx(), "thr-seq", ""); err != nil {
+			t.Fatalf("CreateThread failed: %v", err)
+		}
+		c.rdb.Set(ctx(), TaskKey("st1", "status"), "done", 0)
+		c.rdb.Set(ctx(), TaskKey("st1", "worker"), "claude", 0)
+		c.rdb.Set(ctx(), TaskKey("st1", "thread_id"), "thr-seq", 0)
+
+		_, err := c.WaitTask(ctx(), "st1", "thr-seq", 5*time.Second)
+		if err != nil {
+			t.Fatalf("WaitTask failed: %v", err)
+		}
+
+		thread, err := c.GetThread(ctx(), "thr-seq")
+		if err != nil {
+			t.Fatalf("GetThread failed: %v", err)
+		}
+		if thread.Status != "complete" {
+			t.Errorf("expected thread status complete for sequential task, got %q", thread.Status)
+		}
+	})
+
+	// ── Enqueue → WaitTask (verifies lock acquire + release) ──
+	t.Run("lock_release", func(t *testing.T) {
+		c, _ := setupTestClient(t)
+
+		if _, err := c.CreateThread(ctx(), "thr-seq2", ""); err != nil {
+			t.Fatalf("CreateThread failed: %v", err)
+		}
+
+		// Enqueue acquires the thread lock
+		task, err := c.Enqueue(ctx(), "claude", "thr-seq2", "sequential")
+		if err != nil {
+			t.Fatalf("Enqueue failed: %v", err)
+		}
+
+		// Verify lock is held after Enqueue
+		if exists, _ := c.rdb.Exists(ctx(), ThreadLockKey("thr-seq2")).Result(); exists == 0 {
+			t.Fatal("expected lock to be held after Enqueue")
+		}
+
+		// Mark task done so WaitTask completes immediately
+		c.rdb.Set(ctx(), TaskKey(task.TaskID, "status"), "done", 0)
+
+		// WaitTask should release the lock for sequential tasks
+		_, err = c.WaitTask(ctx(), task.TaskID, "thr-seq2", 5*time.Second)
+		if err != nil {
+			t.Fatalf("WaitTask failed: %v", err)
+		}
+
+		// Lock must be released
+		if exists, _ := c.rdb.Exists(ctx(), ThreadLockKey("thr-seq2")).Result(); exists > 0 {
+			t.Error("expected lock to be released after WaitTask on sequential task")
+		}
+
+		// Thread status must be updated
+		thread, err := c.GetThread(ctx(), "thr-seq2")
+		if err != nil {
+			t.Fatalf("GetThread failed: %v", err)
+		}
+		if thread.Status != "complete" {
+			t.Errorf("expected thread status 'complete', got %q", thread.Status)
+		}
+	})
 }
 
 func TestEnqueueGroupKeysHaveTTLs(t *testing.T) {

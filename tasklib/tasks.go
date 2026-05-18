@@ -132,13 +132,11 @@ func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction stri
 // keys are set before the queue push — if they fail, the task is never
 // dequeued, so there is no risk of lost tasks.
 //
-// WARNING: Do not use WaitTask on group tasks until Phase 3 (WaitTask
-// gating) is implemented. WaitTask unconditionally updates thread status
-// and releases the thread lock on all exit paths. For group tasks this
-// is incorrect — the first group task to complete would prematurely
-// update thread status, and a timed-out/cancelled group task would
-// release a lock that may be held by a subsequent sequential task.
-// Use GroupWait instead.
+// WaitTask is safe for group tasks as of Phase 3 — it checks
+// task:<id>:group on all exit paths and skips updateThreadStatus
+// and lock release for group tasks. Thread status is set once by
+// GroupWait after all group tasks complete. Prefer GroupWait over
+// WaitTask for group tasks to get aggregate status.
 func (c *Client) EnqueueGroup(ctx context.Context, worker, threadID, groupLabel, instruction string) (*Task, error) {
 	// Validate group label before any Redis operations
 	if strings.ContainsAny(groupLabel, ":\t\n\r ") {
@@ -443,25 +441,38 @@ func (c *Client) WaitTask(ctx context.Context, taskID, threadID string, timeout 
 					t.CompletedAt = val
 				}
 			}
-			// Update thread status and release lock on completion
-			if threadID != "" {
-				c.updateThreadStatus(ctx, threadID, status)
-				c.rdb.Del(ctx, ThreadLockKey(threadID))
+			// Update thread status and release lock on completion.
+			// Group tasks: skip both — aggregate status is computed by
+			// GroupWait once all group tasks complete, and the lock was
+			// already released by EnqueueGroup.
+			groupLabel, _ := c.rdb.Get(ctx, TaskKey(taskID, "group")).Result()
+			if groupLabel == "" {
+				if threadID != "" {
+					c.updateThreadStatus(ctx, threadID, status)
+					c.rdb.Del(ctx, ThreadLockKey(threadID))
+				}
 			}
 			return t, nil
 		}
 		if time.Now().After(deadline) {
-			// Release thread lock on timeout
-			if threadID != "" {
-				c.rdb.Del(ctx, ThreadLockKey(threadID))
+			// Release thread lock on timeout for sequential tasks only.
+			// Group tasks: lock was already released by EnqueueGroup.
+			groupLabel, _ := c.rdb.Get(ctx, TaskKey(taskID, "group")).Result()
+			if groupLabel == "" {
+				if threadID != "" {
+					c.rdb.Del(ctx, ThreadLockKey(threadID))
+				}
 			}
 			return nil, fmt.Errorf("Timed out waiting for task %s (status: %s)", taskID, status)
 		}
 
 		select {
 		case <-ctx.Done():
-			if threadID != "" {
-				c.rdb.Del(ctx, ThreadLockKey(threadID))
+			groupLabel, _ := c.rdb.Get(ctx, TaskKey(taskID, "group")).Result()
+			if groupLabel == "" {
+				if threadID != "" {
+					c.rdb.Del(ctx, ThreadLockKey(threadID))
+				}
 			}
 			return nil, ctx.Err()
 		case <-ticker.C:
