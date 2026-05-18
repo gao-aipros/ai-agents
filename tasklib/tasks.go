@@ -508,10 +508,10 @@ func (c *Client) GroupWait(ctx context.Context, threadID, groupLabel string, tim
 		for i, tid := range taskIDs {
 			cmds[i] = pipe.Get(ctx, TaskKey(tid, "status"))
 		}
-			if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
-				// Transient error: retry on next tick
-				continue
-			}
+		if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+			// Transient error: retry on next tick
+			continue
+		}
 
 		// Collect statuses and check terminality
 		statuses := make(map[string]string, len(taskIDs))
