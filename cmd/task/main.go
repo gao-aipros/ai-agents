@@ -28,6 +28,7 @@ var (
 	enqueueWorker      string
 	enqueueThread      string
 	enqueueInstruction string
+	enqueueGroup       string
 	statusID           string
 	resultID           string
 	resultTail         int
@@ -51,6 +52,9 @@ var (
 	tuDesign           string
 	tuPR               int
 	tclID              string
+	gwThread           string
+	gwGroup            string
+	gwTimeout          int
 )
 
 var getClient = func() *tasklib.Client {
@@ -84,6 +88,7 @@ func main() {
 	enqueueCmd.Flags().StringVar(&enqueueWorker, "worker", "", "")
 	enqueueCmd.Flags().StringVar(&enqueueThread, "thread", "", "")
 	enqueueCmd.Flags().StringVar(&enqueueInstruction, "instruction", "", "")
+	enqueueCmd.Flags().StringVar(&enqueueGroup, "group", "", "")
 	enqueueCmd.MarkFlagRequired("worker")
 	enqueueCmd.MarkFlagRequired("thread")
 	enqueueCmd.MarkFlagRequired("instruction")
@@ -214,7 +219,19 @@ func main() {
 	threadCleanupCmd.MarkFlagRequired("id")
 	root.AddCommand(threadCleanupCmd)
 
-	if err := root.Execute(); err != nil {
+		// ── task group-wait ──────────────────────────────────────────────────
+		groupWaitCmd := &cobra.Command{
+			Use:  "group-wait",
+			RunE: cmdGroupWait,
+		}
+		groupWaitCmd.Flags().StringVar(&gwThread, "thread", "", "")
+		groupWaitCmd.Flags().StringVar(&gwGroup, "group", "", "")
+		groupWaitCmd.Flags().IntVar(&gwTimeout, "timeout", 600, "")
+		groupWaitCmd.MarkFlagRequired("thread")
+		groupWaitCmd.MarkFlagRequired("group")
+		root.AddCommand(groupWaitCmd)
+
+		if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
 }
@@ -224,6 +241,20 @@ func main() {
 func cmdEnqueue(cmd *cobra.Command, args []string) error {
 	c := getClient()
 	ctx := context.Background()
+
+	if enqueueGroup != "" {
+		// Validate group label before any API call
+		if strings.ContainsAny(enqueueGroup, ":\t\n\r ") {
+			die(fmt.Sprintf("invalid group label %q: must not contain ':' or whitespace", enqueueGroup))
+		}
+		task, err := c.EnqueueGroup(ctx, enqueueWorker, enqueueThread, enqueueGroup, enqueueInstruction)
+		if err != nil {
+			die(err.Error())
+		}
+		data, _ := json.Marshal(map[string]string{"task_id": task.TaskID})
+		fmt.Println(string(data))
+		return nil
+	}
 
 	task, err := c.Enqueue(ctx, enqueueWorker, enqueueThread, enqueueInstruction)
 	if err != nil {
@@ -672,6 +703,27 @@ func cmdThreadCleanup(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("Deleted %s\n", workspacePath)
 	return nil
+}
+
+func cmdGroupWait(cmd *cobra.Command, args []string) error {
+	c := getClient()
+	ctx := context.Background()
+
+	result, err := c.GroupWait(ctx, gwThread, gwGroup, time.Duration(gwTimeout)*time.Second)
+	if err != nil {
+		die(err.Error())
+	}
+
+	data, _ := json.MarshalIndent(result, "", "  ")
+	fmt.Println(string(data))
+
+	switch result.Status {
+	case "complete":
+		return nil
+	default:
+		os.Exit(1)
+		return nil
+	}
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────

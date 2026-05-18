@@ -395,3 +395,227 @@ func TestEnqueueGroupKeysHaveTTLs(t *testing.T) {
 		t.Error("group SET should have expired after TTLThread")
 	}
 }
+
+// ── GroupWait tests ────────────────────────────────────────────────────────
+
+func TestGroupWaitAllDone(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	if _, err := c.CreateThread(ctx(), "thr-gw-done", ""); err != nil {
+		t.Fatalf("CreateThread failed: %v", err)
+	}
+
+	// Set up a group with 3 tasks, all done
+	taskIDs := []string{"t1", "t2", "t3"}
+	for _, tid := range taskIDs {
+		c.rdb.Set(ctx(), TaskKey(tid, "status"), "done", 0)
+		c.rdb.Set(ctx(), TaskKey(tid, "thread_id"), "thr-gw-done", 0)
+		c.rdb.SAdd(ctx(), GroupTasksKey("thr-gw-done", "review"), tid)
+	}
+
+	result, err := c.GroupWait(ctx(), "thr-gw-done", "review", 5*time.Second)
+	if err != nil {
+		t.Fatalf("GroupWait failed: %v", err)
+	}
+	if result.Status != "complete" {
+		t.Errorf("expected status 'complete', got %q", result.Status)
+	}
+	if len(result.Tasks) != 3 {
+		t.Errorf("expected 3 tasks, got %d", len(result.Tasks))
+	}
+	for _, tid := range taskIDs {
+		if result.Tasks[tid] != "done" {
+			t.Errorf("task %s should be done, got %q", tid, result.Tasks[tid])
+		}
+	}
+
+	// Thread status must be updated to "complete"
+	thread, err := c.GetThread(ctx(), "thr-gw-done")
+	if err != nil {
+		t.Fatalf("GetThread failed: %v", err)
+	}
+	if thread.Status != "complete" {
+		t.Errorf("expected thread status 'complete', got %q", thread.Status)
+	}
+}
+
+func TestGroupWaitMixedOutcomes(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	if _, err := c.CreateThread(ctx(), "thr-gw-mixed", ""); err != nil {
+		t.Fatalf("CreateThread failed: %v", err)
+	}
+
+	// 2 done, 1 failed
+	c.rdb.SAdd(ctx(), GroupTasksKey("thr-gw-mixed", "review"), "t-ok1", "t-ok2", "t-fail")
+	c.rdb.Set(ctx(), TaskKey("t-ok1", "status"), "done", 0)
+	c.rdb.Set(ctx(), TaskKey("t-ok2", "status"), "done", 0)
+	c.rdb.Set(ctx(), TaskKey("t-fail", "status"), "failed", 0)
+
+	result, err := c.GroupWait(ctx(), "thr-gw-mixed", "review", 5*time.Second)
+	if err != nil {
+		t.Fatalf("GroupWait failed: %v", err)
+	}
+	if result.Status != "error" {
+		t.Errorf("expected status 'error', got %q", result.Status)
+	}
+	if result.Tasks["t-ok1"] != "done" {
+		t.Errorf("t-ok1 should be done, got %q", result.Tasks["t-ok1"])
+	}
+	if result.Tasks["t-fail"] != "failed" {
+		t.Errorf("t-fail should be failed, got %q", result.Tasks["t-fail"])
+	}
+
+	// Thread status must be "error" (any failed => error)
+	thread, _ := c.GetThread(ctx(), "thr-gw-mixed")
+	if thread.Status != "error" {
+		t.Errorf("expected thread status 'error', got %q", thread.Status)
+	}
+}
+
+func TestGroupWaitCancelled(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	if _, err := c.CreateThread(ctx(), "thr-gw-cancelled", ""); err != nil {
+		t.Fatalf("CreateThread failed: %v", err)
+	}
+
+	c.rdb.SAdd(ctx(), GroupTasksKey("thr-gw-cancelled", "review"), "t-c1", "t-c2")
+	c.rdb.Set(ctx(), TaskKey("t-c1", "status"), "cancelled", 0)
+	c.rdb.Set(ctx(), TaskKey("t-c2", "status"), "cancelled", 0)
+
+	result, err := c.GroupWait(ctx(), "thr-gw-cancelled", "review", 5*time.Second)
+	if err != nil {
+		t.Fatalf("GroupWait failed: %v", err)
+	}
+	if result.Status != "cancelled" {
+		t.Errorf("expected status 'cancelled', got %q", result.Status)
+	}
+
+	thread, _ := c.GetThread(ctx(), "thr-gw-cancelled")
+	if thread.Status != "cancelled" {
+		t.Errorf("expected thread status 'cancelled', got %q", thread.Status)
+	}
+}
+
+func TestGroupWaitTimeout(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	if _, err := c.CreateThread(ctx(), "thr-gw-timeout", ""); err != nil {
+		t.Fatalf("CreateThread failed: %v", err)
+	}
+
+	// Set task status to "running" so it never becomes terminal
+	c.rdb.SAdd(ctx(), GroupTasksKey("thr-gw-timeout", "review"), "t-stuck")
+	c.rdb.Set(ctx(), TaskKey("t-stuck", "status"), "running", 0)
+
+	result, err := c.GroupWait(ctx(), "thr-gw-timeout", "review", 20*time.Millisecond)
+	if err != nil {
+		t.Fatalf("GroupWait should return result (not error) on timeout: %v", err)
+	}
+	if result.Status != "timeout" {
+		t.Errorf("expected status 'timeout', got %q", result.Status)
+	}
+	if result.Tasks["t-stuck"] != "running" {
+		t.Errorf("expected t-stuck running, got %q", result.Tasks["t-stuck"])
+	}
+
+	// Thread status must NOT be updated on timeout
+	thread, _ := c.GetThread(ctx(), "thr-gw-timeout")
+	if thread.Status != "initiated" {
+		t.Errorf("expected thread status 'initiated' (unchanged on timeout), got %q", thread.Status)
+	}
+}
+
+func TestGroupWaitEmptyGroup(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	_, err := c.GroupWait(ctx(), "nonexistent-thread", "no-group", 1*time.Second)
+	if err == nil {
+		t.Error("expected error for nonexistent group")
+	}
+}
+
+func TestThreadStatusAfterGroupWait(t *testing.T) {
+	tests := []struct {
+		name          string
+		statuses      map[string]string
+		wantAggregate string
+	}{
+		{name: "all_done", statuses: map[string]string{"a": "done", "b": "done"}, wantAggregate: "complete"},
+		{name: "any_failed", statuses: map[string]string{"a": "done", "b": "failed"}, wantAggregate: "error"},
+		{name: "all_cancelled", statuses: map[string]string{"a": "cancelled", "b": "cancelled"}, wantAggregate: "cancelled"},
+		{name: "mixed_done_cancelled", statuses: map[string]string{"a": "done", "b": "cancelled"}, wantAggregate: "complete"},
+		{name: "failed_plus_cancelled", statuses: map[string]string{"a": "failed", "b": "cancelled"}, wantAggregate: "error"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := setupTestClient(t)
+
+			threadID := "thr-agg-" + tt.name
+			if _, err := c.CreateThread(ctx(), threadID, ""); err != nil {
+				t.Fatalf("CreateThread failed: %v", err)
+			}
+
+			for tid, status := range tt.statuses {
+				c.rdb.Set(ctx(), TaskKey(tid, "status"), status, 0)
+				c.rdb.SAdd(ctx(), GroupTasksKey(threadID, "review"), tid)
+			}
+
+			result, err := c.GroupWait(ctx(), threadID, "review", 5*time.Second)
+			if err != nil {
+				t.Fatalf("GroupWait failed: %v", err)
+			}
+			if result.Status != tt.wantAggregate {
+				t.Errorf("expected status %q, got %q", tt.wantAggregate, result.Status)
+			}
+
+			thread, _ := c.GetThread(ctx(), threadID)
+			if thread.Status != tt.wantAggregate {
+				t.Errorf("expected thread status %q, got %q", tt.wantAggregate, thread.Status)
+			}
+		})
+	}
+}
+
+func TestParallelSequentialPhases(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	if _, err := c.CreateThread(ctx(), "thr-phases", ""); err != nil {
+		t.Fatalf("CreateThread failed: %v", err)
+	}
+
+	// Phase 1: EnqueueGroup fan-out (parallel review)
+	t1, _ := c.EnqueueGroup(ctx(), "claude", "thr-phases", "review", "review task 1")
+	t2, _ := c.EnqueueGroup(ctx(), "copilot", "thr-phases", "review", "review task 2")
+
+	// Complete both group tasks
+	c.rdb.Set(ctx(), TaskKey(t1.TaskID, "status"), "done", 0)
+	c.rdb.Set(ctx(), TaskKey(t2.TaskID, "status"), "done", 0)
+
+	// GroupWait should complete successfully
+	result, err := c.GroupWait(ctx(), "thr-phases", "review", 5*time.Second)
+	if err != nil {
+		t.Fatalf("GroupWait failed: %v", err)
+	}
+	if result.Status != "complete" {
+		t.Errorf("expected complete, got %q", result.Status)
+	}
+
+	// Phase 2: Sequential enqueue after group-wait must succeed
+	// (lock was released by EnqueueGroup, and GroupWait doesn't hold it)
+	t3, err := c.Enqueue(ctx(), "codex", "thr-phases", "implement")
+	if err != nil {
+		t.Fatalf("sequential Enqueue after group-wait failed: %v", err)
+	}
+	if t3.Status != "pending" {
+		t.Errorf("expected status pending, got %s", t3.Status)
+	}
+
+	// Verify lock is held by the sequential task
+	exists, _ := c.rdb.Exists(ctx(), ThreadLockKey("thr-phases")).Result()
+	if exists == 0 {
+		t.Error("expected lock to be held by sequential Enqueue")
+	}
+}
