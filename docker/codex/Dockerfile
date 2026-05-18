@@ -21,7 +21,34 @@ RUN case "${TARGETARCH}" in \
     mv "/tmp/codex-${ARCH}" /usr/local/bin/codex && \
     chmod +x /usr/local/bin/codex
 
-# Stage 2: final image
+# Stage 2: download skills
+FROM debian:trixie AS skills-download
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 --filter=blob:none \
+    https://github.com/mattpocock/skills.git /tmp/skills \
+    && mkdir -p /tmp/skills-out \
+    && for skill in \
+      engineering/grill-with-docs \
+      engineering/improve-codebase-architecture \
+      engineering/diagnose \
+      engineering/prototype \
+      engineering/to-issues \
+      engineering/to-prd \
+      engineering/triage \
+      engineering/zoom-out \
+      engineering/setup-matt-pocock-skills \
+      productivity/handoff \
+      productivity/caveman \
+      productivity/grill-me; do \
+      cp -r "/tmp/skills/skills/$skill" "/tmp/skills-out/$(basename $skill)"; \
+    done
+
+# Stage 3: final image
 FROM ${WORKER_BASE_IMAGE}
 
 USER root
@@ -37,6 +64,7 @@ COPY --chown=agent:agent docker/codex/models_catalog.json /home/agent/.codex/mod
 
 # Agent instructions (global scope: ~/.codex/AGENTS.md)
 COPY --chown=agent:agent docker/codex/AGENTS.md /home/agent/.codex/AGENTS.md
+COPY --from=skills-download --chown=agent:agent /tmp/skills-out /home/agent/.codex/skills/
 
 ENV AGENT_CMD="codex exec --yolo --sandbox danger-full-access --skip-git-repo-check"
 

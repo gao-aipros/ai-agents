@@ -13,6 +13,33 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path
 
+# Build stage: download skills
+FROM debian:trixie AS skills-download
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 --filter=blob:none \
+    https://github.com/mattpocock/skills.git /tmp/skills \
+    && mkdir -p /tmp/skills-out \
+    && for skill in \
+      engineering/grill-with-docs \
+      engineering/improve-codebase-architecture \
+      engineering/diagnose \
+      engineering/prototype \
+      engineering/to-issues \
+      engineering/to-prd \
+      engineering/triage \
+      engineering/zoom-out \
+      engineering/setup-matt-pocock-skills \
+      productivity/handoff \
+      productivity/caveman \
+      productivity/grill-me; do \
+      cp -r "/tmp/skills/skills/$skill" "/tmp/skills-out/$(basename $skill)"; \
+    done
+
 # Final stage
 FROM ${WORKER_BASE_IMAGE}
 
@@ -31,6 +58,7 @@ ENV AGENT_CMD="opencode -m ${OPENCODE_PROVIDER}/${OPENCODE_MODEL} run --dangerou
 
 COPY --chown=agent:agent docker/opencode/AGENTS.md /home/agent/.config/opencode/AGENTS.md
 COPY --chown=agent:agent docker/opencode/opencode.json /home/agent/.config/opencode/opencode.json
+COPY --from=skills-download --chown=agent:agent /tmp/skills-out /home/agent/.config/opencode/skills/
 
 USER agent
 RUN opencode models --refresh

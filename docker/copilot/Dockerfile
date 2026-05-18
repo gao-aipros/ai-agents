@@ -13,6 +13,33 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN curl -fsSL https://gh.io/copilot-install | bash
 
+# Build stage: download skills
+FROM debian:trixie AS skills-download
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 --filter=blob:none \
+    https://github.com/mattpocock/skills.git /tmp/skills \
+    && mkdir -p /tmp/skills-out \
+    && for skill in \
+      engineering/grill-with-docs \
+      engineering/improve-codebase-architecture \
+      engineering/diagnose \
+      engineering/prototype \
+      engineering/to-issues \
+      engineering/to-prd \
+      engineering/triage \
+      engineering/zoom-out \
+      engineering/setup-matt-pocock-skills \
+      productivity/handoff \
+      productivity/caveman \
+      productivity/grill-me; do \
+      cp -r "/tmp/skills/skills/$skill" "/tmp/skills-out/$(basename $skill)"; \
+    done
+
 # Final stage
 FROM ${WORKER_BASE_IMAGE}
 
@@ -31,6 +58,7 @@ ENV COPILOT_PROVIDER_TYPE=anthropic \
 
 RUN mkdir -p /home/agent/.copilot && chown -R agent:agent /home/agent/.copilot
 COPY --chown=agent:agent docker/copilot/copilot-instructions.md /home/agent/.copilot/copilot-instructions.md
+COPY --from=skills-download --chown=agent:agent /tmp/skills-out /home/agent/.copilot/skills/
 
 USER agent
 ENTRYPOINT ["/usr/local/bin/worker-go", "copilot"]
