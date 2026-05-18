@@ -70,6 +70,7 @@ task enqueue --worker codex    --thread $THREAD --group "design-review" --instru
 task enqueue --worker claude   --thread $THREAD --group "design-review" --instruction "..."
 
 # Wait for group to finish; capture aggregate result
+# --timeout defaults to 600s; individual tasks can have per-task timeouts via task enqueue --timeout N
 RESULT=$(task group-wait --thread $THREAD --group "design-review" --timeout 600)
 STATUS=$(echo "$RESULT" | jq -r .status)
 
@@ -86,13 +87,13 @@ fi
 
 **Aggregate status** (computed by `group-wait`):
 - All `done` → `"complete"`
-- Any `failed` → `"error"` (highest priority)
+- Any `failed` → `"error"` (highest priority — overrides `cancelled`; `failed` + `cancelled` mix still yields `"error"`)
 - All `cancelled` → `"cancelled"`
 - Mixed `done` + `cancelled` → `"complete"` (inspect `.tasks` to distinguish)
 
 **Exit codes**: `"complete"` → 0; `"error"`, `"cancelled"`, `"timeout"` → 1.
 
-**Recovery**: If a worker crashes during a parallel task, the task remains in the group SET as `pending`. `GroupWait` will timeout, reporting the stuck task. Use `task requeue-stale` or `task cancel` + re-enqueue. `task requeue-stale` works identically for group tasks.
+**Recovery**: If a worker crashes during a parallel task, the task remains in the group SET as `pending`. `GroupWait` will timeout, reporting the stuck task. Use `task requeue-stale` or `task cancel` + re-enqueue. `task requeue-stale` works identically for group tasks. After a retry group completes, `group-wait` updates thread status based on the retry outcome.
 
 **Lock gate-check**: `EnqueueGroup` uses `SET NX` → immediate `DEL` (with 10s TTL fallback) to gate on the sequential phase being complete. The gate-check lock is released immediately so subsequent group enqueues succeed. If the process crashes between `SET NX` and `DEL`, the 10s TTL prevents blocking sequential enqueues for the full `LockTTL` (2100s). Recovery: `task unlock --thread <id>`.
 
