@@ -33,6 +33,14 @@ type TaskPayload struct {
 	Instruction string `json:"instruction"`
 }
 
+// GroupResult is returned by GroupWait when all tasks in a group reach a terminal state.
+type GroupResult struct {
+	ThreadID string            `json:"thread_id"`
+	Label    string            `json:"label"`
+	Status   string            `json:"status"` // complete | error | cancelled | timeout
+	Tasks    map[string]string `json:"tasks"`  // taskID → status
+}
+
 // TaskInfo is the value stored in the active_tasks hash.
 type TaskInfo struct {
 	Status      string `json:"status"`
