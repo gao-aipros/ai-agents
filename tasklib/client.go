@@ -28,6 +28,9 @@ func ThreadRunningKey(threadID string) string      { return "thread:" + threadID
 func ThreadCompleteKey(threadID string) string     { return "thread:" + threadID + ":complete" }
 func ThreadSessionIDKey(threadID string) string    { return "thread:" + threadID + ":session_id" }
 func ThreadLastActivityKey(threadID string) string { return "thread:" + threadID + ":last_activity" }
+func GroupTasksKey(threadID, label string) string {
+	return "thread:" + threadID + ":group:" + label + ":tasks"
+}
 func HeartbeatKey(workerType, hostname string) string {
 	return "worker:" + workerType + ":" + hostname + ":heartbeat"
 }
