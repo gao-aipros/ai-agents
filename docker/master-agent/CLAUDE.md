@@ -105,7 +105,7 @@ Four worker types are available as long-running services (managed by docker-comp
      for TID in $FAILED; do
        WORKER=$(task status --id "$TID" | jq -r .worker)
        task enqueue --worker "$WORKER" --thread <thread_id> --group design-review-retry \
-           --instruction "Re-review the updated design docs in docs/. Address the failures from your prior review. Write findings to docs/design-review-$WORKER.md."
+           --instruction "Retry your design review (previous attempt failed). Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. Write findings to docs/design-review-$WORKER.md."
      done
      task group-wait --thread <thread_id> --group design-review-retry --timeout 600
    fi
@@ -155,13 +155,13 @@ Four worker types are available as long-running services (managed by docker-comp
      for TID in $FAILED; do
        WORKER=$(task status --id "$TID" | jq -r .worker)
        task enqueue --worker "$WORKER" --thread <thread_id> --group code-review-retry \
-           --instruction "Re-review PR #$PR at owner/repo. Address the failures from your prior review. Write updated summary and re-submit review."
+           --instruction "Retry your code review of PR #$PR at owner/repo (previous attempt failed). Write summary to docs/code-review-$WORKER.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-$WORKER.md'."
      done
      task group-wait --thread <thread_id> --group code-review-retry --timeout 600
    fi
    ```
 
-   **If `codex` implemented instead**, swap: `claude`, `copilot`, and `opencode` review; `codex` does not. Use `--worker claude` instead of `--worker codex` in the fan-out above, and use `--worker claude` in steps 9-10 below.
+   **If `codex` implemented instead**, swap: `claude`, `copilot`, and `opencode` review; `codex` does not. Use `--worker claude` instead of `--worker codex` in the fan-out above, and use `--worker codex` in steps 9-10 below.
 
 9. **If any reviewer requests changes**, ask the implementer to address the feedback:
    ```
@@ -223,6 +223,7 @@ task enqueue --worker codex    --thread add-oauth2 --group design-review \
     --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-codex.md."
 
 RESULT=$(task group-wait --thread add-oauth2 --group design-review --timeout 600)
+# If status is "error", retry failed workers (see step 4 above)
 
 # Master reads all reviews, writes docs/design-decisions.md, updates design docs
 # Compact before moving to implementation (see Context Management)
@@ -247,6 +248,7 @@ task enqueue --worker opencode --thread add-oauth2 --group code-review \
     --instruction "Review PR #$PR at owner/repo. Write summary to docs/code-review-opencode.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-opencode.md'."
 
 RESULT=$(task group-wait --thread add-oauth2 --group code-review --timeout 600)
+# If status is "error", retry failed workers (see step 8 above)
 
 # If changes requested, ask claude to revise
 REVISE=$(task enqueue --worker claude --thread add-oauth2 \
