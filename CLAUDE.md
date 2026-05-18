@@ -42,14 +42,86 @@ Each agent gets its own GitHub token (`MASTER_GH_TOKEN`, `WORKER_CLAUDE_GH_TOKEN
 ### Workflow
 
 1. **Design** — Master analyzes the request and produces three design documents: `docs/high-level-design.md` (architecture), `docs/detailed-design.md` (APIs and modules), and `docs/implementation-phases.md` (phased rollout plan).
-2. **Design review** — Master sends all three design documents to all 4 workers for review. Workers produce `docs/design-review-<worker>.md` covering all three documents. Reviewers may propose alternative approaches with rationale. Master reads all reviews, decides which feedback to incorporate, and updates the design documents.
+2. **Design review** — Master sets thread status to `"reviewing"`, then fans out all three design documents to all 4 workers in parallel using `--group "design-review"`. Workers produce `docs/design-review-<worker>.md` covering all three documents. Reviewers may propose alternative approaches with rationale. Master uses `group-wait` to wait for all reviews, reads them, decides which feedback to incorporate, and updates the design documents.
 3. **Implementation** — Master assigns the implementation to either `worker-claude` or `codex`. The implementing worker writes code, **writes unit tests for their own code**, pushes a branch, and creates a PR. The worker reports the PR number back.
-4. **Code review** — Master sends the PR to all workers **except the implementer**. Each reviewer inspects the PR and submits their review as a comment via `gh pr review`. Reviewers also write summary files to `docs/code-review-<worker>.md`.
+4. **Code review** — Master sets thread status to `"reviewing"`, then sends the PR to all workers **except the implementer** in parallel using `--group "code-review"`. Each reviewer inspects the PR and submits their review as a comment via `gh pr review`. Reviewers also write summary files to `docs/code-review-<worker>.md`. Master uses `group-wait` to wait for all reviews.
 5. **Revise** — Master asks the implementing worker to read all review feedback and address the issues. The worker pushes updated commits to the same PR.
 6. **Re-review** — Master sends the updated PR back to the reviewers. Steps 4-5 loop until every reviewer approves.
 7. **Merge** — Master instructs the implementing worker to merge the PR. The implementing worker runs `gh pr merge ... --squash --delete-branch`. Only the implementing worker merges.
 
 **No self-review**: No worker may review their own PR. The master routes reviews only to workers who did not write the code.
+
+### Parallel task execution (task groups)
+
+Review phases (design review, code review) fan out independent tasks to multiple workers in parallel. The thread lock serializes sequential phases (implement → revise → merge). For parallel review phases, workers operate on read-only copies and write to separate review files — no conflicts.
+
+**Thread status gate**: The master must set thread status to `"reviewing"` via `task thread-update --id $THREAD --status "reviewing"` **before** fanning out group tasks. This signals that the thread is in a parallel-safe phase. Sequential phases (implement, revise, merge) continue using default locked enqueue (no `--group`). The master is the sole enqueuer and runs commands sequentially, so no race exists between `EnqueueGroup` calls.
+
+#### Production workflow (task groups)
+
+```bash
+# Master transitions thread status to "reviewing" BEFORE fanning out
+task thread-update --id $THREAD --status "reviewing"
+
+# Fan out parallel review tasks under a named group
+task enqueue --worker copilot  --thread $THREAD --group "design-review" --instruction "..."
+task enqueue --worker opencode --thread $THREAD --group "design-review" --instruction "..."
+task enqueue --worker codex    --thread $THREAD --group "design-review" --instruction "..."
+task enqueue --worker claude   --thread $THREAD --group "design-review" --instruction "..."
+
+# Wait for group to finish; capture aggregate result
+RESULT=$(task group-wait --thread $THREAD --group "design-review" --timeout 600)
+STATUS=$(echo "$RESULT" | jq -r .status)
+
+# Handle failures if needed
+if [ "$STATUS" = "error" ]; then
+  FAILED=$(echo "$RESULT" | jq -r '.tasks | to_entries | map(select(.value != "done")) | .[].key')
+  for TID in $FAILED; do
+    WORKER=$(task status --id "$TID" | jq -r .worker)
+    task enqueue --worker "$WORKER" --thread $THREAD --group "design-review-retry" --instruction "..."
+  done
+  task group-wait --thread $THREAD --group "design-review-retry" --timeout 600
+fi
+```
+
+**Aggregate status** (computed by `group-wait`):
+- All `done` → `"complete"`
+- Any `failed` → `"error"` (highest priority)
+- All `cancelled` → `"cancelled"`
+- Mixed `done` + `cancelled` → `"complete"` (inspect `.tasks` to distinguish)
+
+**Exit codes**: `"complete"` → 0; `"error"`, `"cancelled"`, `"timeout"` → 1.
+
+**Recovery**: If a worker crashes during a parallel task, the task remains in the group SET as `pending`. `GroupWait` will timeout, reporting the stuck task. Use `task requeue-stale` or `task cancel` + re-enqueue. `task requeue-stale` works identically for group tasks.
+
+**Lock gate-check**: `EnqueueGroup` uses `SET NX` → immediate `DEL` (with 10s TTL fallback) to gate on the sequential phase being complete. The gate-check lock is released immediately so subsequent group enqueues succeed. If the process crashes between `SET NX` and `DEL`, the 10s TTL prevents blocking sequential enqueues for the full `LockTTL` (2100s). Recovery: `task unlock --thread <id>`.
+
+#### V1 interim: sub-threads (zero code changes)
+
+If task groups are not yet available, sub-threads per reviewer work today with zero code changes:
+
+```bash
+THREAD="my-feature"
+
+# Create a sub-thread per reviewer
+task thread-create --id "$THREAD-review-copilot"
+task thread-create --id "$THREAD-review-opencode"
+task thread-create --id "$THREAD-review-codex"
+task thread-create --id "$THREAD-review-claude"
+
+# Fan out — each sub-thread has its own lock, naturally parallel
+T1=$(task enqueue --worker copilot  --thread "$THREAD-review-copilot"  --instruction "..." | jq -r .task_id)
+T2=$(task enqueue --worker opencode --thread "$THREAD-review-opencode" --instruction "..." | jq -r .task_id)
+T3=$(task enqueue --worker codex    --thread "$THREAD-review-codex"    --instruction "..." | jq -r .task_id)
+T4=$(task enqueue --worker claude   --thread "$THREAD-review-claude"   --instruction "..." | jq -r .task_id)
+
+# Wait for all
+for tid in "$T1" "$T2" "$T3" "$T4"; do
+  task wait --id "$tid" --timeout 600
+done
+```
+
+**Advantages**: Ships today with zero code changes. Per-reviewer thread isolation gives clean history and independent debugging. If one reviewer fails, retry just that sub-thread.
 
 ## Commands
 
