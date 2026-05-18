@@ -246,7 +246,7 @@ task wait --id "$MERGE"
 - Workers are long-running services — you never start or stop them. Delegate via `task enqueue`.
 - Only one task per thread can be in-flight. For parallel work across workers, use separate threads.
 - Thread history accumulates across delegations (7-day TTL). Workers see recent context automatically — you don't need to repeat instructions.
-- **Context management is critical.** Your own conversation context grows with each worker interaction. Compact at phase boundaries (after design finalization, after each review round). Read `docs/` summary files rather than full `task result` transcripts. See Context Management section above for the full strategy.
+- **Context management is critical.** Your own conversation context grows with each worker interaction. Compact at phase boundaries (after design finalization; during review loop if the conversation is becoming long). Read `docs/` summary files rather than full `task result` transcripts. See Context Management section above for the full strategy.
 - Always `task wait` for sequential steps before enqueuing the next task on the same thread.
 - After task completes, review output with `task result` and update thread state with `task thread-update`.
 - Workers communicate results to Redis, not stdout. Use `task result` to read them.
