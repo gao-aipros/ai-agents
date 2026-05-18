@@ -219,19 +219,19 @@ func main() {
 	threadCleanupCmd.MarkFlagRequired("id")
 	root.AddCommand(threadCleanupCmd)
 
-		// ── task group-wait ──────────────────────────────────────────────────
-		groupWaitCmd := &cobra.Command{
-			Use:  "group-wait",
-			RunE: cmdGroupWait,
-		}
-		groupWaitCmd.Flags().StringVar(&gwThread, "thread", "", "")
-		groupWaitCmd.Flags().StringVar(&gwGroup, "group", "", "")
-		groupWaitCmd.Flags().IntVar(&gwTimeout, "timeout", 600, "")
-		groupWaitCmd.MarkFlagRequired("thread")
-		groupWaitCmd.MarkFlagRequired("group")
-		root.AddCommand(groupWaitCmd)
+	// ── task group-wait ──────────────────────────────────────────────────
+	groupWaitCmd := &cobra.Command{
+		Use:  "group-wait",
+		RunE: cmdGroupWait,
+	}
+	groupWaitCmd.Flags().StringVar(&gwThread, "thread", "", "")
+	groupWaitCmd.Flags().StringVar(&gwGroup, "group", "", "")
+	groupWaitCmd.Flags().IntVar(&gwTimeout, "timeout", 600, "")
+	groupWaitCmd.MarkFlagRequired("thread")
+	groupWaitCmd.MarkFlagRequired("group")
+	root.AddCommand(groupWaitCmd)
 
-		if err := root.Execute(); err != nil {
+	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
 }
@@ -721,7 +721,7 @@ func cmdGroupWait(cmd *cobra.Command, args []string) error {
 	case "complete":
 		return nil
 	default:
-		os.Exit(1)
+		die(fmt.Sprintf("group %q: %s", result.Label, result.Status))
 		return nil
 	}
 }

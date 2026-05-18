@@ -619,3 +619,33 @@ func TestParallelSequentialPhases(t *testing.T) {
 		t.Error("expected lock to be held by sequential Enqueue")
 	}
 }
+
+func TestGroupWaitMixedTerminalAndNonTerminal(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	if _, err := c.CreateThread(ctx(), "thr-gw-mixed-nonterm", ""); err != nil {
+		t.Fatalf("CreateThread failed: %v", err)
+	}
+
+	// One done, one still running — group should NOT be complete
+	c.rdb.SAdd(ctx(), GroupTasksKey("thr-gw-mixed-nonterm", "review"), "t-done", "t-running")
+	c.rdb.Set(ctx(), TaskKey("t-done", "status"), "done", 0)
+	c.rdb.Set(ctx(), TaskKey("t-running", "status"), "running", 0)
+
+	result, err := c.GroupWait(ctx(), "thr-gw-mixed-nonterm", "review", 20*time.Millisecond)
+	if err != nil {
+		t.Fatalf("GroupWait should return result on timeout: %v", err)
+	}
+	if result.Status != "timeout" {
+		t.Errorf("expected status 'timeout' (one task still running), got %q", result.Status)
+	}
+	if result.Tasks["t-running"] != "running" {
+		t.Errorf("expected t-running running, got %q", result.Tasks["t-running"])
+	}
+
+	// Thread status must NOT have been updated (still initiated)
+	thread, _ := c.GetThread(ctx(), "thr-gw-mixed-nonterm")
+	if thread.Status != "initiated" {
+		t.Errorf("expected thread status 'initiated' (unchanged), got %q", thread.Status)
+	}
+}
