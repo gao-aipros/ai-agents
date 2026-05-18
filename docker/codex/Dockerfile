@@ -1,6 +1,6 @@
 ARG WORKER_BASE_IMAGE=worker-base:latest
 
-# Stage 1: download Codex CLI binary
+# Build stage: download Codex CLI binary
 FROM debian:trixie AS codex-download
 
 ARG CODEX_VERSION=0.130.0
@@ -21,7 +21,7 @@ RUN case "${TARGETARCH}" in \
     mv "/tmp/codex-${ARCH}" /usr/local/bin/codex && \
     chmod +x /usr/local/bin/codex
 
-# Stage 2: download skills
+# Build stage: download skills
 FROM debian:trixie AS skills-download
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -29,7 +29,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+ARG SKILLS_REF=67bce91c80cd1020a4f068ced32d0281656842ad
 RUN git clone --depth 1 --filter=blob:none \
+    --branch "$SKILLS_REF" \
     https://github.com/mattpocock/skills.git /tmp/skills \
     && mkdir -p /tmp/skills-out \
     && for skill in \
@@ -41,14 +43,13 @@ RUN git clone --depth 1 --filter=blob:none \
       engineering/to-prd \
       engineering/triage \
       engineering/zoom-out \
-      engineering/setup-matt-pocock-skills \
       productivity/handoff \
       productivity/caveman \
       productivity/grill-me; do \
       cp -r "/tmp/skills/skills/$skill" "/tmp/skills-out/$(basename $skill)"; \
     done
 
-# Stage 3: final image
+# Final stage
 FROM ${WORKER_BASE_IMAGE}
 
 USER root

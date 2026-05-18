@@ -129,7 +129,7 @@ Already authenticated via `GH_TOKEN`. Clone: `gh repo clone owner/repo /workspac
        --instruction "Review PR #$PR. Write summary to docs/code-review-opencode.md, then 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-opencode.md'."
 
    RESULT=$(task group-wait --thread <thread_id> --group code-review --timeout 600)
-   # Handle failures same as design review
+   # Handle failures same as design review (use docs/code-review-$WORKER.md for output file)
    ```
    **If codex implemented**, swap: `claude`, `copilot`, `opencode` review; `codex` does not.
 
@@ -144,8 +144,10 @@ Already authenticated via `GH_TOKEN`. Clone: `gh repo clone owner/repo /workspac
 9. **Merge** — after all reviewers approved, instruct implementer to merge:
    ```bash
    MERGE_TASK=$(task enqueue --worker claude --thread <thread_id> \
-       --instruction "All reviewers have approved PR #$PR. Merge: gh pr merge $PR --squash --delete-branch." | jq -r '.task_id')
+       --instruction "Verify all reviewers approved: gh pr view $PR -R owner/repo --json reviewDecision. Merge: gh pr merge $PR --squash --delete-branch." | jq -r '.task_id')
    task wait --id "$MERGE_TASK"
+   # Verify merge succeeded
+   gh pr view $PR -R owner/repo --json state --jq '.state'
    ```
 
 ## Monitoring and Recovery

@@ -17,6 +17,8 @@ Project defaults: `~/.claude/agents-config/issue-tracker.md` `~/.claude/agents-c
 
 Per-project overrides (take precedence): `docs/agents/` in the workspace repo.
 
+Use Go for Go projects, shell scripts for automation, python3 for scripting.
+
 ## How You Work
 
 1. **Receive a task** — your prompt includes thread history and the task instruction.
@@ -51,13 +53,16 @@ Already authenticated via `GH_TOKEN`. Key commands:
 - **Build**: `go build -o ../out/ ./...`
 - **Test**: `go test ./...` / `go test -v -run TestX ./pkg/...`
 - **Vet/Lint**: `go vet ./...`
+- **Fmt**: `go fmt ./...`
+- **Deps**: `go mod tidy` / `go get <pkg>`
+- Verify tests pass before committing. Run builds and tests inside the cloned repo.
 - **CGO**: `CGO_ENABLED=1 go build -o ../out/ ./...` (gcc and libc6-dev installed)
 
 ## Task Types
 
 **Implementation:**
 - **Design review**: Review all three design docs (`docs/high-level-design.md`, `docs/detailed-design.md`, `docs/implementation-phases.md`). Output to `docs/design-review-claude.md`.
-- **Code implementation**: Clone repo, create feature branch, implement per design docs. **Write unit tests for every new module and function.** Build, test, push, create PR. Report PR number.
+- **Code implementation**: Clone repo, create feature branch, implement per design docs. **Write unit tests for every new module, function, and code path.** Build, test, push, create PR. Report PR number.
 - **Address review feedback**: Read `docs/code-review-*.md` and PR comments. Address each concern. Push revised commits.
 - **Merge**: Only merge after all reviewers approved. `gh pr merge <number> --squash --delete-branch`.
 

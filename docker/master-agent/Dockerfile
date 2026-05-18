@@ -21,7 +21,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+ARG SKILLS_REF=67bce91c80cd1020a4f068ced32d0281656842ad
 RUN git clone --depth 1 --filter=blob:none \
+    --branch "$SKILLS_REF" \
     https://github.com/mattpocock/skills.git /tmp/skills \
     && mkdir -p /tmp/skills-out \
     && for skill in \
@@ -33,7 +35,6 @@ RUN git clone --depth 1 --filter=blob:none \
       engineering/to-prd \
       engineering/triage \
       engineering/zoom-out \
-      engineering/setup-matt-pocock-skills \
       productivity/handoff \
       productivity/caveman \
       productivity/grill-me; do \

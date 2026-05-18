@@ -7,7 +7,9 @@ How the engineering skills should consume this repo's domain documentation.
 - **`CONTEXT.md`** at the repo root
 - **`docs/adr/`** — read ADRs that touch the area you're about to work in
 
-If any of these files don't exist, proceed silently. `/grill-with-docs` creates them lazily when terms or decisions get resolved.
+If any of these files don't exist, proceed silently. `grill-with-docs` creates them lazily when terms or decisions get resolved.
+
+**Note:** `/skill-name` slash syntax is Claude Code-specific. Non-Claude agents (codex, copilot, opencode) should read `~/.<agent>/skills/<skill-name>/SKILL.md` directly and apply the methodology.
 
 ## File structure (single-context)
 
