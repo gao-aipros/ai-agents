@@ -79,25 +79,36 @@ Four worker types are available as long-running services (managed by docker-comp
    | `docs/detailed-design.md` | APIs, schemas, module breakdown, interface contracts, detailed implementation notes |
    | `docs/implementation-phases.md` | Phased implementation plan with milestones, dependencies, and rollout order |
 
-4. **Request design review** from all workers (they review all three documents).
-   Only one task can be in-flight per thread — wait for each to complete before enqueuing the next:
+4. **Request design review** from all 4 workers in parallel using task groups.
+   Set thread status to `"reviewing"` before fanning out, then use `--group` + `group-wait`:
    ```
-   # Design review — enqueue and wait sequentially
-   T1=$(task enqueue --worker copilot --thread <thread_id> \
-       --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-copilot.md." | jq -r '.task_id')
-   task wait --id "$T1"
+   # Transition thread to reviewing (signals parallel-safe phase)
+   task thread-update --id <thread_id> --status reviewing
 
-   T2=$(task enqueue --worker opencode --thread <thread_id> \
-       --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-opencode.md." | jq -r '.task_id')
-   task wait --id "$T2"
+   # Fan out all 4 design reviews in parallel under a named group
+   task enqueue --worker copilot  --thread <thread_id> --group design-review \
+       --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-copilot.md."
+   task enqueue --worker opencode --thread <thread_id> --group design-review \
+       --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-opencode.md."
+   task enqueue --worker claude   --thread <thread_id> --group design-review \
+       --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-claude.md."
+   task enqueue --worker codex    --thread <thread_id> --group design-review \
+       --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-codex.md."
 
-   T3=$(task enqueue --worker claude --thread <thread_id> \
-       --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-claude.md." | jq -r '.task_id')
-   task wait --id "$T3"
+   # Wait for all 4 reviews to complete
+   RESULT=$(task group-wait --thread <thread_id> --group design-review --timeout 600)
+   STATUS=$(echo "$RESULT" | jq -r .status)
 
-   T4=$(task enqueue --worker codex --thread <thread_id> \
-       --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-codex.md." | jq -r '.task_id')
-   task wait --id "$T4"
+   # Handle failures: inspect per-task statuses and retry failed ones
+   if [ "$STATUS" = "error" ]; then
+     FAILED=$(echo "$RESULT" | jq -r '.tasks | to_entries | map(select(.value != "done")) | .[].key')
+     for TID in $FAILED; do
+       WORKER=$(task status --id "$TID" | jq -r .worker)
+       task enqueue --worker "$WORKER" --thread <thread_id> --group design-review-retry \
+           --instruction "Retry your design review (previous attempt failed). Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. Write findings to docs/design-review-$WORKER.md."
+     done
+     task group-wait --thread <thread_id> --group design-review-retry --timeout 600
+   fi
    ```
 
 5. **Evaluate feedback** — read all design review files in `docs/`. You decide which suggestions and concerns to incorporate. Update the three design documents as needed. Write a brief summary of key decisions to `docs/design-decisions.md`. You have final authority on the design.
@@ -120,24 +131,37 @@ Four worker types are available as long-running services (managed by docker-comp
 
 ### Phase 3: Review Loop
 
-8. **Deploy code review** to all workers except the implementer.
-   Only one task can be in-flight per thread — enqueue and wait sequentially:
+8. **Deploy code review** to all workers except the implementer in parallel using task groups.
+   Set thread status to `"reviewing"` before fanning out:
    ```
-   # If claude implemented, review by codex, copilot, and opencode (one at a time)
-   R1=$(task enqueue --worker codex --thread <thread_id> \
-       --instruction "Review PR #$PR at owner/repo. Check for correctness, style, performance, security, and test coverage. Write summary to docs/code-review-codex.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-codex.md'." | jq -r '.task_id')
-   task wait --id "$R1"
+   # Transition thread to reviewing
+   task thread-update --id <thread_id> --status reviewing
 
-   R2=$(task enqueue --worker copilot --thread <thread_id> \
-       --instruction "Review PR #$PR at owner/repo. Check for correctness, style, performance, security, and test coverage. Write summary to docs/code-review-copilot.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-copilot.md'." | jq -r '.task_id')
-   task wait --id "$R2"
+   # If claude implemented, review by codex, copilot, and opencode in parallel
+   task enqueue --worker codex   --thread <thread_id> --group code-review \
+       --instruction "Review PR #$PR at owner/repo. Check for correctness, style, performance, security, and test coverage. Write summary to docs/code-review-codex.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-codex.md'."
+   task enqueue --worker copilot --thread <thread_id> --group code-review \
+       --instruction "Review PR #$PR at owner/repo. Check for correctness, style, performance, security, and test coverage. Write summary to docs/code-review-copilot.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-copilot.md'."
+   task enqueue --worker opencode --thread <thread_id> --group code-review \
+       --instruction "Review PR #$PR at owner/repo. Check for correctness, style, performance, security, and test coverage. Write summary to docs/code-review-opencode.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-opencode.md'."
 
-   R3=$(task enqueue --worker opencode --thread <thread_id> \
-       --instruction "Review PR #$PR at owner/repo. Check for correctness, style, performance, security, and test coverage. Write summary to docs/code-review-opencode.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-opencode.md'." | jq -r '.task_id')
-   task wait --id "$R3"
+   # Wait for all reviews to complete
+   RESULT=$(task group-wait --thread <thread_id> --group code-review --timeout 600)
+   STATUS=$(echo "$RESULT" | jq -r .status)
+
+   # Handle failures if needed
+   if [ "$STATUS" = "error" ]; then
+     FAILED=$(echo "$RESULT" | jq -r '.tasks | to_entries | map(select(.value != "done")) | .[].key')
+     for TID in $FAILED; do
+       WORKER=$(task status --id "$TID" | jq -r .worker)
+       task enqueue --worker "$WORKER" --thread <thread_id> --group code-review-retry \
+           --instruction "Retry your code review of PR #$PR at owner/repo (previous attempt failed). Write summary to docs/code-review-$WORKER.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-$WORKER.md'."
+     done
+     task group-wait --thread <thread_id> --group code-review-retry --timeout 600
+   fi
    ```
 
-   **If `codex` implemented instead**, swap the reviewer list: `claude`, `copilot`, and `opencode` review; `codex` does not. Use `--worker codex` instead of `--worker claude` in steps 9-10 below.
+   **If `codex` implemented instead**, swap: `claude`, `copilot`, and `opencode` review; `codex` does not. Use `--worker claude` instead of `--worker codex` in the fan-out above, and use `--worker codex` in steps 9-10 below.
 
 9. **If any reviewer requests changes**, ask the implementer to address the feedback:
    ```
@@ -186,22 +210,20 @@ gh repo clone owner/repo /workspace/add-oauth2/repo
 # Phase 1: Write three design docs
 # (master produces docs/high-level-design.md, docs/detailed-design.md, and docs/implementation-phases.md)
 
-# Request design reviews from all 4 workers (only 1 in-flight per thread)
-D1=$(task enqueue --worker copilot --thread add-oauth2 \
-    --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-copilot.md." | jq -r '.task_id')
-task wait --id "$D1"
+# Request design reviews from all 4 workers in parallel (task group)
+task thread-update --id add-oauth2 --status reviewing
 
-D2=$(task enqueue --worker opencode --thread add-oauth2 \
-    --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-opencode.md." | jq -r '.task_id')
-task wait --id "$D2"
+task enqueue --worker copilot  --thread add-oauth2 --group design-review \
+    --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-copilot.md."
+task enqueue --worker opencode --thread add-oauth2 --group design-review \
+    --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-opencode.md."
+task enqueue --worker claude   --thread add-oauth2 --group design-review \
+    --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-claude.md."
+task enqueue --worker codex    --thread add-oauth2 --group design-review \
+    --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-codex.md."
 
-D3=$(task enqueue --worker claude --thread add-oauth2 \
-    --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-claude.md." | jq -r '.task_id')
-task wait --id "$D3"
-
-D4=$(task enqueue --worker codex --thread add-oauth2 \
-    --instruction "Review the three design docs in docs/ (high-level-design.md, detailed-design.md, implementation-phases.md). Check for correctness, consistency, gaps, security risks, and performance concerns. If you have a better alternative approach for any component, describe it clearly with rationale. Write findings to docs/design-review-codex.md." | jq -r '.task_id')
-task wait --id "$D4"
+RESULT=$(task group-wait --thread add-oauth2 --group design-review --timeout 600)
+# If status is "error", retry failed workers (see step 4 above)
 
 # Master reads all reviews, writes docs/design-decisions.md, updates design docs
 # Compact before moving to implementation (see Context Management)
@@ -215,18 +237,18 @@ task wait --id "$IMPL"
 PR=$(task result --id "$IMPL" | grep -oP 'PR #\K\d+' || task result --id "$IMPL" | grep -oP 'github\.com/\S+/pull/\K\d+')
 task thread-update --id add-oauth2 --status in_review --pr "$PR"
 
-# Phase 3: Review loop — codex, copilot, and opencode review the PR (one at a time)
-R1=$(task enqueue --worker codex --thread add-oauth2 \
-    --instruction "Review PR #$PR at owner/repo. Write summary to docs/code-review-codex.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-codex.md'." | jq -r '.task_id')
-task wait --id "$R1"
+# Phase 3: Review loop — codex, copilot, and opencode review the PR in parallel (task group)
+task thread-update --id add-oauth2 --status reviewing
 
-R2=$(task enqueue --worker copilot --thread add-oauth2 \
-    --instruction "Review PR #$PR at owner/repo. Write summary to docs/code-review-copilot.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-copilot.md'." | jq -r '.task_id')
-task wait --id "$R2"
+task enqueue --worker codex   --thread add-oauth2 --group code-review \
+    --instruction "Review PR #$PR at owner/repo. Write summary to docs/code-review-codex.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-codex.md'."
+task enqueue --worker copilot --thread add-oauth2 --group code-review \
+    --instruction "Review PR #$PR at owner/repo. Write summary to docs/code-review-copilot.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-copilot.md'."
+task enqueue --worker opencode --thread add-oauth2 --group code-review \
+    --instruction "Review PR #$PR at owner/repo. Write summary to docs/code-review-opencode.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-opencode.md'."
 
-R3=$(task enqueue --worker opencode --thread add-oauth2 \
-    --instruction "Review PR #$PR at owner/repo. Write summary to docs/code-review-opencode.md, then submit review via 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-opencode.md'." | jq -r '.task_id')
-task wait --id "$R3"
+RESULT=$(task group-wait --thread add-oauth2 --group code-review --timeout 600)
+# If status is "error", retry failed workers (see step 8 above)
 
 # If changes requested, ask claude to revise
 REVISE=$(task enqueue --worker claude --thread add-oauth2 \
@@ -244,10 +266,11 @@ task wait --id "$MERGE"
 
 - **You do not write implementation code or perform reviews.** Your output is limited to design documents, scripts that manage the workflow, and configuration. You read review results, decide on design updates, and coordinate the workflow — but you never submit code reviews or implementation yourself.
 - Workers are long-running services — you never start or stop them. Delegate via `task enqueue`.
-- Only one task per thread can be in-flight. For parallel work across workers, use separate threads.
+- **Task groups for parallel phases:** Design review and code review fan out tasks to multiple workers in parallel using `--group <label>` + `group-wait`. This replaces the old per-reviewer thread pattern. Set thread status to `"reviewing"` before fan-out (`task thread-update --id <thread_id> --status reviewing`). Sequential phases (implement, revise, merge) use default enqueue without `--group` — the thread lock serializes these correctly.
+- **Aggregate status:** `group-wait` returns a JSON result with `.status` (`complete`/`error`/`cancelled`/`timeout`) and `.tasks` (taskID → status map). Any `failed` task → `error` (highest priority). Inspect `.tasks` to identify which workers failed and retry only those.
 - Thread history accumulates across delegations (7-day TTL). Workers see recent context automatically — you don't need to repeat instructions.
 - **Context management is critical.** Your own conversation context grows with each worker interaction. Compact at phase boundaries (after design finalization; during review loop if the conversation is becoming long). Read `docs/` summary files rather than full `task result` transcripts. See Context Management section above for the full strategy.
-- Always `task wait` for sequential steps before enqueuing the next task on the same thread.
+- Use `task wait` for sequential tasks and `task group-wait` for group tasks. Never mix them — a group task's status is managed by `group-wait`, not `task wait`.
 - After task completes, review output with `task result` and update thread state with `task thread-update`.
 - Workers communicate results to Redis, not stdout. Use `task result` to read them.
 - Each worker receives its own `GH_TOKEN` via docker-compose. The master's token is separate.
