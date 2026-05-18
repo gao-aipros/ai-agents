@@ -480,6 +480,105 @@ func (c *Client) WaitTask(ctx context.Context, taskID, threadID string, timeout 
 	}
 }
 
+// GroupWait polls until all tasks in a group reach a terminal state or the
+// timeout expires. It computes aggregate status client-side: any "failed" →
+// "error", all "done" → "complete", all "cancelled" → "cancelled", mixed
+// "done" + "cancelled" → "complete". Thread status is set once when all tasks
+// are terminal. On timeout, thread status is NOT updated (tasks are still
+// running) and Status is "timeout" with a per-task snapshot.
+func (c *Client) GroupWait(ctx context.Context, threadID, groupLabel string, timeout time.Duration) (*GroupResult, error) {
+	setKey := GroupTasksKey(threadID, groupLabel)
+
+	taskIDs, err := c.rdb.SMembers(ctx, setKey).Result()
+	if err != nil {
+		return nil, fmt.Errorf("group wait SMEMBERS: %w", err)
+	}
+	if len(taskIDs) == 0 {
+		return nil, fmt.Errorf("group %q not found or has no tasks", groupLabel)
+	}
+
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		// Pipeline GET all task statuses
+		pipe := c.rdb.Pipeline()
+		cmds := make([]*redis.StringCmd, len(taskIDs))
+		for i, tid := range taskIDs {
+			cmds[i] = pipe.Get(ctx, TaskKey(tid, "status"))
+		}
+		if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+			// Transient error: retry on next tick
+			continue
+		}
+
+		// Collect statuses and check terminality
+		statuses := make(map[string]string, len(taskIDs))
+		allTerminal := true
+		for i, tid := range taskIDs {
+			s, _ := cmds[i].Result()
+			if s == "" {
+				s = "unknown"
+			}
+			statuses[tid] = s
+			if s == "pending" || s == "running" || s == "queued" {
+				allTerminal = false
+			}
+		}
+
+		if allTerminal {
+			hasFailed := false
+			hasDone := false
+			hasCancelled := false
+			for _, s := range statuses {
+				switch s {
+				case "failed":
+					hasFailed = true
+				case "done":
+					hasDone = true
+				case "cancelled":
+					hasCancelled = true
+				}
+			}
+
+			var aggregate string
+			if hasFailed {
+				aggregate = "error"
+			} else if hasDone && !hasCancelled {
+				aggregate = "complete"
+			} else if hasCancelled && !hasDone {
+				aggregate = "cancelled"
+			} else {
+				aggregate = "complete" // mixed done + cancelled
+			}
+
+			c.updateThreadStatus(ctx, threadID, aggregate)
+			return &GroupResult{
+				ThreadID: threadID,
+				Label:    groupLabel,
+				Status:   aggregate,
+				Tasks:    statuses,
+			}, nil
+		}
+
+		if time.Now().After(deadline) {
+			return &GroupResult{
+				ThreadID: threadID,
+				Label:    groupLabel,
+				Status:   "timeout",
+				Tasks:    statuses,
+			}, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 // CancelTask sets the cancel flag so workers check it before starting.
 // Does not change task status — the worker transitions the task to
 // "cancelled" when it dequeues and checks the flag. Matches task.py behavior.
