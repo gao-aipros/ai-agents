@@ -30,7 +30,7 @@
       <td>{{statusBadge .Status}}</td>
       <td class="text-muted">{{or .GHRepo "-"}}</td>
       <td class="text-muted">{{or .GHPRNumber "-"}}</td>
-      <td class="text-muted">{{or .UpdatedAt "-"}}</td>
+      <td class="text-muted">{{if .UpdatedAt}}<time datetime="{{.UpdatedAt}}">{{.UpdatedAt}}</time>{{else}}-{{end}}</td>
       <td>
         <a href="/threads/{{.ThreadID}}" class="btn btn-sm">View</a>
         <button class="btn btn-danger btn-sm"

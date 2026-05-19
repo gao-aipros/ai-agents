@@ -39,6 +39,20 @@
         }, 1000);
       });
     });
+
+    // Convert UTC timestamps in <time> elements to the user's local timezone
+    function localizeTimestamps() {
+      document.querySelectorAll('time[datetime]').forEach(function(el) {
+        var d = new Date(el.dateTime);
+        if (isNaN(d)) return;
+        el.textContent = d.toLocaleString(undefined, {
+          year: 'numeric', month: 'short', day: 'numeric',
+          hour: '2-digit', minute: '2-digit'
+        });
+      });
+    }
+    document.addEventListener('DOMContentLoaded', localizeTimestamps);
+    document.body.addEventListener('htmx:afterSwap', localizeTimestamps);
   </script>
 </head>
 <body>
