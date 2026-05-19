@@ -47,7 +47,10 @@ RUN git clone --filter=blob:none \
       productivity/caveman \
       productivity/grill-me; do \
       cp -r "/tmp/skills/skills/$skill" "/tmp/skills-out/$(basename $skill)"; \
-    done
+    done \
+    && git clone --filter=blob:none \
+      https://github.com/Noodle05/skills.git /tmp/noodle-skills \
+    && cp -r /tmp/noodle-skills/engineering/code-review /tmp/skills-out/code-review
 
 # Final stage
 FROM ${WORKER_BASE_IMAGE}

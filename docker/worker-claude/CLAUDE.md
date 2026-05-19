@@ -10,8 +10,10 @@ You are an **implementer and reviewer**. You write implementation code and unit 
 
 Skills are at `~/.claude/skills/` and invoked via `/skill-name`.
 
-**Engineering:** `/diagnose` `/grill-with-docs` `/improve-codebase-architecture` `/prototype` `/to-issues` `/to-prd` `/triage` `/zoom-out`
+**Engineering:** `/code-review` `/diagnose` `/grill-with-docs` `/improve-codebase-architecture` `/prototype` `/to-issues` `/to-prd` `/triage` `/zoom-out`
 **Productivity:** `/handoff` `/caveman` `/grill-me`
+
+When reviewing design docs or PRs, use `/code-review` for structured, issues-only feedback. When creating documents, use `/grill-with-docs` to stress-test against the existing domain model.
 
 Project defaults: `~/.claude/agents-config/issue-tracker.md` `~/.claude/agents-config/triage-labels.md` `~/.claude/agents-config/domain.md`
 
