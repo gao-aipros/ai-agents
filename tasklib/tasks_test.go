@@ -216,7 +216,7 @@ func TestListTasks(t *testing.T) {
 		c.rdb.Set(ctx(), TaskKey(info.id, "status"), info.status, 0)
 		c.rdb.Set(ctx(), TaskKey(info.id, "worker"), info.worker, 0)
 		c.rdb.Set(ctx(), TaskKey(info.id, "thread_id"), info.thread, 0)
-		c.rdb.Set(ctx(), TaskKey(info.id, "created_at"), "2025-01-0"+strconv.Itoa(i+1)+"T00:00:00Z", 0)
+		c.rdb.Set(ctx(), TaskKey(info.id, "enqueued_at"), "2025-01-0"+strconv.Itoa(i+1)+"T00:00:00Z", 0)
 	}
 
 	tasks, err := c.ListTasks(ctx(), "", "", "", 50, 0)
@@ -271,7 +271,7 @@ func TestCancelTask(t *testing.T) {
 
 	c.rdb.Set(ctx(), TaskKey("t1", "status"), "pending", 0)
 
-	err := c.CancelTask(ctx(), "t1")
+	err := c.CancelTask(ctx(), "t1", "user")
 	if err != nil {
 		t.Fatalf("CancelTask failed: %v", err)
 	}
@@ -288,7 +288,7 @@ func TestCancelTask(t *testing.T) {
 	}
 
 	// Cancel non-existent task
-	err = c.CancelTask(ctx(), "no-such-task")
+	err = c.CancelTask(ctx(), "no-such-task", "user")
 	if err == nil {
 		t.Error("expected error for non-existent task")
 	}
@@ -302,7 +302,7 @@ func TestCancelTaskPreservesAllStatuses(t *testing.T) {
 			taskID := "ct-" + status
 			c.rdb.Set(ctx(), TaskKey(taskID, "status"), status, 0)
 
-			err := c.CancelTask(ctx(), taskID)
+			err := c.CancelTask(ctx(), taskID, "user")
 			if err != nil {
 				t.Fatalf("CancelTask on %s failed: %v", status, err)
 			}
@@ -620,7 +620,7 @@ func TestActiveTasks(t *testing.T) {
 func TestWorkerHeartbeat(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	err := c.UpdateWorkerHeartbeat(ctx(), "claude", "host1")
+	err := c.UpdateWorkerHeartbeat(ctx(), "claude", "host1", HeartbeatData{Hostname: "host1"})
 	if err != nil {
 		t.Fatalf("UpdateWorkerHeartbeat failed: %v", err)
 	}
@@ -628,8 +628,11 @@ func TestWorkerHeartbeat(t *testing.T) {
 	// Verify key exists with TTL
 	key := HeartbeatKey("claude", "host1")
 	val, _ := c.rdb.Get(ctx(), key).Result()
-	if val != "1" {
-		t.Errorf("expected heartbeat value '1', got '%s'", val)
+	if val == "" {
+		t.Error("expected non-empty heartbeat value")
+	}
+	if val == "1" {
+		t.Error("expected heartbeat JSON, got old format '1'")
 	}
 	ttl := c.rdb.TTL(ctx(), key).Val()
 	if ttl <= 0 || ttl > 30*time.Second {
@@ -641,9 +644,9 @@ func TestGetWorkerStats(t *testing.T) {
 	c, _ := setupTestClient(t)
 
 	// Set heartbeats
-	c.UpdateWorkerHeartbeat(ctx(), "claude", "host1")
-	c.UpdateWorkerHeartbeat(ctx(), "claude", "host2")
-	c.UpdateWorkerHeartbeat(ctx(), "copilot", "host3")
+	c.UpdateWorkerHeartbeat(ctx(), "claude", "host1", HeartbeatData{Hostname: "host1"})
+	c.UpdateWorkerHeartbeat(ctx(), "claude", "host2", HeartbeatData{Hostname: "host2"})
+	c.UpdateWorkerHeartbeat(ctx(), "copilot", "host3", HeartbeatData{Hostname: "host3"})
 
 	stats, err := c.GetWorkerStats(ctx())
 	if err != nil {

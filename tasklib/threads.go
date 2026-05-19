@@ -11,12 +11,13 @@ import (
 
 // Thread represents a thread entity.
 type Thread struct {
-	ThreadID    string `json:"thread_id"`
-	Status      string `json:"status,omitempty"`
-	UpdatedAt   string `json:"updated_at,omitempty"`
-	GHRepo      string `json:"gh_repo,omitempty"`
-	GHPRNumber  string `json:"gh_pr_number,omitempty"`
-	LastDesign  string `json:"last_design,omitempty"`
+	ThreadID      string `json:"thread_id"`
+	Status        string `json:"status,omitempty"`
+	UpdatedAt     string `json:"updated_at,omitempty"`
+	GHRepo        string `json:"gh_repo,omitempty"`
+	GHPRNumber    string `json:"gh_pr_number,omitempty"`
+	LastDesign    string `json:"last_design,omitempty"`
+	CorrelationID string `json:"correlation_id,omitempty"`
 }
 
 // Message is a single message in thread history.
@@ -31,9 +32,15 @@ type Message struct {
 
 // CreateThread initializes a new thread with status "initiated".
 func (c *Client) CreateThread(ctx context.Context, threadID, repo string) (*Thread, error) {
+	correlationID, err := NewUUID()
+	if err != nil {
+		return nil, fmt.Errorf("generate correlation_id: %w", err)
+	}
+
 	mapping := map[string]interface{}{
-		"status":     "initiated",
-		"updated_at": ts(),
+		"status":         "initiated",
+		"updated_at":     ts(),
+		"correlation_id": correlationID,
 	}
 	if repo != "" {
 		mapping["gh_repo"] = repo
@@ -46,9 +53,10 @@ func (c *Client) CreateThread(ctx context.Context, threadID, repo string) (*Thre
 	c.rdb.Expire(ctx, key, TTLThread)
 
 	return &Thread{
-		ThreadID: threadID,
-		Status:   "initiated",
-		GHRepo:   repo,
+		ThreadID:      threadID,
+		Status:        "initiated",
+		GHRepo:        repo,
+		CorrelationID: correlationID,
 	}, nil
 }
 
@@ -63,12 +71,13 @@ func (c *Client) GetThread(ctx context.Context, threadID string) (*Thread, error
 	}
 
 	return &Thread{
-		ThreadID:   threadID,
-		Status:     state["status"],
-		UpdatedAt:  state["updated_at"],
-		GHRepo:     state["gh_repo"],
-		GHPRNumber: state["gh_pr_number"],
-		LastDesign: state["last_design"],
+		ThreadID:      threadID,
+		Status:        state["status"],
+		UpdatedAt:     state["updated_at"],
+		GHRepo:        state["gh_repo"],
+		GHPRNumber:    state["gh_pr_number"],
+		LastDesign:    state["last_design"],
+		CorrelationID: state["correlation_id"],
 	}, nil
 }
 
@@ -264,9 +273,11 @@ func (c *Client) DeleteThread(ctx context.Context, threadID string) error {
 	keys := []string{
 		ThreadStateKey(threadID),
 		ThreadMessagesKey(threadID),
+		ThreadEventsKey(threadID),
 		ThreadCompleteKey(threadID),
 		ThreadRunningKey(threadID),
 		ThreadLockKey(threadID),
+		ThreadLockedAtKey(threadID),
 		ThreadSessionIDKey(threadID),
 		ThreadLastActivityKey(threadID),
 	}
@@ -278,6 +289,7 @@ func (c *Client) SetThreadTTL(ctx context.Context, threadID string, ttl time.Dur
 	pipe := c.rdb.Pipeline()
 	pipe.Expire(ctx, ThreadStateKey(threadID), ttl)
 	pipe.Expire(ctx, ThreadMessagesKey(threadID), ttl)
+	pipe.Expire(ctx, ThreadEventsKey(threadID), ttl)
 	_, err := pipe.Exec(ctx)
 	return err
 }

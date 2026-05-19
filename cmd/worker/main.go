@@ -83,6 +83,8 @@ func main() {
 
 	var running atomic.Bool
 	running.Store(true)
+	startTime := time.Now()
+	var tasksProcessed atomic.Int64
 
 	// Heartbeat goroutine
 	go func() {
@@ -93,7 +95,15 @@ func main() {
 			if !running.Load() {
 				return
 			}
-			if err := client.UpdateWorkerHeartbeat(context.Background(), workerType, hostname); err != nil {
+			// Compute queue depth
+			qd, _ := rdb.LLen(context.Background(), queueKey).Result()
+			hb := tasklib.HeartbeatData{
+				Hostname:       hostname,
+				TasksProcessed: int(tasksProcessed.Load()),
+				QueueDepth:     int(qd),
+				UptimeSeconds:  int64(time.Since(startTime).Seconds()),
+			}
+			if err := client.UpdateWorkerHeartbeat(context.Background(), workerType, hostname, hb); err != nil {
 				log.log("warn", "heartbeat failed", "error", err.Error())
 			}
 		}
@@ -134,7 +144,7 @@ func main() {
 		}
 
 		processOneTask(log, client, rdb, result, workerType, agentCmd,
-			taskTimeout, historyWindow, workspaceDir, processingKey, hostname)
+			taskTimeout, historyWindow, workspaceDir, processingKey, hostname, &tasksProcessed)
 	}
 
 	log.log("info", "worker shutting down")
@@ -149,6 +159,7 @@ func processOneTask(
 	taskJSON, workerType, agentCmd string,
 	defaultTimeout, defaultHistoryWindow int,
 	workspaceDir, processingKey, hostname string,
+	tasksProcessed *atomic.Int64,
 ) {
 	var taskPayload struct {
 		TaskID        string `json:"task_id"`
@@ -179,13 +190,24 @@ func processOneTask(
 		WorkerHost: hostname,
 	})
 
-	// Initialize per-task keys
+	// Read correlation_id from thread state
+	correlationID := ""
+	if threadState, _ := client.GetThread(context.Background(), threadID); threadState != nil {
+		correlationID = threadState.CorrelationID
+	}
+
+	// Initialize per-task keys (started_at SETNX preserves first dequeue time across retries)
 	pipe := rdb.Pipeline()
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "status"), "running", tasklib.TTLTask)
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "worker"), workerType, tasklib.TTLTask)
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "thread_id"), threadID, tasklib.TTLTask)
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "description"), instruction, tasklib.TTLTask)
-	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "created_at"), startedAt, tasklib.TTLTask)
+	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "started_at"), startedAt, tasklib.TTLTask)
+	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "last_started_at"), startedAt, tasklib.TTLTask)
+	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "worker_hostname"), hostname, tasklib.TTLTask)
+	if correlationID != "" {
+		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "correlation_id"), correlationID, tasklib.TTLTask)
+	}
 	pipe.Exec(context.Background())
 
 	// Build prompt with thread context
@@ -236,12 +258,17 @@ func processOneTask(
 		log.log("info", "task cancelled before start", "task_id", taskID, "thread_id", threadID)
 
 		cancelledAt := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+		prevStatus, _ := rdb.Get(context.Background(), tasklib.TaskKey(taskID, "status")).Result()
 
 		pipe := rdb.Pipeline()
 		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "status"), "cancelled", tasklib.TTLTask)
 		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "result"), "Cancelled by master", tasklib.TTLTask)
 		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "exit_code"), "-1", tasklib.TTLTask)
 		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "completed_at"), cancelledAt, tasklib.TTLTask)
+		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "cancelled_at"), cancelledAt, tasklib.TTLTask)
+		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "cancelled_previous_status"), prevStatus, tasklib.TTLTask)
+		pipe.Incr(context.Background(), "stats:task_cancelled")
+		pipe.Expire(context.Background(), "stats:task_cancelled", tasklib.TTLTask)
 		pipe.Exec(context.Background())
 
 		cancelMsg, _ := json.Marshal(map[string]interface{}{
@@ -312,6 +339,14 @@ func processOneTask(
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "exit_code"), fmt.Sprintf("%d", exitCode), tasklib.TTLTask)
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "completed_at"), completedAt, tasklib.TTLTask)
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "status"), status, tasklib.TTLTask)
+	if status == "failed" {
+		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "error_message"), stderr, tasklib.TTLTask)
+		pipe.Incr(context.Background(), "stats:task_failed")
+		pipe.Expire(context.Background(), "stats:task_failed", tasklib.TTLTask)
+	} else {
+		pipe.Incr(context.Background(), "stats:task_done")
+		pipe.Expire(context.Background(), "stats:task_done", tasklib.TTLTask)
+	}
 	pipe.Exec(context.Background())
 
 	// Append result to thread history (cap at 10k chars)
@@ -339,6 +374,7 @@ func processOneTask(
 	// Cleanup
 	rdb.LRem(context.Background(), processingKey, 0, taskJSON)
 	client.RemoveActiveTask(context.Background(), taskID)
+	tasksProcessed.Add(1)
 	log.log("info", "task complete", "task_id", taskID, "thread_id", threadID, "status", status)
 }
 

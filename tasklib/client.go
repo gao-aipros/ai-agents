@@ -31,6 +31,9 @@ func ThreadLastActivityKey(threadID string) string { return "thread:" + threadID
 func GroupTasksKey(threadID, label string) string {
 	return "thread:" + threadID + ":group:" + label + ":tasks"
 }
+func ThreadEventsKey(threadID string) string  { return "thread:" + threadID + ":events" }
+func ThreadLockedAtKey(threadID string) string { return "thread:" + threadID + ":locked_at" }
+func SystemEventsKey() string                   { return "system:events" }
 func HeartbeatKey(workerType, hostname string) string {
 	return "worker:" + workerType + ":" + hostname + ":heartbeat"
 }

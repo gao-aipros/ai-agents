@@ -243,11 +243,11 @@ func TestCmdList(t *testing.T) {
 	mr.Set(tasklib.TaskKey("t1", "status"), "done")
 	mr.Set(tasklib.TaskKey("t1", "worker"), "claude")
 	mr.Set(tasklib.TaskKey("t1", "thread_id"), "thread-1")
-	mr.Set(tasklib.TaskKey("t1", "created_at"), "2026-01-01T00:00:00Z")
+	mr.Set(tasklib.TaskKey("t1", "enqueued_at"), "2026-01-01T00:00:00Z")
 	mr.Set(tasklib.TaskKey("t2", "status"), "running")
 	mr.Set(tasklib.TaskKey("t2", "worker"), "copilot")
 	mr.Set(tasklib.TaskKey("t2", "thread_id"), "thread-2")
-	mr.Set(tasklib.TaskKey("t2", "created_at"), "2026-01-01T00:00:01Z")
+	mr.Set(tasklib.TaskKey("t2", "enqueued_at"), "2026-01-01T00:00:01Z")
 
 	cmd := &cobra.Command{}
 	cmd.Flags().StringVar(&listWorker, "worker", "", "")
@@ -308,7 +308,7 @@ func TestCmdWaitTaskCompleted(t *testing.T) {
 	mr.Set(tasklib.TaskKey(waitID, "worker"), "claude")
 	mr.Set(tasklib.TaskKey(waitID, "thread_id"), "thread-1")
 	mr.Set(tasklib.TaskKey(waitID, "exit_code"), "0")
-	mr.Set(tasklib.TaskKey(waitID, "created_at"), "2026-01-01T00:00:00Z")
+	mr.Set(tasklib.TaskKey(waitID, "enqueued_at"), "2026-01-01T00:00:00Z")
 	mr.Set(tasklib.TaskKey(waitID, "completed_at"), "2026-01-01T00:05:00Z")
 
 	output := captureOutput(func() {
@@ -364,7 +364,7 @@ func TestCmdRequeueStale(t *testing.T) {
 	taskID := "stale-task"
 	oldTime := time.Now().UTC().Add(-1 * time.Hour).Format("2006-01-02T15:04:05Z")
 	mr.Set(tasklib.TaskKey(taskID, "status"), "running")
-	mr.Set(tasklib.TaskKey(taskID, "created_at"), oldTime)
+	mr.Set(tasklib.TaskKey(taskID, "last_started_at"), oldTime)
 
 	payload, _ := json.Marshal(tasklib.TaskPayload{TaskID: taskID, ThreadID: "th", Instruction: "x"})
 	mr.Lpush(tasklib.ProcessingKey("claude"), string(payload))

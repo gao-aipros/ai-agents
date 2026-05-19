@@ -269,19 +269,14 @@ func cmdStatus(cmd *cobra.Command, args []string) error {
 	c := getClient()
 	ctx := context.Background()
 
-	keys := []string{"status", "worker", "thread_id", "description", "result", "exit_code", "created_at", "completed_at"}
-	info := map[string]interface{}{"task_id": statusID}
-	for _, k := range keys {
-		val, err := c.RDB().Get(ctx, tasklib.TaskKey(statusID, k)).Result()
-		if err == redis.Nil {
-			info[k] = nil
-		} else if err != nil {
-			info[k] = nil
-		} else {
-			info[k] = val
-		}
+	task, err := c.GetTask(ctx, statusID)
+	if err != nil {
+		die(err.Error())
 	}
-	data, _ := json.MarshalIndent(info, "", "  ")
+	if task.Status == "" {
+		die(fmt.Sprintf("task %s not found", statusID))
+	}
+	data, _ := json.MarshalIndent(task, "", "  ")
 	fmt.Println(string(data))
 	return nil
 }
@@ -398,7 +393,10 @@ func cmdList(cmd *cobra.Command, args []string) error {
 			entry["thread_id"] = val
 		}
 		if _, ok := entry["started_at"]; !ok {
-			val, _ := rdb.Get(ctx, tasklib.TaskKey(taskID, "created_at")).Result()
+			val, _ := rdb.Get(ctx, tasklib.TaskKey(taskID, "started_at")).Result()
+			if val == "" {
+				val, _ = rdb.Get(ctx, tasklib.TaskKey(taskID, "enqueued_at")).Result()
+			}
 			if val == "" {
 				val = "-"
 			}
@@ -463,7 +461,7 @@ func cmdWait(cmd *cobra.Command, args []string) error {
 		"worker":  task.Worker,
 		"thread_id": task.ThreadID,
 		"exit_code": task.ExitCode,
-		"created_at": task.CreatedAt,
+		"enqueued_at": task.EnqueuedAt,
 		"completed_at": task.CompletedAt,
 	}
 	data, _ := json.Marshal(info)
@@ -500,15 +498,15 @@ func cmdRequeueStale(cmd *cobra.Command, args []string) error {
 			}
 
 			status, _ := c.RDB().Get(ctx, tasklib.TaskKey(task.TaskID, "status")).Result()
-			createdAt, _ := c.RDB().Get(ctx, tasklib.TaskKey(task.TaskID, "created_at")).Result()
+			lastStartedAt, _ := c.RDB().Get(ctx, tasklib.TaskKey(task.TaskID, "last_started_at")).Result()
 
 			requeue := false
 			oldStatus := status
 
 			if status == "" || status == "pending" {
 				requeue = true
-			} else if status == "running" && createdAt != "" {
-				started, parseErr := time.Parse("2006-01-02T15:04:05Z", createdAt)
+			} else if status == "running" && lastStartedAt != "" {
+				started, parseErr := time.Parse("2006-01-02T15:04:05Z", lastStartedAt)
 				if parseErr == nil && time.Since(started) > time.Duration(requeueOlderThan)*time.Second {
 					requeue = true
 				}
@@ -537,7 +535,7 @@ func cmdCancel(cmd *cobra.Command, args []string) error {
 	c := getClient()
 	ctx := context.Background()
 
-	if err := c.CancelTask(ctx, cancelID); err != nil {
+	if err := c.CancelTask(ctx, cancelID, "user"); err != nil {
 		die(err.Error())
 	}
 	fmt.Printf("Cancel flag set for task %s\n", cancelID)

@@ -13,17 +13,25 @@ import (
 
 // Task represents a task entity as stored in Redis.
 type Task struct {
-	TaskID      string `json:"task_id"`
-	ThreadID    string `json:"thread_id,omitempty"`
-	Instruction string `json:"instruction,omitempty"`
-	Worker      string `json:"worker,omitempty"`
-	Status      string `json:"status,omitempty"`
-	Description string `json:"description,omitempty"`
-	Result      string `json:"result,omitempty"`
-	ExitCode    string `json:"exit_code,omitempty"`
-	CreatedAt   string `json:"created_at,omitempty"`
-	CompletedAt string `json:"completed_at,omitempty"`
-	StartedAt   string `json:"started_at,omitempty"`
+	TaskID               string `json:"task_id"`
+	ThreadID             string `json:"thread_id,omitempty"`
+	Instruction          string `json:"instruction,omitempty"`
+	Worker               string `json:"worker,omitempty"`
+	Status               string `json:"status,omitempty"`
+	Description          string `json:"description,omitempty"`
+	Result               string `json:"result,omitempty"`
+	ExitCode             string `json:"exit_code,omitempty"`
+	EnqueuedAt           string `json:"enqueued_at,omitempty"`
+	CompletedAt          string `json:"completed_at,omitempty"`
+	StartedAt            string `json:"started_at,omitempty"`
+	LastStartedAt        string `json:"last_started_at,omitempty"`
+	WorkerHostname       string `json:"worker_hostname,omitempty"`
+	RetryCount           string `json:"retry_count,omitempty"`
+	ErrorMessage         string `json:"error_message,omitempty"`
+	CorrelationID        string `json:"correlation_id,omitempty"`
+	CancelledBy          string `json:"cancelled_by,omitempty"`
+	CancelledAt          string `json:"cancelled_at,omitempty"`
+	CancelledPrevStatus  string `json:"cancelled_previous_status,omitempty"`
 }
 
 // TaskPayload is the JSON serialized into queue lists.
@@ -120,13 +128,15 @@ func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction stri
 		return nil, fmt.Errorf("queue push: %w", err)
 	}
 
-	// Initialize task keys
+	// Initialize task keys + atomic counter
 	pipe := c.rdb.Pipeline()
 	pipe.Set(ctx, TaskKey(taskID, "status"), "pending", TTLTask)
 	pipe.Set(ctx, TaskKey(taskID, "worker"), worker, TTLTask)
 	pipe.Set(ctx, TaskKey(taskID, "thread_id"), threadID, TTLTask)
 	pipe.Set(ctx, TaskKey(taskID, "description"), instruction, TTLTask)
-	pipe.Set(ctx, TaskKey(taskID, "created_at"), now, TTLTask)
+	pipe.Set(ctx, TaskKey(taskID, "enqueued_at"), now, TTLTask)
+	pipe.Incr(ctx, "stats:task_total")
+	pipe.Expire(ctx, "stats:task_total", TTLTask)
 	if _, err := pipe.Exec(ctx); err != nil {
 		c.rdb.Del(ctx, lockKey)
 		return nil, fmt.Errorf("task init: %w", err)
@@ -139,7 +149,7 @@ func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction stri
 		Worker:      worker,
 		Status:      "pending",
 		Description: instruction,
-		CreatedAt:   now,
+		EnqueuedAt:  now,
 	}, nil
 }
 
@@ -242,13 +252,15 @@ func (c *Client) EnqueueGroup(ctx context.Context, worker, threadID, groupLabel,
 		return nil, fmt.Errorf("queue push: %w", err)
 	}
 
-	// Initialize task keys
+	// Initialize task keys + atomic counter
 	pipe := c.rdb.Pipeline()
 	pipe.Set(ctx, TaskKey(taskID, "status"), "pending", TTLTask)
 	pipe.Set(ctx, TaskKey(taskID, "worker"), worker, TTLTask)
 	pipe.Set(ctx, TaskKey(taskID, "thread_id"), threadID, TTLTask)
 	pipe.Set(ctx, TaskKey(taskID, "description"), instruction, TTLTask)
-	pipe.Set(ctx, TaskKey(taskID, "created_at"), now, TTLTask)
+	pipe.Set(ctx, TaskKey(taskID, "enqueued_at"), now, TTLTask)
+	pipe.Incr(ctx, "stats:task_total")
+	pipe.Expire(ctx, "stats:task_total", TTLTask)
 	if _, err := pipe.Exec(ctx); err != nil {
 		c.rdb.SRem(ctx, groupSetKey, taskID) // best-effort rollback
 		return nil, fmt.Errorf("task init: %w", err)
@@ -261,13 +273,18 @@ func (c *Client) EnqueueGroup(ctx context.Context, worker, threadID, groupLabel,
 		Worker:      worker,
 		Status:      "pending",
 		Description: instruction,
-		CreatedAt:   now,
+		EnqueuedAt:  now,
 	}, nil
 }
 
 // GetTask retrieves a task by ID from Redis.
 func (c *Client) GetTask(ctx context.Context, taskID string) (*Task, error) {
-	keys := []string{"status", "worker", "thread_id", "description", "result", "exit_code", "created_at", "completed_at"}
+	keys := []string{
+		"status", "worker", "thread_id", "description", "result", "exit_code",
+		"enqueued_at", "started_at", "last_started_at", "completed_at",
+		"worker_hostname", "retry_count", "error_message", "correlation_id",
+		"cancelled_by", "cancelled_at", "cancelled_previous_status",
+	}
 	pipe := c.rdb.Pipeline()
 	cmds := make([]*redis.StringCmd, len(keys))
 	for i, k := range keys {
@@ -295,10 +312,28 @@ func (c *Client) GetTask(ctx context.Context, taskID string) (*Task, error) {
 			t.Result = val
 		case "exit_code":
 			t.ExitCode = val
-		case "created_at":
-			t.CreatedAt = val
+		case "enqueued_at":
+			t.EnqueuedAt = val
+		case "started_at":
+			t.StartedAt = val
+		case "last_started_at":
+			t.LastStartedAt = val
 		case "completed_at":
 			t.CompletedAt = val
+		case "worker_hostname":
+			t.WorkerHostname = val
+		case "retry_count":
+			t.RetryCount = val
+		case "error_message":
+			t.ErrorMessage = val
+		case "correlation_id":
+			t.CorrelationID = val
+		case "cancelled_by":
+			t.CancelledBy = val
+		case "cancelled_at":
+			t.CancelledAt = val
+		case "cancelled_previous_status":
+			t.CancelledPrevStatus = val
 		}
 	}
 	return t, nil
@@ -394,9 +429,12 @@ func (c *Client) ListTasks(ctx context.Context, worker, status, threadID string,
 			}
 		}
 		if task.StartedAt == "" {
-			task.StartedAt, _ = c.rdb.Get(ctx, TaskKey(task.TaskID, "created_at")).Result()
+			task.StartedAt, _ = c.rdb.Get(ctx, TaskKey(task.TaskID, "started_at")).Result()
 			if task.StartedAt == "" {
-				task.StartedAt = "-"
+				task.StartedAt, _ = c.rdb.Get(ctx, TaskKey(task.TaskID, "enqueued_at")).Result()
+				if task.StartedAt == "" {
+					task.StartedAt = "-"
+				}
 			}
 		}
 
@@ -456,7 +494,7 @@ func (c *Client) WaitTask(ctx context.Context, taskID, threadID string, timeout 
 		if status == "done" || status == "failed" || status == "cancelled" {
 			// Build final status output
 			t := &Task{TaskID: taskID}
-			for _, k := range []string{"status", "worker", "thread_id", "exit_code", "created_at", "completed_at"} {
+			for _, k := range []string{"status", "worker", "thread_id", "exit_code", "enqueued_at", "completed_at"} {
 				val, _ := c.rdb.Get(ctx, TaskKey(taskID, k)).Result()
 				switch k {
 				case "status":
@@ -467,8 +505,8 @@ func (c *Client) WaitTask(ctx context.Context, taskID, threadID string, timeout 
 					t.ThreadID = val
 				case "exit_code":
 					t.ExitCode = val
-				case "created_at":
-					t.CreatedAt = val
+				case "enqueued_at":
+					t.EnqueuedAt = val
 				case "completed_at":
 					t.CompletedAt = val
 				}
@@ -614,7 +652,8 @@ func (c *Client) GroupWait(ctx context.Context, threadID, groupLabel string, tim
 // CancelTask sets the cancel flag so workers check it before starting.
 // Does not change task status — the worker transitions the task to
 // "cancelled" when it dequeues and checks the flag. Matches task.py behavior.
-func (c *Client) CancelTask(ctx context.Context, taskID string) error {
+// cancelledBy indicates who initiated the cancellation: "user", "timeout", or "system".
+func (c *Client) CancelTask(ctx context.Context, taskID, cancelledBy string) error {
 	exists, err := c.rdb.Exists(ctx, TaskKey(taskID, "status")).Result()
 	if err != nil {
 		return err
@@ -622,7 +661,15 @@ func (c *Client) CancelTask(ctx context.Context, taskID string) error {
 	if exists == 0 {
 		return fmt.Errorf("task %s not found", taskID)
 	}
-	return c.rdb.Set(ctx, TaskKey(taskID, "cancel"), "1", TTLTask).Err()
+	pipe := c.rdb.Pipeline()
+	pipe.Set(ctx, TaskKey(taskID, "cancel"), "1", TTLTask)
+	pipe.Set(ctx, TaskKey(taskID, "cancelled_by"), cancelledBy, TTLTask)
+	pipe.Incr(ctx, "stats:task_cancelled")
+	pipe.Expire(ctx, "stats:task_cancelled", TTLTask)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return err
+	}
+	return nil
 }
 
 // RequeueStale requeues stale in-flight tasks for a given worker type.
@@ -647,15 +694,15 @@ func (c *Client) RequeueStale(ctx context.Context, worker string, olderThan time
 		}
 
 		taskStatus, _ := c.rdb.Get(ctx, TaskKey(task.TaskID, "status")).Result()
-		createdAt, _ := c.rdb.Get(ctx, TaskKey(task.TaskID, "created_at")).Result()
+		lastStartedAt, _ := c.rdb.Get(ctx, TaskKey(task.TaskID, "last_started_at")).Result()
 
 		requeue := false
 
 		if taskStatus == "" || taskStatus == "pending" {
 			// Worker crashed before writing status, or after BLMOVE but before HSET
 			requeue = true
-		} else if taskStatus == "running" && createdAt != "" {
-			started, parseErr := time.Parse("2006-01-02T15:04:05Z", createdAt)
+		} else if taskStatus == "running" && lastStartedAt != "" {
+			started, parseErr := time.Parse("2006-01-02T15:04:05Z", lastStartedAt)
 			if parseErr == nil && time.Since(started) > olderThan {
 				requeue = true
 			}
@@ -669,6 +716,7 @@ func (c *Client) RequeueStale(ctx context.Context, worker string, olderThan time
 			c.rdb.LPush(ctx, queueKey, itemJSON)
 			c.rdb.LRem(ctx, processingKey, 0, itemJSON)
 			c.rdb.Set(ctx, TaskKey(task.TaskID, "status"), "pending", TTLTask)
+				c.rdb.Incr(ctx, TaskKey(task.TaskID, "retry_count"))
 			requeued = append(requeued, task.TaskID)
 		}
 	}
