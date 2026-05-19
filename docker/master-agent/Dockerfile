@@ -69,5 +69,12 @@ COPY --chown=agent:agent docker/master-agent/CLAUDE.md /home/agent/.claude/CLAUD
 COPY --from=skills-download --chown=agent:agent /tmp/skills-out /home/agent/.claude/skills/
 COPY --chown=agent:agent docs/agents/ /home/agent/.claude/agents-config/
 
+# Symlink .claude.json into the persisted volume so config survives restarts
+RUN ln -sf /home/agent/.claude/claude.json /home/agent/.claude.json \
+    && chown -h agent:agent /home/agent/.claude.json
+
+COPY --chown=agent:agent docker/master-agent/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
 USER agent
-ENTRYPOINT ["webui"]
+ENTRYPOINT ["entrypoint.sh"]
