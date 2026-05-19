@@ -22,7 +22,6 @@ type WorkerStats map[string]*WorkerInfo
 type WorkerInstance struct {
 	Hostname        string `json:"hostname"`
 	TasksProcessed  int    `json:"tasks_processed"`
-	CurrentTaskID   string `json:"current_task_id"`
 	QueueDepth      int    `json:"queue_depth"`
 	UptimeSeconds   int64  `json:"uptime_seconds"`
 	LastHeartbeat   string `json:"last_heartbeat"`
@@ -33,7 +32,6 @@ type WorkerInstance struct {
 type HeartbeatData struct {
 	Hostname       string `json:"hostname"`
 	TasksProcessed int    `json:"tasks_processed"`
-	CurrentTaskID  string `json:"current_task_id"`
 	QueueDepth     int    `json:"queue_depth"`
 	UptimeSeconds  int64  `json:"uptime_seconds"`
 }
@@ -155,7 +153,6 @@ func (c *Client) GetWorkerInstances(ctx context.Context, workerType string) ([]W
 			instances = append(instances, WorkerInstance{
 				Hostname:        hb.Hostname,
 				TasksProcessed:  hb.TasksProcessed,
-				CurrentTaskID:   hb.CurrentTaskID,
 				QueueDepth:      hb.QueueDepth,
 				UptimeSeconds:   hb.UptimeSeconds,
 				LastHeartbeat:   raw,

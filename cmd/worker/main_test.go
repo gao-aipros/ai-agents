@@ -1220,3 +1220,69 @@ func TestValidWorker(t *testing.T) {
 		t.Error("invalid should not be valid")
 	}
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Observability — cancelled_by audit field
+// ═══════════════════════════════════════════════════════════════════════════════
+
+func TestCancelledBySetOnFlagCancel(t *testing.T) {
+	client, _ := newTestClient(t)
+	rdb := client.RDB()
+	log := newLogger()
+	restore := mockExecCmd("", "", 0, nil)
+	defer restore()
+
+	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
+	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
+
+	// Set cancel flag + cancelled_by (as CancelTask API would)
+	rdb.Set(context.Background(), tasklib.TaskKey(testTaskID, "cancel"), "1", 0)
+	rdb.Set(context.Background(), tasklib.TaskKey(testTaskID, "cancelled_by"), "user", 0)
+
+	workspace := t.TempDir()
+	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed)
+
+	// Worker should preserve cancelled_by from the CancelTask API call
+	who, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "cancelled_by")).Result()
+	if who != "user" {
+		t.Errorf("expected cancelled_by='user' preserved from CancelTask, got '%s'", who)
+	}
+
+	// cancelled_at should be set by the worker
+	cat, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "cancelled_at")).Result()
+	if cat == "" {
+		t.Error("expected cancelled_at to be set by worker")
+	}
+
+	// cancelled_previous_status should be set
+	cps, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "cancelled_previous_status")).Result()
+	if cps == "" {
+		t.Error("expected cancelled_previous_status to be set")
+	}
+}
+
+func TestCancelledBySystemWhenNoCancelTaskAPI(t *testing.T) {
+	client, _ := newTestClient(t)
+	rdb := client.RDB()
+	log := newLogger()
+	restore := mockExecCmd("", "", 0, nil)
+	defer restore()
+
+	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
+	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
+
+	// Set cancel flag WITHOUT cancelled_by (simulating direct Redis manipulation
+	// or a bug where CancelTask wasn't called first)
+	rdb.Set(context.Background(), tasklib.TaskKey(testTaskID, "cancel"), "1", 0)
+
+	workspace := t.TempDir()
+	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed)
+
+	// Worker should set cancelled_by="system" when cancelling via flag
+	who, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "cancelled_by")).Result()
+	if who != "system" {
+		t.Errorf("expected cancelled_by='system' when no prior CancelTask call, got '%s'", who)
+	}
+}

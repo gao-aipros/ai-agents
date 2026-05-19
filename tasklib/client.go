@@ -11,6 +11,7 @@ import (
 const (
 	TTLTask   = 86400 * time.Second  // 24 hours
 	TTLThread = 604800 * time.Second // 7 days
+	TTLStats  = 604800 * time.Second // 7 days — global counters survive quiet periods
 	LockTTL   = 2100 * time.Second   // REQUEST_TIMEOUT(1800) + 300s margin
 )
 
@@ -33,7 +34,6 @@ func GroupTasksKey(threadID, label string) string {
 }
 func ThreadEventsKey(threadID string) string  { return "thread:" + threadID + ":events" }
 func ThreadLockedAtKey(threadID string) string { return "thread:" + threadID + ":locked_at" }
-func SystemEventsKey() string                   { return "system:events" }
 func HeartbeatKey(workerType, hostname string) string {
 	return "worker:" + workerType + ":" + hostname + ":heartbeat"
 }

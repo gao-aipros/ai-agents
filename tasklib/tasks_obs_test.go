@@ -175,7 +175,6 @@ func TestHeartbeatJSONRoundTrip(t *testing.T) {
 	hb := HeartbeatData{
 		Hostname:       "worker-claude-abc123",
 		TasksProcessed: 42,
-		CurrentTaskID:  "task-uuid-123",
 		QueueDepth:     3,
 		UptimeSeconds:  3600,
 	}
@@ -197,9 +196,6 @@ func TestHeartbeatJSONRoundTrip(t *testing.T) {
 	}
 	if parsed.TasksProcessed != 42 {
 		t.Errorf("TasksProcessed: got %d", parsed.TasksProcessed)
-	}
-	if parsed.CurrentTaskID != "task-uuid-123" {
-		t.Errorf("CurrentTaskID: got '%s'", parsed.CurrentTaskID)
 	}
 	if parsed.QueueDepth != 3 {
 		t.Errorf("QueueDepth: got %d", parsed.QueueDepth)
@@ -289,6 +285,12 @@ func TestRequeueStaleIncrementsRetryCount(t *testing.T) {
 	if n, _ := strconv.Atoi(count); n < 1 {
 		t.Errorf("retry_count should be incremented, got '%s'", count)
 	}
+
+	// Verify retry_count has a TTL (not an orphaned key)
+	ttl := c.rdb.TTL(ctxbg(), TaskKey("retry-1", "retry_count")).Val()
+	if ttl <= 0 {
+		t.Errorf("retry_count should have TTL > 0, got %v", ttl)
+	}
 }
 
 // ── correlation_id tests ───────────────────────────────────────────────────
@@ -371,5 +373,94 @@ func TestSetThreadTTLCoversNewKeys(t *testing.T) {
 	ttl := c.rdb.TTL(ctxbg(), ThreadEventsKey("thr-ttl")).Val()
 	if ttl <= 0 {
 		t.Errorf("ThreadEventsKey should have TTL after SetThreadTTL, got %v", ttl)
+	}
+}
+
+// ── started_at SETNX preservation test ─────────────────────────────────────
+
+func TestStartedAtPreservedAcrossRetries(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	taskID := "started-at-nx"
+	firstStart := "2025-06-01T10:00:00Z"
+	secondStart := "2025-06-01T11:00:00Z"
+
+	// Simulate first dequeue: SETNX should succeed
+	c.rdb.SetNX(ctxbg(), TaskKey(taskID, "started_at"), firstStart, 0)
+	c.rdb.Expire(ctxbg(), TaskKey(taskID, "started_at"), TTLTask)
+
+	// Simulate retry (second dequeue): SETNX should fail, preserving firstStart
+	ok, _ := c.rdb.SetNX(ctxbg(), TaskKey(taskID, "started_at"), secondStart, 0).Result()
+	if ok {
+		t.Error("SETNX on retry should fail (key already exists from first dequeue)")
+	}
+
+	// started_at should still be the first start time
+	val, _ := c.rdb.Get(ctxbg(), TaskKey(taskID, "started_at")).Result()
+	if val != firstStart {
+		t.Errorf("started_at should be preserved on retry: expected %s, got %s", firstStart, val)
+	}
+
+	// last_started_at should be updated on every dequeue (simulated by SET)
+	c.rdb.Set(ctxbg(), TaskKey(taskID, "last_started_at"), secondStart, 0)
+	lastVal, _ := c.rdb.Get(ctxbg(), TaskKey(taskID, "last_started_at")).Result()
+	if lastVal != secondStart {
+		t.Errorf("last_started_at should be updated on retry: expected %s, got %s", secondStart, lastVal)
+	}
+}
+
+// ── error_message on failure test ──────────────────────────────────────────
+
+func TestErrorMessageSetOnFailure(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	taskID := "err-msg-test"
+
+	// Simulate what the worker does on failure: set error_message key
+	c.rdb.Set(ctxbg(), TaskKey(taskID, "error_message"), "fatal: out of memory", TTLTask)
+
+	// Read via GetTask
+	task, err := c.GetTask(ctxbg(), taskID)
+	if err != nil {
+		t.Fatalf("GetTask failed: %v", err)
+	}
+
+	if task.ErrorMessage != "fatal: out of memory" {
+		t.Errorf("expected error_message 'fatal: out of memory', got '%s'", task.ErrorMessage)
+	}
+
+	// Verify TTL is set
+	ttl := c.rdb.TTL(ctxbg(), TaskKey(taskID, "error_message")).Val()
+	if ttl <= 0 {
+		t.Errorf("error_message should have TTL > 0, got %v", ttl)
+	}
+}
+
+// ── cancelled_by completeness test ─────────────────────────────────────────
+
+func TestCancelTaskAllCancelledByValues(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	for _, who := range []string{"user", "timeout", "system"} {
+		t.Run(who, func(t *testing.T) {
+			taskID := "cancel-who-" + who
+			c.rdb.Set(ctxbg(), TaskKey(taskID, "status"), "pending", 0)
+
+			err := c.CancelTask(ctxbg(), taskID, who)
+			if err != nil {
+				t.Fatalf("CancelTask(%s) failed: %v", who, err)
+			}
+
+			got, _ := c.rdb.Get(ctxbg(), TaskKey(taskID, "cancelled_by")).Result()
+			if got != who {
+				t.Errorf("cancelled_by: expected '%s', got '%s'", who, got)
+			}
+
+			// Verify cancelled_by has TTL
+			ttl := c.rdb.TTL(ctxbg(), TaskKey(taskID, "cancelled_by")).Val()
+			if ttl <= 0 {
+				t.Errorf("cancelled_by should have TTL > 0 for %s, got %v", who, ttl)
+			}
+		})
 	}
 }

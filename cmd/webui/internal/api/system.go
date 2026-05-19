@@ -57,7 +57,9 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 		}
 		s, _ := v.(string)
 		var n int
-		fmt.Sscanf(s, "%d", &n)
+		if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
+			log.Printf("[webui] stats counter parse error for value %q: %v", s, err)
+		}
 		return n
 	}
 	total := toInt(vals[0])

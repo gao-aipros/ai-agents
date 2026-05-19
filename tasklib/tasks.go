@@ -136,7 +136,7 @@ func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction stri
 	pipe.Set(ctx, TaskKey(taskID, "description"), instruction, TTLTask)
 	pipe.Set(ctx, TaskKey(taskID, "enqueued_at"), now, TTLTask)
 	pipe.Incr(ctx, "stats:task_total")
-	pipe.Expire(ctx, "stats:task_total", TTLTask)
+	pipe.Expire(ctx, "stats:task_total", TTLStats)
 	if _, err := pipe.Exec(ctx); err != nil {
 		c.rdb.Del(ctx, lockKey)
 		return nil, fmt.Errorf("task init: %w", err)
@@ -260,7 +260,7 @@ func (c *Client) EnqueueGroup(ctx context.Context, worker, threadID, groupLabel,
 	pipe.Set(ctx, TaskKey(taskID, "description"), instruction, TTLTask)
 	pipe.Set(ctx, TaskKey(taskID, "enqueued_at"), now, TTLTask)
 	pipe.Incr(ctx, "stats:task_total")
-	pipe.Expire(ctx, "stats:task_total", TTLTask)
+	pipe.Expire(ctx, "stats:task_total", TTLStats)
 	if _, err := pipe.Exec(ctx); err != nil {
 		c.rdb.SRem(ctx, groupSetKey, taskID) // best-effort rollback
 		return nil, fmt.Errorf("task init: %w", err)
@@ -435,6 +435,12 @@ func (c *Client) ListTasks(ctx context.Context, worker, status, threadID string,
 				if task.StartedAt == "" {
 					task.StartedAt = "-"
 				}
+			}
+		}
+		if task.EnqueuedAt == "" {
+			task.EnqueuedAt, _ = c.rdb.Get(ctx, TaskKey(task.TaskID, "enqueued_at")).Result()
+			if task.EnqueuedAt == "" {
+				task.EnqueuedAt = "-"
 			}
 		}
 
@@ -665,7 +671,7 @@ func (c *Client) CancelTask(ctx context.Context, taskID, cancelledBy string) err
 	pipe.Set(ctx, TaskKey(taskID, "cancel"), "1", TTLTask)
 	pipe.Set(ctx, TaskKey(taskID, "cancelled_by"), cancelledBy, TTLTask)
 	pipe.Incr(ctx, "stats:task_cancelled")
-	pipe.Expire(ctx, "stats:task_cancelled", TTLTask)
+	pipe.Expire(ctx, "stats:task_cancelled", TTLStats)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return err
 	}
@@ -716,7 +722,8 @@ func (c *Client) RequeueStale(ctx context.Context, worker string, olderThan time
 			c.rdb.LPush(ctx, queueKey, itemJSON)
 			c.rdb.LRem(ctx, processingKey, 0, itemJSON)
 			c.rdb.Set(ctx, TaskKey(task.TaskID, "status"), "pending", TTLTask)
-				c.rdb.Incr(ctx, TaskKey(task.TaskID, "retry_count"))
+			c.rdb.Incr(ctx, TaskKey(task.TaskID, "retry_count"))
+			c.rdb.Expire(ctx, TaskKey(task.TaskID, "retry_count"), TTLTask)
 			requeued = append(requeued, task.TaskID)
 		}
 	}

@@ -202,7 +202,8 @@ func processOneTask(
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "worker"), workerType, tasklib.TTLTask)
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "thread_id"), threadID, tasklib.TTLTask)
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "description"), instruction, tasklib.TTLTask)
-	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "started_at"), startedAt, tasklib.TTLTask)
+	pipe.SetNX(context.Background(), tasklib.TaskKey(taskID, "started_at"), startedAt, 0)
+	pipe.Expire(context.Background(), tasklib.TaskKey(taskID, "started_at"), tasklib.TTLTask)
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "last_started_at"), startedAt, tasklib.TTLTask)
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "worker_hostname"), hostname, tasklib.TTLTask)
 	if correlationID != "" {
@@ -267,8 +268,8 @@ func processOneTask(
 		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "completed_at"), cancelledAt, tasklib.TTLTask)
 		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "cancelled_at"), cancelledAt, tasklib.TTLTask)
 		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "cancelled_previous_status"), prevStatus, tasklib.TTLTask)
-		pipe.Incr(context.Background(), "stats:task_cancelled")
-		pipe.Expire(context.Background(), "stats:task_cancelled", tasklib.TTLTask)
+		pipe.SetNX(context.Background(), tasklib.TaskKey(taskID, "cancelled_by"), "system", 0)
+			pipe.Expire(context.Background(), tasklib.TaskKey(taskID, "cancelled_by"), tasklib.TTLTask)
 		pipe.Exec(context.Background())
 
 		cancelMsg, _ := json.Marshal(map[string]interface{}{
@@ -342,11 +343,12 @@ func processOneTask(
 	if status == "failed" {
 		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "error_message"), stderr, tasklib.TTLTask)
 		pipe.Incr(context.Background(), "stats:task_failed")
-		pipe.Expire(context.Background(), "stats:task_failed", tasklib.TTLTask)
+		pipe.Expire(context.Background(), "stats:task_failed", tasklib.TTLStats)
 	} else {
 		pipe.Incr(context.Background(), "stats:task_done")
-		pipe.Expire(context.Background(), "stats:task_done", tasklib.TTLTask)
+		pipe.Expire(context.Background(), "stats:task_done", tasklib.TTLStats)
 	}
+	pipe.Expire(context.Background(), "stats:task_total", tasklib.TTLStats)
 	pipe.Exec(context.Background())
 
 	// Append result to thread history (cap at 10k chars)

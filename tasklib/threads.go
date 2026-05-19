@@ -290,6 +290,7 @@ func (c *Client) SetThreadTTL(ctx context.Context, threadID string, ttl time.Dur
 	pipe.Expire(ctx, ThreadStateKey(threadID), ttl)
 	pipe.Expire(ctx, ThreadMessagesKey(threadID), ttl)
 	pipe.Expire(ctx, ThreadEventsKey(threadID), ttl)
+	pipe.Expire(ctx, ThreadLockedAtKey(threadID), ttl)
 	_, err := pipe.Exec(ctx)
 	return err
 }
