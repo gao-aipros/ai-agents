@@ -60,9 +60,10 @@ func TestStatsCounterOnCancelTask(t *testing.T) {
 		t.Fatalf("CancelTask failed: %v", err)
 	}
 
-	cancelled, _ := c.rdb.Get(ctxbg(), "stats:task_cancelled").Result()
-	if n, _ := strconv.Atoi(cancelled); n < 1 {
-		t.Errorf("stats:task_cancelled should be >= 1, got %s", cancelled)
+	// Cancel flag should be set
+	flag, _ := c.rdb.Get(ctxbg(), TaskKey("ct-stats", "cancel")).Result()
+	if flag != "1" {
+		t.Errorf("expected cancel flag '1', got '%s'", flag)
 	}
 
 	// Verify cancelled_by was set
@@ -70,6 +71,8 @@ func TestStatsCounterOnCancelTask(t *testing.T) {
 	if who != "user" {
 		t.Errorf("expected cancelled_by 'user', got '%s'", who)
 	}
+
+	// Counter is owned by the worker cancel path — CancelTask only sets the flag
 }
 
 // ── Task key tests ─────────────────────────────────────────────────────────
@@ -363,6 +366,7 @@ func TestSetThreadTTLCoversNewKeys(t *testing.T) {
 
 	c.CreateThread(ctxbg(), "thr-ttl", "")
 	c.rdb.Set(ctxbg(), ThreadEventsKey("thr-ttl"), "[]", 0)
+	c.rdb.Set(ctxbg(), ThreadLockedAtKey("thr-ttl"), "2025-01-01T00:00:00Z", 0)
 
 	err := c.SetThreadTTL(ctxbg(), "thr-ttl", 3600*time.Second)
 	if err != nil {
@@ -373,6 +377,12 @@ func TestSetThreadTTLCoversNewKeys(t *testing.T) {
 	ttl := c.rdb.TTL(ctxbg(), ThreadEventsKey("thr-ttl")).Val()
 	if ttl <= 0 {
 		t.Errorf("ThreadEventsKey should have TTL after SetThreadTTL, got %v", ttl)
+	}
+
+	// ThreadLockedAtKey should also have TTL
+	ttl2 := c.rdb.TTL(ctxbg(), ThreadLockedAtKey("thr-ttl")).Val()
+	if ttl2 <= 0 {
+		t.Errorf("ThreadLockedAtKey should have TTL after SetThreadTTL, got %v", ttl2)
 	}
 }
 

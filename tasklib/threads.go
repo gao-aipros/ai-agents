@@ -100,11 +100,12 @@ func (c *Client) ListThreads(ctx context.Context) ([]*Thread, error) {
 			threadID := parts[1]
 			state, _ := c.rdb.HGetAll(ctx, key).Result()
 			threads = append(threads, &Thread{
-				ThreadID:   threadID,
-				Status:     stateVal(state, "status", "unknown"),
-				UpdatedAt:  stateVal(state, "updated_at", "-"),
-				GHRepo:     stateVal(state, "gh_repo", "-"),
-				GHPRNumber: stateVal(state, "gh_pr_number", "-"),
+				ThreadID:      threadID,
+				Status:        stateVal(state, "status", "unknown"),
+				UpdatedAt:     stateVal(state, "updated_at", "-"),
+				GHRepo:        stateVal(state, "gh_repo", "-"),
+				GHPRNumber:    stateVal(state, "gh_pr_number", "-"),
+				CorrelationID: stateVal(state, "correlation_id", ""),
 			})
 		}
 		cursor = nextCursor
@@ -291,6 +292,10 @@ func (c *Client) SetThreadTTL(ctx context.Context, threadID string, ttl time.Dur
 	pipe.Expire(ctx, ThreadMessagesKey(threadID), ttl)
 	pipe.Expire(ctx, ThreadEventsKey(threadID), ttl)
 	pipe.Expire(ctx, ThreadLockedAtKey(threadID), ttl)
+	pipe.Expire(ctx, ThreadCompleteKey(threadID), ttl)
+	pipe.Expire(ctx, ThreadRunningKey(threadID), ttl)
+	pipe.Expire(ctx, ThreadSessionIDKey(threadID), ttl)
+	pipe.Expire(ctx, ThreadLastActivityKey(threadID), ttl)
 	_, err := pipe.Exec(ctx)
 	return err
 }

@@ -269,7 +269,10 @@ func processOneTask(
 		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "cancelled_at"), cancelledAt, tasklib.TTLTask)
 		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "cancelled_previous_status"), prevStatus, tasklib.TTLTask)
 		pipe.SetNX(context.Background(), tasklib.TaskKey(taskID, "cancelled_by"), "system", 0)
-			pipe.Expire(context.Background(), tasklib.TaskKey(taskID, "cancelled_by"), tasklib.TTLTask)
+		pipe.Expire(context.Background(), tasklib.TaskKey(taskID, "cancelled_by"), tasklib.TTLTask)
+		pipe.Incr(context.Background(), "stats:task_cancelled")
+		pipe.Expire(context.Background(), "stats:task_cancelled", tasklib.TTLStats)
+		pipe.Expire(context.Background(), "stats:task_total", tasklib.TTLStats)
 		pipe.Exec(context.Background())
 
 		cancelMsg, _ := json.Marshal(map[string]interface{}{

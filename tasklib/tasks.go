@@ -281,7 +281,7 @@ func (c *Client) EnqueueGroup(ctx context.Context, worker, threadID, groupLabel,
 func (c *Client) GetTask(ctx context.Context, taskID string) (*Task, error) {
 	keys := []string{
 		"status", "worker", "thread_id", "description", "result", "exit_code",
-		"enqueued_at", "started_at", "last_started_at", "completed_at",
+		"enqueued_at", "started_at", "last_started_at", "completed_at", "created_at",
 		"worker_hostname", "retry_count", "error_message", "correlation_id",
 		"cancelled_by", "cancelled_at", "cancelled_previous_status",
 	}
@@ -320,6 +320,10 @@ func (c *Client) GetTask(ctx context.Context, taskID string) (*Task, error) {
 			t.LastStartedAt = val
 		case "completed_at":
 			t.CompletedAt = val
+		case "created_at":
+			if t.EnqueuedAt == "" {
+				t.EnqueuedAt = val
+			}
 		case "worker_hostname":
 			t.WorkerHostname = val
 		case "retry_count":
@@ -440,7 +444,10 @@ func (c *Client) ListTasks(ctx context.Context, worker, status, threadID string,
 		if task.EnqueuedAt == "" {
 			task.EnqueuedAt, _ = c.rdb.Get(ctx, TaskKey(task.TaskID, "enqueued_at")).Result()
 			if task.EnqueuedAt == "" {
-				task.EnqueuedAt = "-"
+				task.EnqueuedAt, _ = c.rdb.Get(ctx, TaskKey(task.TaskID, "created_at")).Result()
+				if task.EnqueuedAt == "" {
+					task.EnqueuedAt = "-"
+				}
 			}
 		}
 
@@ -670,8 +677,6 @@ func (c *Client) CancelTask(ctx context.Context, taskID, cancelledBy string) err
 	pipe := c.rdb.Pipeline()
 	pipe.Set(ctx, TaskKey(taskID, "cancel"), "1", TTLTask)
 	pipe.Set(ctx, TaskKey(taskID, "cancelled_by"), cancelledBy, TTLTask)
-	pipe.Incr(ctx, "stats:task_cancelled")
-	pipe.Expire(ctx, "stats:task_cancelled", TTLStats)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return err
 	}

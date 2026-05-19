@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -442,6 +443,12 @@ func TestSuccessfulExecutionStatusDone(t *testing.T) {
 	if status != "done" {
 		t.Errorf("expected status=done, got %s", status)
 	}
+
+	// stats:task_done counter should be incremented
+	doneCount, _ := rdb.Get(context.Background(), "stats:task_done").Result()
+	if n, _ := strconv.Atoi(doneCount); n < 1 {
+		t.Errorf("expected stats:task_done >= 1, got %s", doneCount)
+	}
 }
 
 func TestFailedExecutionStatusFailed(t *testing.T) {
@@ -460,6 +467,18 @@ func TestFailedExecutionStatusFailed(t *testing.T) {
 	status, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "status")).Result()
 	if status != "failed" {
 		t.Errorf("expected status=failed, got %s", status)
+	}
+
+	// error_message should be set to stderr
+	errMsg, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "error_message")).Result()
+	if errMsg != "error text" {
+		t.Errorf("expected error_message='error text', got '%s'", errMsg)
+	}
+
+	// stats:task_failed counter should be incremented
+	failedCount, _ := rdb.Get(context.Background(), "stats:task_failed").Result()
+	if n, _ := strconv.Atoi(failedCount); n < 1 {
+		t.Errorf("expected stats:task_failed >= 1, got %s", failedCount)
 	}
 }
 
