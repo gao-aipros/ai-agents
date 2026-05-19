@@ -556,3 +556,196 @@ func TestHistoryPoll_Completed(t *testing.T) {
 		t.Error("output should contain 'Ask a follow-up question...'")
 	}
 }
+
+// ── <time datetime> rendering ─────────────────────────────────────────────
+
+func TestTimeElement_TaskTable(t *testing.T) {
+	r, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	task := map[string]interface{}{
+		"TaskID":    "task-1",
+		"Worker":    "claude",
+		"Status":    "done",
+		"CreatedAt": "2026-05-19T14:30:00Z",
+	}
+	data := map[string]interface{}{"Tasks": []interface{}{task}}
+
+	var buf mockWriter
+	if err := r.Partial(&buf, "task-table", data); err != nil {
+		t.Fatalf("Partial: %v", err)
+	}
+	output := string(buf.data)
+
+	if !strings.Contains(output, `<time datetime="2026-05-19T14:30:00Z">`) {
+		t.Error("task-table should contain <time datetime=...> for CreatedAt")
+	}
+}
+
+func TestTimeElement_TaskTable_Empty(t *testing.T) {
+	r, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	task := map[string]interface{}{"TaskID": "task-1", "Worker": "claude", "Status": "done"}
+	data := map[string]interface{}{"Tasks": []interface{}{task}}
+
+	var buf mockWriter
+	if err := r.Partial(&buf, "task-table", data); err != nil {
+		t.Fatalf("Partial: %v", err)
+	}
+	output := string(buf.data)
+
+	if strings.Contains(output, "<time") {
+		t.Error("task-table should not contain <time> when CreatedAt is empty")
+	}
+	if !strings.Contains(output, ">-<") {
+		t.Error("task-table should show '-' fallback when CreatedAt is empty")
+	}
+}
+
+func TestTimeElement_TaskDetail(t *testing.T) {
+	r, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	task := map[string]interface{}{
+		"TaskID":      "task-1",
+		"Worker":      "claude",
+		"Status":      "done",
+		"CreatedAt":   "2026-05-19T14:30:00Z",
+		"ExitCode":    "0",
+		"CompletedAt": "2026-05-19T14:35:00Z",
+		"Instruction":  "test",
+	}
+	data := map[string]interface{}{"Task": task}
+
+	var buf mockWriter
+	if err := r.Partial(&buf, "page-task-detail", data); err != nil {
+		t.Fatalf("Partial: %v", err)
+	}
+	output := string(buf.data)
+
+	if !strings.Contains(output, `<time datetime="2026-05-19T14:30:00Z">`) {
+		t.Error("task detail should contain <time> for CreatedAt")
+	}
+	if !strings.Contains(output, `<time datetime="2026-05-19T14:35:00Z">`) {
+		t.Error("task detail should contain <time> for CompletedAt")
+	}
+}
+
+func TestTimeElement_ThreadState(t *testing.T) {
+	r, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	thread := map[string]interface{}{
+		"ThreadID":  "th-1",
+		"Status":    "complete",
+		"GHRepo":    "owner/repo",
+		"UpdatedAt": "2026-05-19T14:30:00Z",
+		"GHPRNumber": "-",
+		"LastDesign": "-",
+	}
+	data := map[string]interface{}{"Thread": thread}
+
+	var buf mockWriter
+	if err := r.Partial(&buf, "thread-state", data); err != nil {
+		t.Fatalf("Partial: %v", err)
+	}
+	output := string(buf.data)
+
+	if !strings.Contains(output, `<time datetime="2026-05-19T14:30:00Z">`) {
+		t.Error("thread-state should contain <time> for UpdatedAt")
+	}
+}
+
+func TestTimeElement_ThreadList(t *testing.T) {
+	r, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	thread := map[string]interface{}{
+		"ThreadID":  "th-1",
+		"Status":    "complete",
+		"GHRepo":    "owner/repo",
+		"GHPRNumber": "-",
+		"UpdatedAt": "2026-05-19T14:30:00Z",
+	}
+	data := map[string]interface{}{"Threads": []interface{}{thread}}
+
+	var buf mockWriter
+	if err := r.Partial(&buf, "thread-table", data); err != nil {
+		t.Fatalf("Partial: %v", err)
+	}
+	output := string(buf.data)
+
+	if !strings.Contains(output, `<time datetime="2026-05-19T14:30:00Z">`) {
+		t.Error("thread-table should contain <time> for UpdatedAt")
+	}
+}
+
+func TestTimeElement_ThreadHistory(t *testing.T) {
+	r, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	msg := map[string]interface{}{
+		"Role":      "user",
+		"Type":      "request",
+		"Content":    "hello",
+		"Timestamp": "2026-05-19T14:30:00Z",
+	}
+	data := map[string]interface{}{
+		"Messages": []interface{}{msg},
+		"ThreadID": "th-1",
+		"Running":  false,
+		"MsgCount":  1,
+	}
+
+	var buf mockWriter
+	if err := r.Partial(&buf, "thread-history", data); err != nil {
+		t.Fatalf("Partial: %v", err)
+	}
+	output := string(buf.data)
+
+	if !strings.Contains(output, `<time datetime="2026-05-19T14:30:00Z">`) {
+		t.Error("thread-history should contain <time> for Timestamp")
+	}
+}
+
+func TestTimeElement_BasePage_IncludesLocalizeTimestamps(t *testing.T) {
+	r, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	var buf mockWriter
+	if err := r.Page(&buf, "page-dashboard", nil); err != nil {
+		t.Fatalf("Page: %v", err)
+	}
+	output := string(buf.data)
+
+	if !strings.Contains(output, "function localizeTimestamps") {
+		t.Error("base page should contain localizeTimestamps function")
+	}
+	if !strings.Contains(output, `time[datetime]`) {
+		t.Error("base page should contain time[datetime] selector")
+	}
+	if !strings.Contains(output, `el.dateTime`) {
+		t.Error("base page should use el.dateTime DOM property")
+	}
+	if !strings.Contains(output, `toLocaleString`) {
+		t.Error("base page should use toLocaleString for formatting")
+	}
+	if !strings.Contains(output, "htmx:afterSwap', localizeTimestamps") {
+		t.Error("base page should hook htmx:afterSwap for localizeTimestamps")
+	}
+}

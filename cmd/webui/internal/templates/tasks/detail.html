@@ -26,11 +26,11 @@
       </div>
       <div class="state-item">
         <div class="label">Created</div>
-        <div class="value mono" style="font-size:12px">{{or .Task.CreatedAt "-"}}</div>
+        <div class="value mono" style="font-size:12px">{{if .Task.CreatedAt}}<time datetime="{{.Task.CreatedAt}}">{{.Task.CreatedAt}}</time>{{else}}-{{end}}</div>
       </div>
       <div class="state-item">
         <div class="label">Completed</div>
-        <div class="value mono" style="font-size:12px">{{or .Task.CompletedAt "-"}}</div>
+        <div class="value mono" style="font-size:12px">{{if .Task.CompletedAt}}<time datetime="{{.Task.CompletedAt}}">{{.Task.CompletedAt}}</time>{{else}}-{{end}}</div>
       </div>
     </div>
   </div>

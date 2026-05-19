@@ -19,7 +19,7 @@
   </div>
   <div class="state-item">
     <div class="label">Updated</div>
-    <div class="value mono" style="font-size:12px">{{or .Thread.UpdatedAt "-"}}</div>
+    <div class="value mono" style="font-size:12px">{{if .Thread.UpdatedAt}}<time datetime="{{.Thread.UpdatedAt}}">{{.Thread.UpdatedAt}}</time>{{else}}-{{end}}</div>
   </div>
 </div>
 {{else}}
@@ -84,7 +84,7 @@
   </div>
   <div class="state-item">
     <div class="label">Updated</div>
-    <div class="value mono" style="font-size:12px">{{or .Thread.UpdatedAt "-"}}</div>
+    <div class="value mono" style="font-size:12px">{{if .Thread.UpdatedAt}}<time datetime="{{.Thread.UpdatedAt}}">{{.Thread.UpdatedAt}}</time>{{else}}-{{end}}</div>
   </div>
 </div>
 {{else}}
