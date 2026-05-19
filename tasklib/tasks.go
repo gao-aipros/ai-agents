@@ -134,9 +134,10 @@ func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction stri
 //
 // WaitTask is safe for group tasks as of Phase 3 — it checks
 // task:<id>:group on all exit paths and skips updateThreadStatus
-// and lock release for group tasks. Thread status is set once by
-// GroupWait after all group tasks complete. Prefer GroupWait over
-// WaitTask for group tasks to get aggregate status.
+// and lock release for group tasks. Thread status is managed solely
+// by the request handler (writeResponseMessage / writeErrorMessage);
+// GroupWait does NOT update it. Prefer GroupWait over WaitTask for
+// group tasks to get aggregate status.
 func (c *Client) EnqueueGroup(ctx context.Context, worker, threadID, groupLabel, instruction string) (*Task, error) {
 	// Validate group label before any Redis operations
 	if strings.ContainsAny(groupLabel, ":\t\n\r ") {
@@ -483,8 +484,9 @@ func (c *Client) WaitTask(ctx context.Context, taskID, threadID string, timeout 
 // GroupWait polls until all tasks in a group reach a terminal state or the
 // timeout expires. It computes aggregate status client-side: any "failed" →
 // "error", all "done" → "complete", all "cancelled" → "cancelled", mixed
-// "done" + "cancelled" → "complete". Thread status is set once when all tasks
-// are terminal. On timeout, thread status is NOT updated (tasks are still
+// "done" + "cancelled" → "complete". Thread status is NOT updated by
+// GroupWait — it is managed solely by the request handler. On timeout,
+// thread status is also NOT updated (tasks are still
 // running) and Status is "timeout" with a per-task snapshot.
 func (c *Client) GroupWait(ctx context.Context, threadID, groupLabel string, timeout time.Duration) (*GroupResult, error) {
 	setKey := GroupTasksKey(threadID, groupLabel)
