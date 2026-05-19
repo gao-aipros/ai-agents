@@ -125,6 +125,9 @@ func TestCmdEnqueueThreadLocked(t *testing.T) {
 
 	c := getClient()
 	c.LockThread(context.Background(), enqueueThread, "holder-task", tasklib.LockTTL)
+	// Auto-clear logic checks if the lock holder is active — create a
+	// running task entry so "holder-task" is considered a valid holder.
+	c.RDB().Set(context.Background(), tasklib.TaskKey("holder-task", "status"), "running", 0)
 
 	var panicMsg string
 	func() {

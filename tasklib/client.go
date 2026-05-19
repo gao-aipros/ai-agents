@@ -53,6 +53,24 @@ func (c *Client) Ping(ctx context.Context) error {
 	return c.rdb.Ping(ctx).Err()
 }
 
+// isTaskActive returns true if the holder task exists and is not in a terminal
+// state. Used to detect stale locks — if the lock holder is done/failed/cancelled
+// or the task keys have expired, the lock is stale and should be released.
+func (c *Client) isTaskActive(ctx context.Context, taskID string) bool {
+	if taskID == "" {
+		return false
+	}
+	status, err := c.rdb.Get(ctx, TaskKey(taskID, "status")).Result()
+	if err != nil {
+		return false // key missing or error → treat as stale
+	}
+	switch status {
+	case "done", "failed", "cancelled":
+		return false
+	}
+	return true
+}
+
 // ts returns the current time as an ISO8601 UTC string (same format as task.py).
 func ts() string {
 	return time.Now().UTC().Format("2006-01-02T15:04:05Z")

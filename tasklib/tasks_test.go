@@ -65,12 +65,90 @@ func TestEnqueue(t *testing.T) {
 func TestEnqueueThreadLocked(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	// Pre-lock the thread
-	c.rdb.Set(ctx(), ThreadLockKey("locked-thread"), "other-task", LockTTL)
+	// Pre-lock the thread with an ACTIVE holder (status=running) — should fail
+	c.rdb.Set(ctx(), ThreadLockKey("locked-thread"), "active-task", LockTTL)
+	c.rdb.Set(ctx(), TaskKey("active-task", "status"), "running", 0)
 
 	_, err := c.Enqueue(ctx(), "claude", "locked-thread", "do something")
 	if err == nil {
-		t.Error("expected error for locked thread")
+		t.Error("expected error for thread locked by active holder")
+	}
+}
+
+func TestEnqueueStaleLockAutoClear(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Pre-lock the thread with a STALE holder (task doesn't exist in Redis)
+	c.rdb.Set(ctx(), ThreadLockKey("stale-lock-thread"), "ghost-task", LockTTL)
+
+	task, err := c.Enqueue(ctx(), "claude", "stale-lock-thread", "do something")
+	if err != nil {
+		t.Fatalf("Enqueue should auto-clear stale lock, got error: %v", err)
+	}
+	if task.TaskID == "" {
+		t.Error("expected non-empty task ID")
+	}
+
+	// Old lock key should be gone (replaced by new task's lock)
+	holder, _ := c.rdb.Get(ctx(), ThreadLockKey("stale-lock-thread")).Result()
+	if holder == "ghost-task" {
+		t.Error("expected stale lock to be replaced by new task lock")
+	}
+}
+
+func TestEnqueueStaleLockTerminalStatus(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	for _, status := range []string{"done", "failed", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			threadID := "stale-" + status + "-thread"
+			holderID := "stale-" + status + "-task"
+
+			c.rdb.Set(ctx(), ThreadLockKey(threadID), holderID, LockTTL)
+			c.rdb.Set(ctx(), TaskKey(holderID, "status"), status, 0)
+
+			task, err := c.Enqueue(ctx(), "claude", threadID, "do something")
+			if err != nil {
+				t.Fatalf("Enqueue should auto-clear lock with %s holder, got error: %v", status, err)
+			}
+			if task.TaskID == "" {
+				t.Error("expected non-empty task ID")
+			}
+		})
+	}
+}
+
+func TestIsTaskActive(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Empty task ID
+	if c.isTaskActive(ctx(), "") {
+		t.Error("empty task ID should be inactive")
+	}
+
+	// Missing key
+	if c.isTaskActive(ctx(), "no-such-task") {
+		t.Error("missing task should be inactive")
+	}
+
+	// Terminal statuses
+	for _, status := range []string{"done", "failed", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			c.rdb.Set(ctx(), TaskKey("t-"+status, "status"), status, 0)
+			if c.isTaskActive(ctx(), "t-"+status) {
+				t.Errorf("task with status %s should be inactive", status)
+			}
+		})
+	}
+
+	// Active statuses
+	for _, status := range []string{"pending", "running"} {
+		t.Run(status, func(t *testing.T) {
+			c.rdb.Set(ctx(), TaskKey("t-"+status, "status"), status, 0)
+			if !c.isTaskActive(ctx(), "t-"+status) {
+				t.Errorf("task with status %s should be active", status)
+			}
+		})
 	}
 }
 

@@ -76,25 +76,53 @@ Already authenticated via `GH_TOKEN`. Clone: `gh repo clone owner/repo /workspac
    ```bash
    task thread-update --id <thread_id> --status reviewing
 
-   task enqueue --worker copilot  --thread <thread_id> --group design-review \
-       --instruction "Review docs/high-level-design.md, docs/detailed-design.md, docs/implementation-phases.md. Check correctness, consistency, gaps, security, performance. Propose alternatives with rationale. Write to docs/design-review-copilot.md."
-   task enqueue --worker opencode --thread <thread_id> --group design-review \
-       --instruction "Review docs/high-level-design.md, docs/detailed-design.md, docs/implementation-phases.md. Check correctness, consistency, gaps, security, performance. Propose alternatives with rationale. Write to docs/design-review-opencode.md."
-   task enqueue --worker claude   --thread <thread_id> --group design-review \
-       --instruction "Review docs/high-level-design.md, docs/detailed-design.md, docs/implementation-phases.md. Check correctness, consistency, gaps, security, performance. Propose alternatives with rationale. Write to docs/design-review-claude.md."
-   task enqueue --worker codex    --thread <thread_id> --group design-review \
-       --instruction "Review docs/high-level-design.md, docs/detailed-design.md, docs/implementation-phases.md. Check correctness, consistency, gaps, security, performance. Propose alternatives with rationale. Write to docs/design-review-codex.md."
+   # Clear any stale lock from prior cancelled/failed tasks
+   task unlock --thread <thread_id> 2>/dev/null || true
+
+   # Enqueue all 4 workers — capture task IDs and check for errors
+   T1=$(task enqueue --worker copilot --thread <thread_id> --group design-review \
+       --instruction "Review docs/high-level-design.md, docs/detailed-design.md, docs/implementation-phases.md. Check correctness, consistency, gaps, security, performance. Propose alternatives with rationale. Write to docs/design-review-copilot.md." | jq -r '.task_id')
+   T2=$(task enqueue --worker opencode --thread <thread_id> --group design-review \
+       --instruction "Review docs/high-level-design.md, docs/detailed-design.md, docs/implementation-phases.md. Check correctness, consistency, gaps, security, performance. Propose alternatives with rationale. Write to docs/design-review-opencode.md." | jq -r '.task_id')
+   T3=$(task enqueue --worker claude --thread <thread_id> --group design-review \
+       --instruction "Review docs/high-level-design.md, docs/detailed-design.md, docs/implementation-phases.md. Check correctness, consistency, gaps, security, performance. Propose alternatives with rationale. Write to docs/design-review-claude.md." | jq -r '.task_id')
+   T4=$(task enqueue --worker codex --thread <thread_id> --group design-review \
+       --instruction "Review docs/high-level-design.md, docs/detailed-design.md, docs/implementation-phases.md. Check correctness, consistency, gaps, security, performance. Propose alternatives with rationale. Write to docs/design-review-codex.md." | jq -r '.task_id')
+
+   # Verify all enqueues succeeded before waiting
+   FAILED_ENQUEUE=false
+   for tid in "$T1" "$T2" "$T3" "$T4"; do
+     if [ -z "$tid" ] || [ "$tid" = "null" ]; then
+       FAILED_ENQUEUE=true
+       break
+     fi
+   done
+   if [ "$FAILED_ENQUEUE" = "true" ]; then
+     echo "FATAL: One or more design-review enqueues failed" >&2
+     task thread-update --id <thread_id> --status error
+     exit 1
+   fi
 
    RESULT=$(task group-wait --thread <thread_id> --group design-review --timeout 600)
    STATUS=$(echo "$RESULT" | jq -r .status)
 
    if [ "$STATUS" = "error" ]; then
      FAILED=$(echo "$RESULT" | jq -r '.tasks | to_entries | map(select(.value != "done")) | .[].key')
+     RETRY_FAILED=false
      for TID in $FAILED; do
        WORKER=$(task status --id "$TID" | jq -r .worker)
-       task enqueue --worker "$WORKER" --thread <thread_id> --group design-review-retry \
-           --instruction "Retry your design review. Write to docs/design-review-$WORKER.md."
+       RT=$(task enqueue --worker "$WORKER" --thread <thread_id> --group design-review-retry \
+           --instruction "Retry your design review. Write to docs/design-review-$WORKER.md." | jq -r '.task_id')
+       if [ -z "$RT" ] || [ "$RT" = "null" ]; then
+         RETRY_FAILED=true
+         break
+       fi
      done
+     if [ "$RETRY_FAILED" = "true" ]; then
+       echo "FATAL: One or more design-review retry enqueues failed" >&2
+       task thread-update --id <thread_id> --status error
+       exit 1
+     fi
      task group-wait --thread <thread_id> --group design-review-retry --timeout 600
    fi
    ```
@@ -120,16 +148,53 @@ Already authenticated via `GH_TOKEN`. Clone: `gh repo clone owner/repo /workspac
    ```bash
    task thread-update --id <thread_id> --status reviewing
 
+   # Clear any stale lock from prior cancelled/failed tasks
+   task unlock --thread <thread_id> 2>/dev/null || true
+
    # If claude implemented → codex, copilot, opencode review
-   task enqueue --worker codex   --thread <thread_id> --group code-review \
-       --instruction "Review PR #$PR. Write summary to docs/code-review-codex.md, then 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-codex.md'."
-   task enqueue --worker copilot --thread <thread_id> --group code-review \
-       --instruction "Review PR #$PR. Write summary to docs/code-review-copilot.md, then 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-copilot.md'."
-   task enqueue --worker opencode --thread <thread_id> --group code-review \
-       --instruction "Review PR #$PR. Write summary to docs/code-review-opencode.md, then 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-opencode.md'."
+   T1=$(task enqueue --worker codex --thread <thread_id> --group code-review \
+       --instruction "Review PR #$PR. Write summary to docs/code-review-codex.md, then 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-codex.md'." | jq -r '.task_id')
+   T2=$(task enqueue --worker copilot --thread <thread_id> --group code-review \
+       --instruction "Review PR #$PR. Write summary to docs/code-review-copilot.md, then 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-copilot.md'." | jq -r '.task_id')
+   T3=$(task enqueue --worker opencode --thread <thread_id> --group code-review \
+       --instruction "Review PR #$PR. Write summary to docs/code-review-opencode.md, then 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-opencode.md'." | jq -r '.task_id')
+
+   # Verify all enqueues succeeded before waiting
+   FAILED_ENQUEUE=false
+   for tid in "$T1" "$T2" "$T3"; do
+     if [ -z "$tid" ] || [ "$tid" = "null" ]; then
+       FAILED_ENQUEUE=true
+       break
+     fi
+   done
+   if [ "$FAILED_ENQUEUE" = "true" ]; then
+     echo "FATAL: One or more code-review enqueues failed" >&2
+     task thread-update --id <thread_id> --status error
+     exit 1
+   fi
 
    RESULT=$(task group-wait --thread <thread_id> --group code-review --timeout 600)
-   # Handle failures same as design review (use docs/code-review-$WORKER.md for output file)
+   STATUS=$(echo "$RESULT" | jq -r .status)
+
+   if [ "$STATUS" = "error" ]; then
+     FAILED=$(echo "$RESULT" | jq -r '.tasks | to_entries | map(select(.value != "done")) | .[].key')
+     RETRY_FAILED=false
+     for TID in $FAILED; do
+       WORKER=$(task status --id "$TID" | jq -r .worker)
+       RT=$(task enqueue --worker "$WORKER" --thread <thread_id> --group code-review-retry \
+           --instruction "Retry your code review. Write to docs/code-review-$WORKER.md." | jq -r '.task_id')
+       if [ -z "$RT" ] || [ "$RT" = "null" ]; then
+         RETRY_FAILED=true
+         break
+       fi
+     done
+     if [ "$RETRY_FAILED" = "true" ]; then
+       echo "FATAL: One or more code-review retry enqueues failed" >&2
+       task thread-update --id <thread_id> --status error
+       exit 1
+     fi
+     task group-wait --thread <thread_id> --group code-review-retry --timeout 600
+   fi
    ```
    **If codex implemented**, swap: `claude`, `copilot`, `opencode` review; `codex` does not.
 
@@ -159,6 +224,12 @@ task requeue-stale [--worker claude] [--older-than 600]        # Recover stale t
 task cancel --id <task_id>                                     # Cancel a pending task
 task unlock --thread <thread_id>                               # Release a stale lock
 ```
+
+**Before every fan-out**, clear stale locks: `task unlock --thread <thread_id> 2>/dev/null || true`. If a prior task was cancelled or crashed, its lock persists (TTL = 35 min) and will block all subsequent enqueues. This is the most common cause of silent enqueue failures.
+
+**Always check enqueue output**: `task enqueue` prints `{"task_id":"<uuid>"}` on success and `ERROR: ...` on stderr. When capturing with `$(... | jq -r '.task_id')`, an empty or `"null"` result means the enqueue failed. Never proceed to `task group-wait` without verifying all enqueues produced valid task IDs. If any enqueue failed, update thread status to `error` and abort — do not retry without first running `task unlock`.
+
+**Stale lock recovery**: If enqueue fails with "thread is locked", run `task unlock --thread <thread_id>` and retry. The code-level fix (auto-clear in tasklib) handles this within a single `task` process, but the explicit unlock guards against lock state persisting between separate CLI invocations.
 
 ## Guidelines
 
