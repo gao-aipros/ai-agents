@@ -90,22 +90,18 @@ func TestEnqueueGroupFanOut(t *testing.T) {
 func TestEnqueueGroupFailsWhenLocked(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	// Acquire lock via a sequential Enqueue (don't wait for it)
-	task, err := c.Enqueue(ctx(), "claude", "thread-1", "sequential task")
-	if err != nil {
-		t.Fatalf("Enqueue failed: %v", err)
-	}
-	// Lock is now held (Enqueue doesn't release it — WaitTask does)
+	// Pre-lock the thread with an ACTIVE holder so auto-clear doesn't kick in
+	c.rdb.Set(ctx(), ThreadLockKey("thread-1"), "active-task", LockTTL)
+	c.rdb.Set(ctx(), TaskKey("active-task", "status"), "running", 0)
 
-	// EnqueueGroup should fail because the lock is held
-	_, err = c.EnqueueGroup(ctx(), "copilot", "thread-1", "design-review", "review task")
+	// EnqueueGroup should fail because the lock is held by an active task
+	_, err := c.EnqueueGroup(ctx(), "copilot", "thread-1", "design-review", "review task")
 	if err == nil {
 		t.Error("expected EnqueueGroup to fail when lock is held, but it succeeded")
 	}
 
 	// Release lock so cleanup doesn't interfere
 	c.rdb.Del(ctx(), ThreadLockKey("thread-1"))
-	_ = task
 }
 
 func TestEnqueueGroupStaleLockAutoClear(t *testing.T) {

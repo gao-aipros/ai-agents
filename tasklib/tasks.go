@@ -72,10 +72,15 @@ func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction stri
 	if !ok {
 		holder, _ := c.rdb.Get(ctx, lockKey).Result()
 		if !c.isTaskActive(ctx, holder) {
-			c.rdb.Del(ctx, lockKey)
+			if err := c.rdb.Del(ctx, lockKey).Err(); err != nil {
+				return nil, fmt.Errorf("lock stale-clear delete: %w", err)
+			}
 			ok, err = c.rdb.SetNX(ctx, lockKey, taskID, LockTTL).Result()
 			if err != nil {
 				return nil, fmt.Errorf("lock acquire (after stale clear): %w", err)
+			}
+			if !ok {
+				holder, _ = c.rdb.Get(ctx, lockKey).Result()
 			}
 		}
 		if !ok {
@@ -173,10 +178,15 @@ func (c *Client) EnqueueGroup(ctx context.Context, worker, threadID, groupLabel,
 	if !ok {
 		holder, _ := c.rdb.Get(ctx, lockKey).Result()
 		if !c.isTaskActive(ctx, holder) {
-			c.rdb.Del(ctx, lockKey)
+			if err := c.rdb.Del(ctx, lockKey).Err(); err != nil {
+				return nil, fmt.Errorf("lock stale-clear delete: %w", err)
+			}
 			ok, err = c.rdb.SetNX(ctx, lockKey, taskID, 10*time.Second).Result()
 			if err != nil {
 				return nil, fmt.Errorf("lock gate-check (after stale clear): %w", err)
+			}
+			if !ok {
+				holder, _ = c.rdb.Get(ctx, lockKey).Result()
 			}
 		}
 		if !ok {

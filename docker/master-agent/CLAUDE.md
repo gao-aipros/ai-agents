@@ -108,11 +108,21 @@ Already authenticated via `GH_TOKEN`. Clone: `gh repo clone owner/repo /workspac
 
    if [ "$STATUS" = "error" ]; then
      FAILED=$(echo "$RESULT" | jq -r '.tasks | to_entries | map(select(.value != "done")) | .[].key')
+     RETRY_FAILED=false
      for TID in $FAILED; do
        WORKER=$(task status --id "$TID" | jq -r .worker)
-       task enqueue --worker "$WORKER" --thread <thread_id> --group design-review-retry \
-           --instruction "Retry your design review. Write to docs/design-review-$WORKER.md." | jq -r '.task_id'
+       RT=$(task enqueue --worker "$WORKER" --thread <thread_id> --group design-review-retry \
+           --instruction "Retry your design review. Write to docs/design-review-$WORKER.md." | jq -r '.task_id')
+       if [ -z "$RT" ] || [ "$RT" = "null" ]; then
+         RETRY_FAILED=true
+         break
+       fi
      done
+     if [ "$RETRY_FAILED" = "true" ]; then
+       echo "FATAL: One or more design-review retry enqueues failed" >&2
+       task thread-update --id <thread_id> --status error
+       exit 1
+     fi
      task group-wait --thread <thread_id> --group design-review-retry --timeout 600
    fi
    ```
@@ -168,11 +178,21 @@ Already authenticated via `GH_TOKEN`. Clone: `gh repo clone owner/repo /workspac
 
    if [ "$STATUS" = "error" ]; then
      FAILED=$(echo "$RESULT" | jq -r '.tasks | to_entries | map(select(.value != "done")) | .[].key')
+     RETRY_FAILED=false
      for TID in $FAILED; do
        WORKER=$(task status --id "$TID" | jq -r .worker)
-       task enqueue --worker "$WORKER" --thread <thread_id> --group code-review-retry \
-           --instruction "Retry your code review. Write to docs/code-review-$WORKER.md." | jq -r '.task_id'
+       RT=$(task enqueue --worker "$WORKER" --thread <thread_id> --group code-review-retry \
+           --instruction "Retry your code review. Write to docs/code-review-$WORKER.md." | jq -r '.task_id')
+       if [ -z "$RT" ] || [ "$RT" = "null" ]; then
+         RETRY_FAILED=true
+         break
+       fi
      done
+     if [ "$RETRY_FAILED" = "true" ]; then
+       echo "FATAL: One or more code-review retry enqueues failed" >&2
+       task thread-update --id <thread_id> --status error
+       exit 1
+     fi
      task group-wait --thread <thread_id> --group code-review-retry --timeout 600
    fi
    ```
