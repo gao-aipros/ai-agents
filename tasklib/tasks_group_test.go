@@ -108,6 +108,43 @@ func TestEnqueueGroupFailsWhenLocked(t *testing.T) {
 	_ = task
 }
 
+func TestEnqueueGroupStaleLockAutoClear(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Pre-lock the thread with a STALE holder (task doesn't exist)
+	c.rdb.Set(ctx(), ThreadLockKey("stale-group-thread"), "ghost-task", LockTTL)
+
+	task, err := c.EnqueueGroup(ctx(), "copilot", "stale-group-thread", "design-review", "review something")
+	if err != nil {
+		t.Fatalf("EnqueueGroup should auto-clear stale lock, got error: %v", err)
+	}
+	if task.TaskID == "" {
+		t.Error("expected non-empty task ID")
+	}
+}
+
+func TestEnqueueGroupStaleLockTerminalStatus(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	for _, status := range []string{"done", "failed", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			threadID := "stale-group-" + status + "-thread"
+			holderID := "stale-group-" + status + "-task"
+
+			c.rdb.Set(ctx(), ThreadLockKey(threadID), holderID, LockTTL)
+			c.rdb.Set(ctx(), TaskKey(holderID, "status"), status, 0)
+
+			task, err := c.EnqueueGroup(ctx(), "codex", threadID, "code-review", "review PR")
+			if err != nil {
+				t.Fatalf("EnqueueGroup should auto-clear lock with %s holder, got error: %v", status, err)
+			}
+			if task.TaskID == "" {
+				t.Error("expected non-empty task ID")
+			}
+		})
+	}
+}
+
 func TestEnqueueGroupRaceBetweenCalls(t *testing.T) {
 	c, _ := setupTestClient(t)
 

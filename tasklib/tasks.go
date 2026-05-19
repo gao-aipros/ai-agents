@@ -60,7 +60,10 @@ func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction stri
 	}
 	now := ts()
 
-	// Acquire thread lock (serialize tasks on the same thread)
+	// Acquire thread lock (serialize tasks on the same thread).
+	// Auto-clear stale locks where the holder task no longer exists or has
+	// reached a terminal state — this handles the case where a previous task
+	// left a lock behind after cancellation or crash.
 	lockKey := ThreadLockKey(threadID)
 	ok, err := c.rdb.SetNX(ctx, lockKey, taskID, LockTTL).Result()
 	if err != nil {
@@ -68,7 +71,16 @@ func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction stri
 	}
 	if !ok {
 		holder, _ := c.rdb.Get(ctx, lockKey).Result()
-		return nil, fmt.Errorf("thread '%s' is locked (holder task: %s). Wait for it to complete or run 'task unlock --thread %s'", threadID, holder, threadID)
+		if !c.isTaskActive(ctx, holder) {
+			c.rdb.Del(ctx, lockKey)
+			ok, err = c.rdb.SetNX(ctx, lockKey, taskID, LockTTL).Result()
+			if err != nil {
+				return nil, fmt.Errorf("lock acquire (after stale clear): %w", err)
+			}
+		}
+		if !ok {
+			return nil, fmt.Errorf("thread '%s' is locked (holder task: %s). Wait for it to complete or run 'task unlock --thread %s'", threadID, holder, threadID)
+		}
 	}
 
 	// Append instruction to thread history
@@ -160,7 +172,16 @@ func (c *Client) EnqueueGroup(ctx context.Context, worker, threadID, groupLabel,
 	}
 	if !ok {
 		holder, _ := c.rdb.Get(ctx, lockKey).Result()
-		return nil, fmt.Errorf("thread '%s' is locked (holder task: %s). Wait for it to complete or run 'task unlock --thread %s'", threadID, holder, threadID)
+		if !c.isTaskActive(ctx, holder) {
+			c.rdb.Del(ctx, lockKey)
+			ok, err = c.rdb.SetNX(ctx, lockKey, taskID, 10*time.Second).Result()
+			if err != nil {
+				return nil, fmt.Errorf("lock gate-check (after stale clear): %w", err)
+			}
+		}
+		if !ok {
+			return nil, fmt.Errorf("thread '%s' is locked (holder task: %s). Wait for it to complete or run 'task unlock --thread %s'", threadID, holder, threadID)
+		}
 	}
 	c.rdb.Del(ctx, lockKey)
 
