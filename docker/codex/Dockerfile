@@ -48,8 +48,10 @@ RUN git clone --filter=blob:none \
       productivity/grill-me; do \
       cp -r "/tmp/skills/skills/$skill" "/tmp/skills-out/$(basename $skill)"; \
     done \
+    ARG CODE_REVIEW_SKILL_REF=dc8928c7b054bfeb7f67a35697b9b0fc7a4ab78c \
     && git clone --filter=blob:none \
       https://github.com/Noodle05/skills.git /tmp/noodle-skills \
+    && git -C /tmp/noodle-skills checkout "$CODE_REVIEW_SKILL_REF" \
     && cp -r /tmp/noodle-skills/engineering/code-review /tmp/skills-out/code-review
 
 # Final stage

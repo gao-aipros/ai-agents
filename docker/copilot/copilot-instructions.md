@@ -15,7 +15,7 @@ Skill reference files are at `~/.copilot/skills/`. When a task involves one of t
 **Engineering:** `code-review` `diagnose` `grill-with-docs` `improve-codebase-architecture` `prototype` `to-issues` `to-prd` `triage` `zoom-out`
 **Productivity:** `handoff` `caveman` `grill-me`
 
-When reviewing design docs or PRs, use the `code-review` skill (read `~/.copilot/skills/code-review/SKILL.md`) for structured, issues-only feedback. When creating documents, use `grill-with-docs` to stress-test against the existing domain model.
+When reviewing design docs or PRs, use the `code-review` skill for structured, issues-only feedback. When creating documents, use `grill-with-docs` to stress-test against the existing domain model.
 
 Project defaults: `~/.copilot/agents-config/issue-tracker.md` `~/.copilot/agents-config/triage-labels.md` `~/.copilot/agents-config/domain.md`
 
