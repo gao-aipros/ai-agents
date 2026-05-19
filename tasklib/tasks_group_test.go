@@ -429,13 +429,14 @@ func TestGroupWaitAllDone(t *testing.T) {
 		}
 	}
 
-	// Thread status must be updated to "complete"
+	// Thread status must NOT be updated by GroupWait — only the request
+	// handler (writeResponseMessage / writeErrorMessage) sets thread status.
 	thread, err := c.GetThread(ctx(), "thr-gw-done")
 	if err != nil {
 		t.Fatalf("GetThread failed: %v", err)
 	}
-	if thread.Status != "complete" {
-		t.Errorf("expected thread status 'complete', got %q", thread.Status)
+	if thread.Status != "initiated" {
+		t.Errorf("expected thread status 'initiated' (unchanged), got %q", thread.Status)
 	}
 }
 
@@ -466,10 +467,10 @@ func TestGroupWaitMixedOutcomes(t *testing.T) {
 		t.Errorf("t-fail should be failed, got %q", result.Tasks["t-fail"])
 	}
 
-	// Thread status must be "error" (any failed => error)
+	// Thread status must NOT be updated by GroupWait
 	thread, _ := c.GetThread(ctx(), "thr-gw-mixed")
-	if thread.Status != "error" {
-		t.Errorf("expected thread status 'error', got %q", thread.Status)
+	if thread.Status != "initiated" {
+		t.Errorf("expected thread status 'initiated' (unchanged), got %q", thread.Status)
 	}
 }
 
@@ -493,8 +494,8 @@ func TestGroupWaitCancelled(t *testing.T) {
 	}
 
 	thread, _ := c.GetThread(ctx(), "thr-gw-cancelled")
-	if thread.Status != "cancelled" {
-		t.Errorf("expected thread status 'cancelled', got %q", thread.Status)
+	if thread.Status != "initiated" {
+		t.Errorf("expected thread status 'initiated' (unchanged), got %q", thread.Status)
 	}
 }
 
@@ -572,8 +573,8 @@ func TestThreadStatusAfterGroupWait(t *testing.T) {
 			}
 
 			thread, _ := c.GetThread(ctx(), threadID)
-			if thread.Status != tt.wantAggregate {
-				t.Errorf("expected thread status %q, got %q", tt.wantAggregate, thread.Status)
+			if thread.Status != "initiated" {
+				t.Errorf("expected thread status 'initiated' (unchanged), got %q", thread.Status)
 			}
 		})
 	}
@@ -647,5 +648,71 @@ func TestGroupWaitMixedTerminalAndNonTerminal(t *testing.T) {
 	thread, _ := c.GetThread(ctx(), "thr-gw-mixed-nonterm")
 	if thread.Status != "initiated" {
 		t.Errorf("expected thread status 'initiated' (unchanged), got %q", thread.Status)
+	}
+}
+
+// TestGroupWaitDoesNotUpdateThreadStatus verifies that GroupWait never sets
+// thread status, regardless of group outcome. Thread status must only be
+// managed by the request handler (writeResponseMessage / writeErrorMessage)
+// so the UI correctly reflects the Claude subprocess state. A GroupWait
+// completing does not mean the overall request is done — the subprocess
+// may still be processing results.
+func TestGroupWaitDoesNotUpdateThreadStatus(t *testing.T) {
+	tests := []struct {
+		name     string
+		statuses map[string]string
+	}{
+		{
+			name:     "all_tasks_done",
+			statuses: map[string]string{"t1": "done", "t2": "done", "t3": "done"},
+		},
+		{
+			name:     "mixed_done_and_failed",
+			statuses: map[string]string{"t1": "done", "t2": "failed"},
+		},
+		{
+			name:     "all_tasks_cancelled",
+			statuses: map[string]string{"t1": "cancelled"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _ := setupTestClient(t)
+
+			threadID := "thr-gw-noup-" + tt.name
+			if _, err := c.CreateThread(ctx(), threadID, ""); err != nil {
+				t.Fatalf("CreateThread failed: %v", err)
+			}
+
+			// Simulate thread state as it would be during an active request:
+			// status="running" and running lock is held.
+			c.UpdateThread(ctx(), threadID, map[string]string{"status": "running"})
+			c.AcquireRequestLock(ctx(), threadID, "req-1", LockTTL)
+
+			for tid, status := range tt.statuses {
+				c.rdb.Set(ctx(), TaskKey(tid, "status"), status, 0)
+				c.rdb.SAdd(ctx(), GroupTasksKey(threadID, "review"), tid)
+			}
+
+			_, err := c.GroupWait(ctx(), threadID, "review", 5*time.Second)
+			if err != nil {
+				t.Fatalf("GroupWait failed: %v", err)
+			}
+
+			// Thread status must NOT change — still "running" because the
+			// request handler owns that field, not GroupWait.
+			thread, _ := c.GetThread(ctx(), threadID)
+			if thread.Status != "running" {
+				t.Errorf("expected thread status 'running' (unchanged), got %q", thread.Status)
+			}
+
+			// Running lock must NOT be released — only the request handler
+			// releases it via ReleaseRequestLock in runSubprocess cleanup.
+			locked, _ := c.IsRequestRunning(ctx(), threadID)
+			if !locked {
+				t.Error("expected running lock to still be held after GroupWait")
+			}
+		})
 	}
 }

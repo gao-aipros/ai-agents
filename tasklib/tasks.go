@@ -553,7 +553,6 @@ func (c *Client) GroupWait(ctx context.Context, threadID, groupLabel string, tim
 				aggregate = "complete" // mixed done + cancelled
 			}
 
-			c.updateThreadStatus(ctx, threadID, aggregate)
 			return &GroupResult{
 				ThreadID: threadID,
 				Label:    groupLabel,
