@@ -39,7 +39,10 @@ RUN git clone --filter=blob:none \
       productivity/caveman \
       productivity/grill-me; do \
       cp -r "/tmp/skills/skills/$skill" "/tmp/skills-out/$(basename $skill)"; \
-    done
+    done \
+    && git clone --filter=blob:none \
+      https://github.com/Noodle05/skills.git /tmp/noodle-skills \
+    && cp -r /tmp/noodle-skills/engineering/code-review /tmp/skills-out/code-review
 
 # Final stage
 FROM ${WORKER_BASE_IMAGE}
@@ -60,7 +63,6 @@ ENV COPILOT_PROVIDER_TYPE=anthropic \
 RUN mkdir -p /home/agent/.copilot && chown -R agent:agent /home/agent/.copilot
 COPY --chown=agent:agent docker/copilot/copilot-instructions.md /home/agent/.copilot/copilot-instructions.md
 COPY --from=skills-download --chown=agent:agent /tmp/skills-out /home/agent/.copilot/skills/
-COPY --chown=agent:agent docker/skills/code-review/ /home/agent/.copilot/skills/code-review/
 COPY --chown=agent:agent docs/agents/ /home/agent/.copilot/agents-config/
 
 USER agent
