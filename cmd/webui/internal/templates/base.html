@@ -29,7 +29,7 @@
         }, 1000);
       });
     });
-    document.body.addEventListener('htmx:afterSwap', function() {
+    document.addEventListener('htmx:afterSwap', function() {
       document.querySelectorAll('.elapsed[data-start]').forEach(function(el) {
         if (el._timerStarted) return;
         el._timerStarted = true;
@@ -52,7 +52,7 @@
       });
     }
     document.addEventListener('DOMContentLoaded', localizeTimestamps);
-    document.body.addEventListener('htmx:afterSwap', localizeTimestamps);
+    document.addEventListener('htmx:afterSwap', localizeTimestamps);
   </script>
 </head>
 <body>
