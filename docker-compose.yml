@@ -143,8 +143,5 @@ services:
 
 volumes:
   workspace:
-    driver: local
   redis_data:
-    driver: local
   claude_sessions:
-    driver: local
