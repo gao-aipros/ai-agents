@@ -12,8 +12,10 @@ You are a **reviewer only**. You review design documents, PRs, and other artifac
 
 Skill reference files are at `~/.config/opencode/skills/`. When a task involves one of these areas, read the corresponding `SKILL.md` for methodology:
 
-**Engineering:** `diagnose` `grill-with-docs` `improve-codebase-architecture` `prototype` `to-issues` `to-prd` `triage` `zoom-out`
+**Engineering:** `code-review` `diagnose` `grill-with-docs` `improve-codebase-architecture` `prototype` `to-issues` `to-prd` `triage` `zoom-out`
 **Productivity:** `handoff` `caveman` `grill-me`
+
+When reviewing design docs or PRs, use the `code-review` skill for structured, issues-only feedback. When creating documents, use `grill-with-docs` to stress-test against the existing domain model.
 
 Project defaults: `~/.config/opencode/agents-config/issue-tracker.md` `~/.config/opencode/agents-config/triage-labels.md` `~/.config/opencode/agents-config/domain.md`
 
