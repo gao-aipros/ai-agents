@@ -39,10 +39,7 @@ RUN git clone --filter=blob:none \
       productivity/caveman \
       productivity/grill-me; do \
       cp -r "/tmp/skills/skills/$skill" "/tmp/skills-out/$(basename $skill)"; \
-    done \
-    && git clone --filter=blob:none \
-      https://github.com/Noodle05/skills.git /tmp/noodle-skills \
-    && cp -r /tmp/noodle-skills/engineering/code-review /tmp/skills-out/code-review
+    done
 
 # Final stage
 FROM ${WORKER_BASE_IMAGE}
@@ -63,6 +60,7 @@ ENV AGENT_CMD="opencode -m ${OPENCODE_PROVIDER}/${OPENCODE_MODEL} run --dangerou
 COPY --chown=agent:agent docker/opencode/AGENTS.md /home/agent/.config/opencode/AGENTS.md
 COPY --chown=agent:agent docker/opencode/opencode.json /home/agent/.config/opencode/opencode.json
 COPY --from=skills-download --chown=agent:agent /tmp/skills-out /home/agent/.config/opencode/skills/
+COPY --chown=agent:agent docker/skills/code-review/ /home/agent/.config/opencode/skills/code-review/
 COPY --chown=agent:agent docs/agents/ /home/agent/.config/opencode/agents-config/
 
 USER agent
