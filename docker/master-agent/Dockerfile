@@ -73,8 +73,7 @@ COPY --chown=agent:agent docs/agents/ /home/agent/.claude/agents-config/
 RUN ln -sf /home/agent/.claude/claude.json /home/agent/.claude.json \
     && chown -h agent:agent /home/agent/.claude.json
 
-COPY --chown=agent:agent docker/master-agent/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY --chown=agent:agent --chmod=755 docker/master-agent/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 USER agent
 ENTRYPOINT ["entrypoint.sh"]
