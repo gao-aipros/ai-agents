@@ -64,6 +64,14 @@ func authMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// Docker healthcheck calls /api/health from localhost; allow without auth
+		if r.URL.Path == "/api/health" {
+			host, _, err := net.SplitHostPort(r.RemoteAddr)
+			if err == nil && net.ParseIP(host).IsLoopback() {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
 		if apiKey == "" {
 			next.ServeHTTP(w, r)
 			return
