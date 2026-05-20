@@ -265,6 +265,67 @@ func rateLimitMiddleware(rl *rateLimiter) func(http.Handler) http.Handler {
 	}
 }
 
+// ── access log ────────────────────────────────────────────────────────────
+
+// accessLogMiddleware logs HTTP requests via the provided slog.Logger.
+// When logger is nil, it's a no-op (access logging disabled).
+func accessLogMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if logger == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+			start := time.Now()
+			ww := newWrapResponseWriter(w, r.ProtoMajor)
+			next.ServeHTTP(ww, r)
+			logger.Info("request",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", ww.Status(),
+				"bytes", ww.BytesWritten(),
+				"duration_ms", time.Since(start).Milliseconds(),
+			)
+		})
+	}
+}
+
+type wrapResponseWriter struct {
+	http.ResponseWriter
+	status      int
+	bytes       int
+	wroteHeader bool
+}
+
+func newWrapResponseWriter(w http.ResponseWriter, protoMajor int) *wrapResponseWriter {
+	return &wrapResponseWriter{ResponseWriter: w, status: http.StatusOK}
+}
+
+func (w *wrapResponseWriter) BytesWritten() int {
+	return w.bytes
+}
+
+func (w *wrapResponseWriter) Status() int {
+	return w.status
+}
+
+func (w *wrapResponseWriter) WriteHeader(code int) {
+	if !w.wroteHeader {
+		w.status = code
+		w.wroteHeader = true
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *wrapResponseWriter) Write(b []byte) (int, error) {
+	if !w.wroteHeader {
+		w.wroteHeader = true
+	}
+	n, err := w.ResponseWriter.Write(b)
+	w.bytes += n
+	return n, err
+}
+
 // ── body size limit ───────────────────────────────────────────────────────
 
 // maxBytesMiddleware limits the request body size. Use for specific routes.

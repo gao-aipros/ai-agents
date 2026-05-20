@@ -17,12 +17,12 @@ import (
 )
 
 // NewRouter creates a chi router with all /api/ endpoints and page routes.
-func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templates.Renderer, shutdownCtx context.Context) chi.Router {
+func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templates.Renderer, shutdownCtx context.Context, accessLogger *slog.Logger) chi.Router {
 	r := chi.NewRouter()
 
 	// Middleware stack
 	r.Use(sanitizeQueryMiddleware)
-	r.Use(chimw.Logger)
+	r.Use(accessLogMiddleware(accessLogger))
 	r.Use(chimw.RealIP)
 	r.Use(recoverMiddleware)
 	r.Use(authMiddleware)

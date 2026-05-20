@@ -1,6 +1,8 @@
 package api
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -534,4 +536,80 @@ func TestAPIKeyInitWarning(t *testing.T) {
 		t.Errorf("WEBUI_API_KEY = %q, want %q", key, "custom-key")
 	}
 	os.Unsetenv("WEBUI_API_KEY")
+}
+
+// ── access log middleware tests ────────────────────────────────────────────
+
+func TestAccessLogMiddleware_NilLogger_NoOp(t *testing.T) {
+	handler := accessLogMiddleware(nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r := httptest.NewRequest("GET", "/api/health", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestAccessLogMiddleware_Enabled_LogsRequest(t *testing.T) {
+	var buf bytes.Buffer
+	h := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
+	logger := slog.New(h)
+
+	handler := accessLogMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("hello"))
+	}))
+
+	r := httptest.NewRequest("GET", "/api/health", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, `"method":"GET"`) {
+		t.Errorf("log missing method: %s", output)
+	}
+	if !strings.Contains(output, `"path":"/api/health"`) {
+		t.Errorf("log missing path: %s", output)
+	}
+	if !strings.Contains(output, `"status":200`) {
+		t.Errorf("log missing status: %s", output)
+	}
+	if !strings.Contains(output, `"bytes":5`) {
+		t.Errorf("log missing bytes: %s", output)
+	}
+	if !strings.Contains(output, `"duration_ms"`) {
+		t.Errorf("log missing duration_ms: %s", output)
+	}
+}
+
+func TestAccessLogMiddleware_Enabled_ErrorStatus(t *testing.T) {
+	var buf bytes.Buffer
+	h := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
+	logger := slog.New(h)
+
+	handler := accessLogMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+
+	r := httptest.NewRequest("POST", "/api/requests", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+	if !strings.Contains(buf.String(), `"status":500`) {
+		t.Errorf("log missing error status: %s", buf.String())
+	}
+	if !strings.Contains(buf.String(), `"method":"POST"`) {
+		t.Errorf("log missing method: %s", buf.String())
+	}
 }
