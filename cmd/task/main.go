@@ -808,7 +808,17 @@ func cmdEvents(cmd *cobra.Command, args []string) error {
 		limit = 50
 	}
 
-	events, err := c.GetSystemEvents(ctx, limit)
+	// Fetch a larger batch when type-filtering to compensate for client-side
+	// filter (matching the GET /api/events endpoint pattern).
+	fetchLimit := limit
+	if eventsType != "" {
+		fetchLimit = limit * 3
+		if fetchLimit > 1000 {
+			fetchLimit = 1000
+		}
+	}
+
+	events, err := c.GetSystemEvents(ctx, fetchLimit)
 	if err != nil {
 		die(err.Error())
 	}
@@ -822,6 +832,10 @@ func cmdEvents(cmd *cobra.Command, args []string) error {
 			}
 		}
 		events = filtered
+		// Trim back to user-requested limit
+		if len(events) > limit {
+			events = events[:limit]
+		}
 	}
 
 	if len(events) == 0 {

@@ -42,6 +42,13 @@ type AlertConfig struct {
 	WorkerLostThreshold time.Duration
 }
 
+// alertHTTPClient is shared across all SendAlert calls for connection reuse.
+var alertHTTPClient = &http.Client{Timeout: 5 * time.Second}
+
+// DefaultStuckThreshold is the default threshold for considering a task
+// "stuck" — shared between alerting and the metrics collector.
+const DefaultStuckThreshold = 30 * time.Minute
+
 // LoadAlertConfig reads alerting configuration from environment variables.
 func LoadAlertConfig() AlertConfig {
 	cfg := AlertConfig{
@@ -50,7 +57,7 @@ func LoadAlertConfig() AlertConfig {
 		OnFailed:            envBool("ALERT_ON_FAILED", false),
 		OnStuckThread:       envBool("ALERT_ON_STUCK_THREAD", false),
 		OnWorkerLost:        envBool("ALERT_ON_WORKER_LOST", false),
-		StuckThreshold:      30 * time.Minute,
+		StuckThreshold:      DefaultStuckThreshold,
 		WorkerLostThreshold: 60 * time.Second,
 	}
 	if v := os.Getenv("ALERT_STUCK_THRESHOLD_MINUTES"); v != "" {
@@ -75,7 +82,7 @@ func (c AlertConfig) IsEnabled() bool { return c.WebhookURL != "" }
 
 // SendAlert dispatches a fire-and-forget POST to the configured webhook URL.
 // Errors are logged but never returned — alerting is best-effort.
-func (c AlertConfig) SendAlert(alertType AlertType, detail any) {
+func (c AlertConfig) SendAlert(ctx context.Context, alertType AlertType, detail any) {
 	if !c.IsEnabled() {
 		return
 	}
@@ -90,7 +97,7 @@ func (c AlertConfig) SendAlert(alertType AlertType, detail any) {
 		return
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, c.WebhookURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.WebhookURL, bytes.NewReader(body))
 	if err != nil {
 		slog.Warn("alert request error", "type", alertType, "error", err)
 		return
@@ -103,8 +110,7 @@ func (c AlertConfig) SendAlert(alertType AlertType, detail any) {
 		req.Header.Set("X-Webhook-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
 	}
 
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := alertHTTPClient.Do(req)
 	if err != nil {
 		slog.Warn("alert post failed", "type", alertType, "error", err)
 		return

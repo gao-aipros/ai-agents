@@ -456,7 +456,7 @@ func processOneTask(
 			Detail:         tasklib.TaskFailedDetail{ExitCode: exitCode, ErrorMessage: cappedStderr},
 		})
 		if alertCfg.IsEnabled() && alertCfg.OnFailed {
-			alertCfg.SendAlert(tasklib.AlertTaskFailed, map[string]any{
+			alertCfg.SendAlert(context.Background(), tasklib.AlertTaskFailed, map[string]any{
 				"task_id":         taskID,
 				"thread_id":       threadID,
 				"worker":          workerType,

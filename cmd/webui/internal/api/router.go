@@ -60,9 +60,7 @@ func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templ
 		r.Get("/stats", sys.stats)
 		r.Get("/diagnostics", diag.get)
 		r.Get("/events", evt.systemEvents)
-		r.Get("/metrics", func(w http.ResponseWriter, r *http.Request) {
-			metricsHandler(client).ServeHTTP(w, r)
-		})
+		r.Get("/metrics", newMetricsHandler(client).ServeHTTP)
 
 		// Workers
 		r.Get("/workers", wrk.list)

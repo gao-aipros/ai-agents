@@ -13,9 +13,9 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// ── Metrics handler (GET /metrics) ──
-
-func metricsHandler(client *tasklib.Client) http.Handler {
+// newMetricsHandler creates a Prometheus HTTP handler for GET /metrics.
+// The registry and collector are created once per handler invocation.
+func newMetricsHandler(client *tasklib.Client) http.Handler {
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(newRedisCollector(client))
 	return promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
@@ -26,15 +26,15 @@ func metricsHandler(client *tasklib.Client) http.Handler {
 type redisCollector struct {
 	client *tasklib.Client
 
-	tasksTotal   *prometheus.Desc
-	threadsActive  *prometheus.Desc
-	threadsStuck   *prometheus.Desc
-	workersOnline  *prometheus.Desc
-	queueDepth     *prometheus.Desc
-	tasksRunning   *prometheus.Desc
-	tasksPending   *prometheus.Desc
-	taskDuration   *prometheus.Desc
-	queueWait      *prometheus.Desc
+	tasksTotal    *prometheus.Desc
+	threadsActive *prometheus.Desc
+	threadsStuck  *prometheus.Desc
+	workersOnline *prometheus.Desc
+	queueDepth    *prometheus.Desc
+	tasksRunning  *prometheus.Desc
+	tasksPending  *prometheus.Desc
+	taskDuration  *prometheus.Desc
+	queueWait     *prometheus.Desc
 }
 
 func newRedisCollector(client *tasklib.Client) *redisCollector {
@@ -104,7 +104,7 @@ func (c *redisCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(c.tasksPending, prometheus.GaugeValue, float64(pending))
 
 	// ── Threads ──
-	active, stuck := countActiveStuckThreads(ctx, rdb)
+	active, stuck := countActiveStuckThreads(ctx, rdb, tasklib.DefaultStuckThreshold)
 	ch <- prometheus.MustNewConstMetric(c.threadsActive, prometheus.GaugeValue, float64(active))
 	ch <- prometheus.MustNewConstMetric(c.threadsStuck, prometheus.GaugeValue, float64(stuck))
 
@@ -113,6 +113,8 @@ func (c *redisCollector) Collect(ch chan<- prometheus.Metric) {
 		for wt, ws := range stats {
 			ch <- prometheus.MustNewConstMetric(c.workersOnline, prometheus.GaugeValue, float64(ws.Online), wt)
 		}
+	} else {
+		slog.Warn("metrics: GetWorkerStats failed", "error", err)
 	}
 
 	// ── Queue depth by worker type ──
@@ -125,10 +127,10 @@ func (c *redisCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-// countActiveStuckThreads scans thread state keys.
-func countActiveStuckThreads(ctx context.Context, rdb *redis.Client) (active, stuck int) {
+// countActiveStuckThreads scans thread state keys for active and stuck counts.
+func countActiveStuckThreads(ctx context.Context, rdb *redis.Client, stuckThreshold time.Duration) (active, stuck int) {
 	var cursor uint64
-	cutoff := time.Now().Add(-30 * time.Minute)
+	cutoff := time.Now().Add(-stuckThreshold)
 	for {
 		keys, nextCursor, err := rdb.Scan(ctx, cursor, "thread:*:current_state", 100).Result()
 		if err != nil {

@@ -1,6 +1,7 @@
 package tasklib
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,9 +10,9 @@ import (
 )
 
 func TestAlertConfigDefaults(t *testing.T) {
-	// Clear env vars to test defaults
+	// Clear env vars to test defaults using t.Setenv for parallel-safety
 	for _, k := range []string{"ALERT_WEBHOOK_URL", "WEBHOOK_SECRET", "ALERT_ON_FAILED", "ALERT_ON_STUCK_THREAD", "ALERT_ON_WORKER_LOST"} {
-		os.Unsetenv(k)
+		t.Setenv(k, "")
 	}
 	cfg := LoadAlertConfig()
 	if cfg.IsEnabled() {
@@ -23,10 +24,8 @@ func TestAlertConfigDefaults(t *testing.T) {
 }
 
 func TestAlertConfigEnabled(t *testing.T) {
-	os.Setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/alerts")
-	defer os.Unsetenv("ALERT_WEBHOOK_URL")
-	os.Setenv("ALERT_ON_FAILED", "true")
-	defer os.Unsetenv("ALERT_ON_FAILED")
+	t.Setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/alerts")
+	t.Setenv("ALERT_ON_FAILED", "true")
 
 	cfg := LoadAlertConfig()
 	if !cfg.IsEnabled() {
@@ -41,10 +40,12 @@ func TestAlertConfigEnabled(t *testing.T) {
 }
 
 func TestAlertConfigBoolVariants(t *testing.T) {
-	os.Setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/alerts")
-	defer os.Unsetenv("ALERT_WEBHOOK_URL")
+	t.Setenv("ALERT_WEBHOOK_URL", "https://hooks.example.com/alerts")
 
-	tests := []struct{ val string; expect bool }{
+	tests := []struct {
+		val    string
+		expect bool
+	}{
 		{"1", true},
 		{"true", true},
 		{"yes", true},
@@ -54,19 +55,26 @@ func TestAlertConfigBoolVariants(t *testing.T) {
 		{"", false},
 	}
 	for _, tc := range tests {
-		os.Setenv("ALERT_ON_FAILED", tc.val)
+		t.Setenv("ALERT_ON_FAILED", tc.val)
 		cfg := LoadAlertConfig()
 		if cfg.OnFailed != tc.expect {
-			t.Errorf("ALERT_ON_FAILED=%q → OnFailed=%v, want %v", tc.val, cfg.OnFailed, tc.expect)
+			t.Errorf("ALERT_ON_FAILED=%q -> OnFailed=%v, want %v", tc.val, cfg.OnFailed, tc.expect)
 		}
+		// Reset for next iteration
+		os.Unsetenv("ALERT_ON_FAILED")
 	}
-	os.Unsetenv("ALERT_ON_FAILED")
+}
+
+func TestDefaultStuckThreshold(t *testing.T) {
+	if DefaultStuckThreshold != 30*60*1e9 { // 30 minutes in nanoseconds
+		t.Errorf("DefaultStuckThreshold mismatch: %v", DefaultStuckThreshold)
+	}
 }
 
 func TestSendAlert_Disabled(t *testing.T) {
-	// No env var set → disabled, should be a no-op
+	// No env var set -> disabled, should be a no-op
 	cfg := AlertConfig{}
-	cfg.SendAlert(AlertTaskFailed, map[string]any{"test": true})
+	cfg.SendAlert(context.Background(), AlertTaskFailed, map[string]any{"test": true})
 	// If it doesn't panic, it succeeded
 }
 
@@ -94,7 +102,7 @@ func TestSendAlert_Enabled(t *testing.T) {
 		WebhookURL: srv.URL,
 		OnFailed:   true,
 	}
-	cfg.SendAlert(AlertTaskFailed, map[string]any{"task_id": "test-123"})
+	cfg.SendAlert(context.Background(), AlertTaskFailed, map[string]any{"task_id": "test-123"})
 
 	select {
 	case p := <-received:
@@ -119,7 +127,7 @@ func TestSendAlert_WithSecret(t *testing.T) {
 		WebhookSecret: "my-secret-key",
 		OnFailed:      true,
 	}
-	cfg.SendAlert(AlertTaskFailed, map[string]any{})
+	cfg.SendAlert(context.Background(), AlertTaskFailed, map[string]any{})
 
 	select {
 	case sig := <-receivedSig:
