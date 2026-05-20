@@ -34,8 +34,8 @@ Each agent gets its own GitHub token (`MASTER_GH_TOKEN`, `WORKER_CLAUDE_GH_TOKEN
 | Agent | Role |
 |-------|------|
 | **master-agent** | Design and planning only. Never writes implementation code or submits reviews. Creates design docs, coordinates the workflow, delegates tasks, and makes final design decisions. |
-| **worker-claude** | Implementer + reviewer. Writes code and unit tests when assigned. Reviews PRs and design docs from other workers. Never reviews own code. |
-| **codex** | Implementer + reviewer. Writes code and unit tests when assigned. Reviews PRs and design docs from other workers. Never reviews own code. |
+| **worker-claude** | Implementer + reviewer. Writes code and unit tests when assigned. Reviews PRs and design docs from other workers. |
+| **codex** | Implementer + reviewer. Writes code and unit tests when assigned. Reviews PRs and design docs from other workers. |
 | **copilot** | Reviewer only. Reviews design docs and PRs. Does not write implementation code. |
 | **opencode** | Reviewer only. Reviews design docs and PRs. Does not write implementation code. |
 
@@ -96,33 +96,6 @@ fi
 **Recovery**: If a worker crashes during a parallel task, the task remains in the group SET as `pending`. `GroupWait` will timeout, reporting the stuck task. Use `task requeue-stale` or `task cancel` + re-enqueue. `task requeue-stale` works identically for group tasks. After a retry group completes, `group-wait` updates thread status based on the retry outcome.
 
 **Lock gate-check**: `EnqueueGroup` uses `SET NX` → immediate `DEL` (with 10s TTL fallback) to gate on the sequential phase being complete. The gate-check lock is released immediately so subsequent group enqueues succeed. If the process crashes between `SET NX` and `DEL`, the 10s TTL prevents blocking sequential enqueues for the full `LockTTL` (2100s). Recovery: `task unlock --thread <id>`.
-
-#### V1 interim: sub-threads (zero code changes)
-
-If task groups are not yet available, sub-threads per reviewer work today with zero code changes:
-
-```bash
-THREAD="my-feature"
-
-# Create a sub-thread per reviewer
-task thread-create --id "$THREAD-review-copilot"
-task thread-create --id "$THREAD-review-opencode"
-task thread-create --id "$THREAD-review-codex"
-task thread-create --id "$THREAD-review-claude"
-
-# Fan out — each sub-thread has its own lock, naturally parallel
-T1=$(task enqueue --worker copilot  --thread "$THREAD-review-copilot"  --instruction "..." | jq -r .task_id)
-T2=$(task enqueue --worker opencode --thread "$THREAD-review-opencode" --instruction "..." | jq -r .task_id)
-T3=$(task enqueue --worker codex    --thread "$THREAD-review-codex"    --instruction "..." | jq -r .task_id)
-T4=$(task enqueue --worker claude   --thread "$THREAD-review-claude"   --instruction "..." | jq -r .task_id)
-
-# Wait for all
-for tid in "$T1" "$T2" "$T3" "$T4"; do
-  task wait --id "$tid" --timeout 600
-done
-```
-
-**Advantages**: Ships today with zero code changes. Per-reviewer thread isolation gives clean history and independent debugging. If one reviewer fails, retry just that sub-thread.
 
 ## Commands
 
@@ -237,3 +210,66 @@ See `.env.example` for all variables. Key ones:
 - `REDIS_HOST` / `REDIS_PORT` — Redis connection (task queue)
 - `CLOUDFLARED_TUNNEL_TOKEN` — Cloudflare Tunnel token for web UI access
 - Docker image overrides (compose-level): `WORKER_CLAUDE_IMAGE`, `WORKER_COPILOT_IMAGE`, `WORKER_OPENCODE_IMAGE`, `WORKER_CODEX_IMAGE`, `MASTER_AGENT_IMAGE`, `MOON_BRIDGE_IMAGE`
+
+## Debugging
+
+### Quick reference
+
+| Need | Command |
+|------|---------|
+| Thread diagnosis | `task why --thread <id>` |
+| Task lifecycle | `task status --id <task-id>` |
+| Thread events | `task thread-state --id <thread-id>` |
+| System events | `task events --limit 50` |
+| Worker instances | `curl -H "Authorization: Bearer $WEBUI_API_KEY" http://localhost:8000/api/workers/<type>/instances` |
+| Health check | `curl http://localhost:8000/api/diagnostics` |
+
+### Common workflows
+
+**"Why is this thread stuck?"**
+```bash
+task why --thread <id>
+# Look at: lock_state, stuck_tasks, recent_events
+```
+
+**"Did the task actually start?"**
+```bash
+task status --id <task-id>
+# Check: enqueued_at, started_at, last_started_at, retry_count
+```
+
+**"Which worker ran this and where?"**
+```bash
+task status --id <task-id>
+# Check: worker_hostname
+```
+
+**"Why was this task cancelled?"**
+```bash
+task status --id <task-id>
+# Check: cancelled_by, cancelled_at, cancelled_previous_status
+```
+
+**"What happened in this thread?"**
+```bash
+task thread-state --id <thread-id>
+# Check: task summary by status, recent events tail (last 20)
+```
+
+**"What happened across the system?"**
+```bash
+task events --limit 100
+# Or: curl "http://localhost:8000/api/events?limit=100"
+```
+
+**"Is anything broken right now?"**
+```bash
+curl http://localhost:8000/api/diagnostics
+# Check: stale_tasks, locks, queue_depths, redis_memory
+```
+
+**"Which instances of a worker type are running?"**
+```bash
+curl -H "Authorization: Bearer $WEBUI_API_KEY" http://localhost:8000/api/workers/claude/instances
+# Returns per-hostname data: uptime, tasks_processed, current_task_id, queue_depth
+```
