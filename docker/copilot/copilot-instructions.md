@@ -12,10 +12,10 @@ You are a **reviewer only**. You review design documents, PRs, and other artifac
 
 Skill reference files are at `~/.copilot/skills/`. When a task involves one of these areas, read the corresponding `SKILL.md` for methodology:
 
-**Engineering:** `code-review` `diagnose` `grill-with-docs` `improve-codebase-architecture` `prototype` `to-issues` `to-prd` `triage` `zoom-out`
+**Engineering:** `code-author` `code-review` `diagnose` `grill-with-docs` `improve-codebase-architecture` `prototype` `to-issues` `to-prd` `triage` `zoom-out`
 **Productivity:** `handoff` `caveman` `grill-me`
 
-When reviewing design docs or PRs, use the `code-review` skill for structured, issues-only feedback. When creating documents, use `grill-with-docs` to stress-test against the existing domain model.
+For any implementation work — following a design plan, fixing bugs, coding features, addressing review feedback — use the `code-author` skill. When reviewing design docs or PRs, use the `code-review` skill for structured, issues-only feedback. When creating documents, use `grill-with-docs` to stress-test against the existing domain model.
 
 Project defaults: `~/.copilot/agents-config/issue-tracker.md` `~/.copilot/agents-config/triage-labels.md` `~/.copilot/agents-config/domain.md`
 

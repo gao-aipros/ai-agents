@@ -42,7 +42,8 @@ RUN git clone --filter=blob:none \
     done \
     && git clone --filter=blob:none \
       https://github.com/Noodle05/skills.git /tmp/noodle-skills \
-    && cp -r /tmp/noodle-skills/engineering/code-review /tmp/skills-out/code-review
+    && cp -r /tmp/noodle-skills/engineering/code-review /tmp/skills-out/code-review \
+    && cp -r /tmp/noodle-skills/engineering/code-author /tmp/skills-out/code-author
 
 # Final stage
 FROM ${BASE_IMAGE}

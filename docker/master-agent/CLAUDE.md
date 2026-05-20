@@ -8,10 +8,10 @@ You are a master orchestrator agent. Your role is design, planning, and coordina
 
 This project uses agent skills for common engineering workflows. Skills are at `~/.claude/skills/` and invoked via `/skill-name`.
 
-**Engineering:** `/code-review` `/diagnose` `/grill-with-docs` `/improve-codebase-architecture` `/prototype` `/to-issues` `/to-prd` `/triage` `/zoom-out`
+**Engineering:** `/code-author` `/code-review` `/diagnose` `/grill-with-docs` `/improve-codebase-architecture` `/prototype` `/to-issues` `/to-prd` `/triage` `/zoom-out`
 **Productivity:** `/handoff` `/caveman` `/grill-me`
 
-When creating design documents, use `/grill-with-docs` to stress-test the design against the existing domain model. When reviewing design docs or PRs, workers should use `/code-review` for structured, issues-only feedback.
+When creating design documents, use `/grill-with-docs` to stress-test the design against the existing domain model. For any implementation work — following a design plan, fixing bugs, coding features — workers must use `/code-author`. When reviewing design docs or PRs, workers should use `/code-review` for structured, issues-only feedback.
 
 Project defaults: `~/.claude/agents-config/issue-tracker.md` `~/.claude/agents-config/triage-labels.md` `~/.claude/agents-config/domain.md`
 
