@@ -58,11 +58,17 @@ func (c *Client) GetWorkerStats(ctx context.Context) (WorkerStats, error) {
 				continue
 			}
 			workerType := parts[1]
-			// hostname := parts[2]
+			hostname := parts[2]
 
 			// Check TTL — keys without TTL are stale
 			ttl, err := c.rdb.TTL(ctx, key).Result()
 			if err != nil || ttl <= 0 {
+				// Best-effort event: worker_offline on expired heartbeat
+				c.PushSystemEvent(ctx, &Event{
+					Type:           EventWorkerOffline,
+					WorkerType:     workerType,
+					WorkerHostname: hostname,
+				})
 				continue
 			}
 

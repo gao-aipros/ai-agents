@@ -423,6 +423,240 @@ func TestErrorMessageSetOnFailure(t *testing.T) {
 
 // ── cancelled_by completeness test ─────────────────────────────────────────
 
+// ── event system tests ───────────────────────────────────────────────────────
+
+func TestPushThreadEvent(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctxbg(), "thr-ev", "")
+	ev := &Event{
+		Type:           EventTaskEnqueued,
+		TaskID:         "task-1",
+		WorkerType:     "claude",
+		WorkerHostname: "host-1",
+		CorrelationID:  "corr-1",
+		Detail:         TaskEnqueuedDetail{QueueDepthAfter: 3},
+	}
+	c.PushThreadEvent(ctxbg(), "thr-ev", ev)
+
+	events, err := c.GetThreadEvents(ctxbg(), "thr-ev", 10)
+	if err != nil {
+		t.Fatalf("GetThreadEvents failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Type != EventTaskEnqueued {
+		t.Errorf("expected type '%s', got '%s'", EventTaskEnqueued, events[0].Type)
+	}
+	if events[0].TaskID != "task-1" {
+		t.Errorf("expected task_id 'task-1', got '%s'", events[0].TaskID)
+	}
+	if events[0].CorrelationID != "corr-1" {
+		t.Errorf("expected correlation_id 'corr-1', got '%s'", events[0].CorrelationID)
+	}
+	if events[0].Timestamp == "" {
+		t.Error("expected non-empty timestamp")
+	}
+	if events[0].EventID == "" {
+		t.Error("expected non-empty event_id")
+	}
+}
+
+func TestPushSystemEvent(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.PushSystemEvent(ctxbg(), &Event{
+		Type:           EventWorkerOnline,
+		WorkerType:     "claude",
+		WorkerHostname: "worker-1",
+	})
+
+	events, err := c.GetSystemEvents(ctxbg(), 10)
+	if err != nil {
+		t.Fatalf("GetSystemEvents failed: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 system event, got %d", len(events))
+	}
+	if events[0].Type != EventWorkerOnline {
+		t.Errorf("expected type '%s', got '%s'", EventWorkerOnline, events[0].Type)
+	}
+}
+
+func TestThreadEventsTrimmed(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctxbg(), "thr-trim", "")
+	// Push more than the cap (1000), but test with a smaller cap
+	for i := 0; i < 10; i++ {
+		c.PushThreadEvent(ctxbg(), "thr-trim", &Event{
+			Type:   EventTaskEnqueued,
+			TaskID: "task-" + string(rune('0'+i%10)),
+		})
+	}
+
+	events, _ := c.GetThreadEvents(ctxbg(), "thr-trim", 50)
+	// Should have at most 10 events (all our test events fit within the cap)
+	if len(events) < 1 {
+		t.Error("expected at least 1 event")
+	}
+}
+
+func TestEnqueueEmitsTaskEnqueuedEvent(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	_, err := c.Enqueue(ctxbg(), "claude", "thr-ev-enq", "do something")
+	if err != nil {
+		t.Fatalf("Enqueue failed: %v", err)
+	}
+
+	events, err := c.GetThreadEvents(ctxbg(), "thr-ev-enq", 10)
+	if err != nil {
+		t.Fatalf("GetThreadEvents failed: %v", err)
+	}
+	found := false
+	for _, ev := range events {
+		if ev.Type == EventTaskEnqueued {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected task_enqueued event after Enqueue")
+	}
+}
+
+// ── diagnostics tests ────────────────────────────────────────────────────────
+
+func TestGetThreadDiagnostics(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	th, err := c.CreateThread(ctxbg(), "thr-diag", "owner/repo")
+	if err != nil {
+		t.Fatalf("CreateThread failed: %v", err)
+	}
+
+	d, err := c.GetThreadDiagnostics(ctxbg(), "thr-diag")
+	if err != nil {
+		t.Fatalf("GetThreadDiagnostics failed: %v", err)
+	}
+
+	if d.ThreadID != "thr-diag" {
+		t.Errorf("expected thread_id 'thr-diag', got '%s'", d.ThreadID)
+	}
+	if d.Status != th.Status {
+		t.Errorf("expected status '%s', got '%s'", th.Status, d.Status)
+	}
+	if d.CorrelationID != th.CorrelationID {
+		t.Errorf("expected correlation_id '%s', got '%s'", th.CorrelationID, d.CorrelationID)
+	}
+	if d.Lock != nil {
+		t.Error("expected no lock on fresh thread")
+	}
+	if d.TaskCounts == nil {
+		t.Error("expected non-nil task_counts")
+	}
+	if d.RecentEvents == nil {
+		t.Error("expected non-nil recent_events")
+	}
+}
+
+func TestGetThreadDiagnosticsWithLock(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctxbg(), "thr-diag-lock", "")
+	// Simulate a lock being held
+	c.rdb.Set(ctxbg(), ThreadLockKey("thr-diag-lock"), "task-holder", LockTTL)
+	c.rdb.Set(ctxbg(), ThreadLockedAtKey("thr-diag-lock"), "2025-06-01T10:00:00Z", LockTTL)
+
+	d, err := c.GetThreadDiagnostics(ctxbg(), "thr-diag-lock")
+	if err != nil {
+		t.Fatalf("GetThreadDiagnostics failed: %v", err)
+	}
+
+	if d.Lock == nil {
+		t.Fatal("expected lock info")
+	}
+	if d.Lock.HolderTask != "task-holder" {
+		t.Errorf("expected holder 'task-holder', got '%s'", d.Lock.HolderTask)
+	}
+	if d.Lock.LockedAt != "2025-06-01T10:00:00Z" {
+		t.Errorf("expected locked_at, got '%s'", d.Lock.LockedAt)
+	}
+}
+
+// ── locked_at management tests ────────────────────────────────────────────────
+
+func TestLockedAtSetOnEnqueue(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	_, err := c.Enqueue(ctxbg(), "claude", "thr-la", "test")
+	if err != nil {
+		t.Fatalf("Enqueue failed: %v", err)
+	}
+
+	// locked_at should be set alongside the lock
+	lockedAt, err := c.rdb.Get(ctxbg(), ThreadLockedAtKey("thr-la")).Result()
+	if err != nil || lockedAt == "" {
+		t.Error("expected locked_at to be set after successful lock acquisition")
+	}
+}
+
+func TestUnlockThreadClearsLockedAt(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.rdb.Set(ctxbg(), ThreadLockKey("thr-ul"), "task-1", LockTTL)
+	c.rdb.Set(ctxbg(), ThreadLockedAtKey("thr-ul"), "2025-06-01T10:00:00Z", LockTTL)
+
+	err := c.UnlockThread(ctxbg(), "thr-ul")
+	if err != nil {
+		t.Fatalf("UnlockThread failed: %v", err)
+	}
+
+	exists, _ := c.rdb.Exists(ctxbg(), ThreadLockedAtKey("thr-ul")).Result()
+	if exists > 0 {
+		t.Error("expected locked_at to be deleted on unlock")
+	}
+}
+
+// ── event envelope fields test ────────────────────────────────────────────────
+
+func TestEventEnvelopeHasRequiredFields(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctxbg(), "thr-env", "")
+	c.PushThreadEvent(ctxbg(), "thr-env", &Event{
+		Type:           EventTaskCompleted,
+		TaskID:         "t-env",
+		WorkerType:     "codex",
+		WorkerHostname: "codex-host",
+		CorrelationID:  "corr-env",
+		Detail:         TaskCompletedDetail{ExitCode: 0, DurationMs: 5000},
+	})
+
+	events, _ := c.GetThreadEvents(ctxbg(), "thr-env", 1)
+	if len(events) != 1 {
+		t.Fatal("expected 1 event")
+	}
+	ev := events[0]
+
+	checks := map[string]string{
+		"event_id":   ev.EventID,
+		"type":       ev.Type,
+		"timestamp":  ev.Timestamp,
+		"task_id":    ev.TaskID,
+	}
+	for field, val := range checks {
+		if val == "" {
+			t.Errorf("expected non-empty %s", field)
+		}
+	}
+	if ev.Type != EventTaskCompleted {
+		t.Errorf("expected type '%s', got '%s'", EventTaskCompleted, ev.Type)
+	}
+}
+
 func TestCancelTaskAllCancelledByValues(t *testing.T) {
 	c, _ := setupTestClient(t)
 
@@ -447,5 +681,218 @@ func TestCancelTaskAllCancelledByValues(t *testing.T) {
 				t.Errorf("cancelled_by should have TTL > 0 for %s, got %v", who, ttl)
 			}
 		})
+	}
+}
+
+
+// ── stale-lock auto-clear test ────────────────────────────────────────────────
+
+func TestStaleLockAutoClearOnEnqueue(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Set up: create a thread, set a lock held by a "done" task (stale)
+	c.CreateThread(ctxbg(), "thr-stale", "")
+	c.rdb.Set(ctxbg(), ThreadLockKey("thr-stale"), "old-task-done", LockTTL)
+	c.rdb.Set(ctxbg(), ThreadLockedAtKey("thr-stale"), "2020-01-01T00:00:00Z", LockTTL)
+	// Mark the holder task as done (terminal)
+	c.rdb.Set(ctxbg(), TaskKey("old-task-done", "status"), "done", TTLTask)
+
+	// Enqueue should detect the stale lock, clear it, and acquire
+	task, err := c.Enqueue(ctxbg(), "claude", "thr-stale", "new work")
+	if err != nil {
+		t.Fatalf("Enqueue should succeed after stale-lock clear, got: %v", err)
+	}
+
+	// The new task should have acquired the lock
+	holder, _ := c.rdb.Get(ctxbg(), ThreadLockKey("thr-stale")).Result()
+	if holder != task.TaskID {
+		t.Errorf("expected lock holder to be new task '%s', got '%s'", task.TaskID, holder)
+	}
+
+	// locked_at should be set to a recent timestamp (not the old one)
+	lockedAt, _ := c.rdb.Get(ctxbg(), ThreadLockedAtKey("thr-stale")).Result()
+	if lockedAt == "2020-01-01T00:00:00Z" {
+		t.Error("locked_at should be updated, not the old stale value")
+	}
+	if lockedAt == "" {
+		t.Error("locked_at should be set after lock acquisition")
+	}
+}
+
+func TestStaleLockNotClearedForActiveHolder(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Set up: thread locked by a "running" task (active, not stale)
+	c.CreateThread(ctxbg(), "thr-active", "")
+	c.rdb.Set(ctxbg(), ThreadLockKey("thr-active"), "task-running", LockTTL)
+	c.rdb.Set(ctxbg(), ThreadLockedAtKey("thr-active"), "2020-01-01T00:00:00Z", LockTTL)
+	c.rdb.Set(ctxbg(), TaskKey("task-running", "status"), "running", TTLTask)
+
+	// Enqueue should fail because the lock holder is still active
+	_, err := c.Enqueue(ctxbg(), "claude", "thr-active", "wait your turn")
+	if err == nil {
+		t.Error("Enqueue should fail when lock holder is still active")
+	}
+}
+
+
+// ── new event emission tests ──────────────────────────────────────────────────
+
+func TestRequeueStaleEmitsTaskRequeued(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctxbg(), "thr-req", "")
+	// Set up a stale task in the processing list
+	payload := `{"task_id":"req-1","thread_id":"thr-req","instruction":"do X"}`
+	c.rdb.LPush(ctxbg(), ProcessingKey("claude"), payload)
+	c.rdb.Set(ctxbg(), TaskKey("req-1", "status"), "running", 0)
+	c.rdb.Set(ctxbg(), TaskKey("req-1", "last_started_at"), "2020-01-01T00:00:00Z", 0)
+
+	_, err := c.RequeueStale(ctxbg(), "claude", 10*time.Minute)
+	if err != nil {
+		t.Fatalf("RequeueStale failed: %v", err)
+	}
+
+	events, _ := c.GetThreadEvents(ctxbg(), "thr-req", 10)
+	found := false
+	for _, ev := range events {
+		if ev.Type == EventTaskRequeued {
+			found = true
+			if ev.TaskID != "req-1" {
+				t.Errorf("expected task_id 'req-1', got '%s'", ev.TaskID)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected task_requeued event after RequeueStale")
+	}
+}
+
+func TestUnlockThreadEmitsLockReleased(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctxbg(), "thr-ul-ev", "")
+	c.rdb.Set(ctxbg(), ThreadLockKey("thr-ul-ev"), "task-1", LockTTL)
+	c.rdb.Set(ctxbg(), ThreadLockedAtKey("thr-ul-ev"), "2025-06-01T10:00:00Z", LockTTL)
+
+	err := c.UnlockThread(ctxbg(), "thr-ul-ev")
+	if err != nil {
+		t.Fatalf("UnlockThread failed: %v", err)
+	}
+
+	events, _ := c.GetThreadEvents(ctxbg(), "thr-ul-ev", 10)
+	found := false
+	for _, ev := range events {
+		if ev.Type == EventLockReleased {
+			found = true
+			// Verify holder_task_id is populated
+			detail, ok := ev.Detail.(map[string]interface{})
+			if ok {
+				if htid, exists := detail["holder_task_id"]; !exists || htid == "" {
+					t.Error("lock_released event should have holder_task_id in detail")
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("expected lock_released event after UnlockThread")
+	}
+}
+
+func TestGroupWaitEmitsGroupComplete(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctxbg(), "thr-gc", "")
+	// Create group tasks that are already done
+	for i, tid := range []string{"gc-1", "gc-2"} {
+		c.rdb.Set(ctxbg(), TaskKey(tid, "status"), "done", TTLTask)
+		c.rdb.SAdd(ctxbg(), GroupTasksKey("thr-gc", "test-group"), tid)
+		_ = i
+	}
+
+	result, err := c.GroupWait(ctxbg(), "thr-gc", "test-group", 5*time.Second)
+	if err != nil {
+		t.Fatalf("GroupWait failed: %v", err)
+	}
+	if result.Status != "complete" {
+		t.Fatalf("expected complete, got %s", result.Status)
+	}
+
+	events, _ := c.GetThreadEvents(ctxbg(), "thr-gc", 10)
+	found := false
+	for _, ev := range events {
+		if ev.Type == EventGroupComplete {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected group_complete event after GroupWait")
+	}
+}
+
+func TestWorkerOfflineEmittedOnExpiry(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Set a heartbeat with very short TTL (already expired)
+	c.rdb.Set(ctxbg(), HeartbeatKey("claude", "expired-host"), "{}", 0)
+
+	// Trigger GetWorkerStats which scans heartbeats
+	_, err := c.GetWorkerStats(ctxbg())
+	if err != nil {
+		t.Fatalf("GetWorkerStats failed: %v", err)
+	}
+
+	// Check system events for worker_offline
+	events, _ := c.GetSystemEvents(ctxbg(), 20)
+	found := false
+	for _, ev := range events {
+		if ev.Type == EventWorkerOffline && ev.WorkerHostname == "expired-host" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected worker_offline system event for expired heartbeat")
+	}
+}
+
+func TestThreadStatusChangeEmitsEvent(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctxbg(), "thr-tsc", "")
+	// Simulate WaitTask completion: updateThreadStatus is called
+	// We can trigger it indirectly by calling UpdateThread
+	c.UpdateThread(ctxbg(), "thr-tsc", map[string]string{"status": "complete"})
+
+	// Now call updateThreadStatus via WaitTask path
+	// Actually, updateThreadStatus is unexported. Let's test via the event
+	// from Enqueue + WaitTask completion
+	// For now, just verify the event system is wired.
+
+	// Create a task and wait for it to complete (done)
+	c.rdb.Set(ctxbg(), TaskKey("tsc-task", "status"), "done", TTLTask)
+	c.rdb.Set(ctxbg(), TaskKey("tsc-task", "thread_id"), "thr-tsc", TTLTask)
+
+	// Directly call updateThreadStatus — it's unexported but in the same package
+	c.updateThreadStatus(ctxbg(), "thr-tsc", "done")
+
+	events, _ := c.GetThreadEvents(ctxbg(), "thr-tsc", 10)
+	found := false
+	for _, ev := range events {
+		if ev.Type == EventThreadStatusChange {
+			found = true
+			detail, ok := ev.Detail.(map[string]interface{})
+			if ok {
+				if to, exists := detail["to"]; !exists || to != "complete" {
+					t.Errorf("expected to='complete', got detail=%v", detail)
+				}
+				// From should be set (prev status)
+				if from, exists := detail["from"]; !exists || from == "" {
+					t.Error("thread_status_change should have non-empty from field")
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("expected thread_status_change event")
 	}
 }

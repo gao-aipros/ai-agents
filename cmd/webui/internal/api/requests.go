@@ -4,7 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -59,7 +59,7 @@ func (rs *requestsResource) submit(w http.ResponseWriter, r *http.Request) {
 		if re, ok := err.(*request.RequestError); ok {
 			Error(w, re.Status, re.Message)
 		} else {
-			log.Printf("[webui] submit error: %v", err)
+			slog.Warn(fmt.Sprintf("[webui] submit error: %v", err))
 			Error(w, http.StatusInternalServerError, "internal error")
 		}
 		return
@@ -90,7 +90,7 @@ func (rs *requestsResource) cancel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := rs.client.CancelRequest(r.Context(), threadID); err != nil {
-		log.Printf("[webui] cancel request redis error thread=%s: %v", threadID, err)
+		slog.Warn(fmt.Sprintf("[webui] cancel request redis error thread=%s: %v", threadID, err))
 	}
 
 	Respond(w, r, http.StatusOK, map[string]string{"status": "cancelled"})

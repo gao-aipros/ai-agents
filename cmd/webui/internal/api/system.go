@@ -1,7 +1,8 @@
 package api
 
 import (
-	"log"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -27,7 +28,7 @@ func (sr *systemResource) health(w http.ResponseWriter, r *http.Request) {
 
 	workers, err := sr.client.GetWorkerStats(r.Context())
 	if err != nil {
-		log.Printf("[webui] health GetWorkerStats error: %v", err)
+		slog.Warn(fmt.Sprintf("[webui] health GetWorkerStats error: %v", err))
 	}
 
 	Respond(w, r, http.StatusOK, map[string]interface{}{
@@ -46,35 +47,37 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 	counterKeys := []string{"stats:task_total", "stats:task_done", "stats:task_failed", "stats:task_cancelled"}
 	vals, err := rdb.MGet(ctx, counterKeys...).Result()
 	if err != nil {
-		log.Printf("[webui] stats counters error: %v", err)
+		slog.Warn(fmt.Sprintf("[webui] stats counters error: %v", err))
 		Error(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
-	toInt := func(v interface{}) int {
+	toInt := func(v interface{}) (int, bool) {
 		if v == nil {
-			return 0
+			return 0, true // key not set yet, valid zero
 		}
 		s, ok := v.(string)
 		if !ok {
-			log.Printf("[webui] stats counter: unexpected type %T for value %v", v, v)
-			return 0
+			slog.Warn("stats counter: unexpected type", "type", fmt.Sprintf("%T", v), "value", v)
+			return 0, false
 		}
 		n, err := strconv.Atoi(s)
 		if err != nil {
-			log.Printf("[webui] stats counter parse error for value %q: %v", s, err)
+			slog.Warn("stats counter parse error", "value", s, "error", err)
+			return 0, false
 		}
-		return n
+		return n, true
 	}
-	total := toInt(vals[0])
-	done := toInt(vals[1])
-	failed := toInt(vals[2])
-	cancelled := toInt(vals[3])
+	total, totalOK := toInt(vals[0])
+	done, doneOK := toInt(vals[1])
+	failed, failedOK := toInt(vals[2])
+	cancelled, cancelledOK := toInt(vals[3])
+	countersOK := totalOK && doneOK && failedOK && cancelledOK
 
 	// running = size of active_tasks hash
 	running, err := rdb.HLen(ctx, "active_tasks").Result()
 	if err != nil {
-		log.Printf("[webui] stats: active_tasks HLen error: %v", err)
+		slog.Warn(fmt.Sprintf("[webui] stats: active_tasks HLen error: %v", err))
 		running = 0
 	}
 
@@ -91,19 +94,25 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	successRate := 0.0
-	if done+failed > 0 {
+	if countersOK && done+failed > 0 {
 		successRate = float64(done) / float64(done+failed) * 100
 	}
 
-	Respond(w, r, http.StatusOK, map[string]interface{}{
-		"tasks_enqueued_ever": total,
-		"done":               done,
-		"failed":             failed,
-		"cancelled":          cancelled,
-		"running":            int(running),
-		"pending":            int(pending),
-		"success_rate":       successRate,
-		"queue_depths":     queueDepths,
-		"active_requests":  sr.handler.ActiveRequests(),
-	})
+	resp := map[string]interface{}{
+		"done":                 done,
+		"failed":               failed,
+		"cancelled":            cancelled,
+		"running":              int(running),
+		"pending":              int(pending),
+		"avg_duration_sec":     nil,
+		"queue_depths":         queueDepths,
+		"active_requests":      sr.handler.ActiveRequests(),
+	}
+	if countersOK {
+		resp["total_tasks"] = total
+		resp["tasks_enqueued_ever"] = total
+		resp["success_rate"] = successRate
+	}
+	Respond(w, r, http.StatusOK, resp)
+
 }

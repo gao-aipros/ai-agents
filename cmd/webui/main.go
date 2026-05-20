@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -19,8 +21,32 @@ import (
 )
 
 func main() {
-	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
-	log.SetPrefix("[webui] ")
+	logLevel := new(slog.LevelVar)
+	switch strings.ToLower(os.Getenv("LOG_LEVEL")) {
+	case "debug":
+		logLevel.Set(slog.LevelDebug)
+	case "warn", "warning":
+		logLevel.Set(slog.LevelWarn)
+	case "error":
+		logLevel.Set(slog.LevelError)
+	default:
+		logLevel.Set(slog.LevelInfo)
+	}
+	replaceAttr := func(groups []string, a slog.Attr) slog.Attr {
+		if a.Key == slog.LevelKey {
+			return slog.String("level", strings.ToLower(a.Value.String()))
+		}
+		if a.Key == slog.TimeKey {
+			return slog.String("ts", a.Value.Time().UTC().Format(time.RFC3339))
+		}
+		return a
+	}
+	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+		Level:       logLevel,
+		ReplaceAttr: replaceAttr,
+	})
+	log := slog.New(handler).With("component", "webui")
+	slog.SetDefault(log)
 
 	cfg := request.DefaultConfig()
 	port := env.String("WEBUI_PORT", "8000")
@@ -33,26 +59,28 @@ func main() {
 	})
 
 	if err := rdb.Ping(context.Background()).Err(); err != nil {
-		log.Fatalf("redis connection failed: %v", err)
+		log.Error("redis connection failed", "error", err)
+		os.Exit(1)
 	}
-	log.Printf("connected to redis at %s:%s", redisHost, redisPort)
+	log.Info("connected to redis", "host", redisHost, "port", redisPort)
 
 	client := tasklib.NewClient(rdb)
-	handler := request.New(client, cfg)
+	reqHandler := request.New(client, cfg)
 
 	// Template renderer
 	renderer, err := templates.New()
 	if err != nil {
-		log.Fatalf("template init failed: %v", err)
+		log.Error("template init failed", "error", err)
+		os.Exit(1)
 	}
-	log.Printf("templates loaded (theme=%s)", renderer.Theme)
+	log.Info("templates loaded", "theme", renderer.Theme)
 
 	// Background context for rate limiter cleanup goroutines.
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	defer bgCancel()
 
 	// Build chi router with page routes, API endpoints, and static files
-	router := api.NewRouter(client, handler, renderer, bgCtx)
+	router := api.NewRouter(client, reqHandler, renderer, bgCtx)
 
 	srv := &http.Server{
 		Addr:    ":" + port,
@@ -64,20 +92,21 @@ func main() {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 		sig := <-sigCh
-		log.Printf("received signal %v, shutting down", sig)
+		log.Info("received signal, shutting down", "signal", sig)
 
 		bgCancel() // stop rate limiter cleanup goroutines
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownGrace)
 		defer cancel()
 
-		handler.Shutdown(shutdownCtx)
+		reqHandler.Shutdown(shutdownCtx)
 		srv.Shutdown(shutdownCtx)
 	}()
 
-	log.Printf("listening on :%s (max concurrent requests: %d)", port, cfg.MaxConcurrent)
+	log.Info("listening", "port", port, "max_concurrent", cfg.MaxConcurrent)
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-		log.Fatalf("server error: %v", err)
+		log.Error("server error", "error", err)
+		os.Exit(1)
 	}
-	log.Printf("server stopped")
+	log.Info("server stopped")
 }

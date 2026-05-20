@@ -2,7 +2,8 @@ package api
 
 import (
 	"encoding/json"
-	"log"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -99,11 +100,11 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 
 	running, err := tr.client.IsRequestRunning(r.Context(), threadID)
 	if err != nil {
-		log.Printf("[webui] IsRequestRunning error thread=%s: %v", threadID, err)
+		slog.Warn(fmt.Sprintf("[webui] IsRequestRunning error thread=%s: %v", threadID, err))
 	}
 	complete, err := tr.client.IsThreadComplete(r.Context(), threadID)
 	if err != nil {
-		log.Printf("[webui] IsThreadComplete error thread=%s: %v", threadID, err)
+		slog.Warn(fmt.Sprintf("[webui] IsThreadComplete error thread=%s: %v", threadID, err))
 	}
 
 	if IsHTMX(r) {
@@ -115,7 +116,7 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 	} else {
 		messages, err := tr.client.GetThreadHistoryTail(r.Context(), threadID, 20)
 		if err != nil {
-			log.Printf("[webui] thread history tail error thread=%s: %v", threadID, err)
+			slog.Warn(fmt.Sprintf("[webui] thread history tail error thread=%s: %v", threadID, err))
 			messages = nil
 		}
 		Respond(w, r, http.StatusOK, map[string]interface{}{
@@ -210,12 +211,12 @@ func (tr *threadsResource) deleteWorkspace(w http.ResponseWriter, r *http.Reques
 
 	wp := workspacePath(threadID)
 	if err := removeWorkspace(wp); err != nil {
-		log.Printf("[webui] workspace delete error thread=%s dir=%s: %v", threadID, wp, err)
+		slog.Warn(fmt.Sprintf("[webui] workspace delete error thread=%s dir=%s: %v", threadID, wp, err))
 		serverError(w, "failed to delete workspace", err)
 		return
 	}
 
-	log.Printf("[webui] workspace deleted thread=%s", threadID)
+	slog.Info(fmt.Sprintf("[webui] workspace deleted thread=%s", threadID))
 	Respond(w, r, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -310,12 +311,12 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 	// removes the key that GetThreadSessionID reads.
 	sessionID, err := tr.client.GetThreadSessionID(r.Context(), threadID)
 	if err != nil {
-		log.Printf("[webui] get session id error thread=%s: %v", threadID, err)
+		slog.Warn(fmt.Sprintf("[webui] get session id error thread=%s: %v", threadID, err))
 	}
 
 	// Delete thread-level Redis keys before files, so if it fails files remain intact.
 	if err := tr.client.DeleteThread(cleanupContext(), threadID); err != nil {
-		log.Printf("[webui] delete thread keys error thread=%s: %v", threadID, err)
+		slog.Warn(fmt.Sprintf("[webui] delete thread keys error thread=%s: %v", threadID, err))
 		serverError(w, "failed to delete thread", err)
 		return
 	}
@@ -323,7 +324,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 	// Delete workspace files if they exist.
 	wp := workspacePath(threadID)
 	if err := removeWorkspace(wp); err != nil {
-		log.Printf("[webui] workspace delete error thread=%s dir=%s: %v", threadID, wp, err)
+		slog.Warn(fmt.Sprintf("[webui] workspace delete error thread=%s dir=%s: %v", threadID, wp, err))
 	}
 
 	// Delete session file.
@@ -331,7 +332,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 		removeSessionFile(sessionID)
 	}
 
-	log.Printf("[webui] thread deleted thread=%s", threadID)
+	slog.Info(fmt.Sprintf("[webui] thread deleted thread=%s", threadID))
 	Respond(w, r, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -354,11 +355,11 @@ func (tr *threadsResource) resetSession(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := tr.client.SetThreadSessionID(r.Context(), threadID, ""); err != nil {
-		log.Printf("[webui] clear session id error thread=%s: %v", threadID, err)
+		slog.Warn(fmt.Sprintf("[webui] clear session id error thread=%s: %v", threadID, err))
 		serverError(w, "internal error", err)
 		return
 	}
 
-	log.Printf("[webui] session reset thread=%s", threadID)
+	slog.Info(fmt.Sprintf("[webui] session reset thread=%s", threadID))
 	Respond(w, r, http.StatusOK, map[string]string{"status": "session reset"})
 }

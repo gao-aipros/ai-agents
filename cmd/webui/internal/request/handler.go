@@ -6,7 +6,7 @@ import (
 	crand "crypto/rand"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,7 +51,7 @@ type Handler struct {
 	client *tasklib.Client
 	cfg    Config
 	sem    chan struct{}
-	logger *log.Logger
+	logger *slog.Logger
 
 	mu      sync.Mutex
 	cancels map[string]context.CancelFunc // threadID -> cancel
@@ -67,7 +67,7 @@ func New(client *tasklib.Client, cfg Config) *Handler {
 		client:  client,
 		cfg:     cfg,
 		sem:     make(chan struct{}, cfg.MaxConcurrent),
-		logger:  log.New(os.Stderr, "[request] ", log.LstdFlags),
+		logger:  slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})).With("component", "request"),
 		cancels: make(map[string]context.CancelFunc),
 	}
 }
@@ -162,7 +162,7 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 		if sessionFileExists(h.cfg.ClaudeSessionsDir, sessionID) {
 			useResume = true
 		} else {
-			h.logger.Printf("thread=%s session file missing for %s, generating fresh session", threadID, sessionID)
+			h.logger.Info(fmt.Sprintf("thread=%s session file missing for %s, generating fresh session", threadID, sessionID))
 			sessionID = ""
 		}
 	}
@@ -195,10 +195,10 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 	// Clear previous completion state and mark thread as running.
 	// Must happen before the UI polls the thread state.
 	if err := h.client.ClearThreadComplete(ctx, threadID); err != nil {
-		h.logger.Printf("thread=%s ClearThreadComplete error: %v", threadID, err)
+		h.logger.Info(fmt.Sprintf("thread=%s ClearThreadComplete error: %v", threadID, err))
 	}
 	if err := h.client.UpdateThread(ctx, threadID, map[string]string{"status": "running"}); err != nil {
-		h.logger.Printf("thread=%s UpdateThread error: %v", threadID, err)
+		h.logger.Info(fmt.Sprintf("thread=%s UpdateThread error: %v", threadID, err))
 	}
 
 	// Register the cancel function for external cancellation
@@ -240,7 +240,7 @@ func (h *Handler) Cancel(threadID string) error {
 // Shutdown gracefully stops all in-flight subprocesses. It cancels all
 // running requests and waits up to cfg.ShutdownGrace for them to exit.
 func (h *Handler) Shutdown(ctx context.Context) error {
-	h.logger.Printf("shutting down, cancelling in-flight requests")
+	h.logger.Info(fmt.Sprintf("shutting down, cancelling in-flight requests"))
 
 	h.mu.Lock()
 	for threadID, cancel := range h.cancels {
@@ -257,9 +257,9 @@ func (h *Handler) Shutdown(ctx context.Context) error {
 
 	select {
 	case <-done:
-		h.logger.Printf("all in-flight requests completed")
+		h.logger.Info(fmt.Sprintf("all in-flight requests completed"))
 	case <-ctx.Done():
-		h.logger.Printf("shutdown timeout exceeded, some requests may still be running")
+		h.logger.Info(fmt.Sprintf("shutdown timeout exceeded, some requests may still be running"))
 		return ctx.Err()
 	}
 	return nil
@@ -284,7 +284,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 	defer h.wg.Done()
 	defer func() {
 		if r := recover(); r != nil {
-			h.logger.Printf("panic in subprocess goroutine thread=%s: %v", threadID, r)
+			h.logger.Warn(fmt.Sprintf("panic in subprocess goroutine thread=%s: %v", threadID, r))
 			h.writeErrorMessage(ctx, threadID, fmt.Sprintf("internal error: panic in handler: %v", r))
 		}
 	}()
@@ -306,7 +306,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		}
 	}()
 
-	h.logger.Printf("thread=%s request=%s spawning claude -p", threadID, requestID)
+	h.logger.Info(fmt.Sprintf("thread=%s request=%s spawning claude -p", threadID, requestID))
 
 	cmd := exec.CommandContext(ctx, h.cfg.ClaudePath, args...)
 	cmd.Dir = filepath.Join(h.cfg.WorkspaceDir, threadID)
@@ -383,7 +383,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 
 		var msg streamMessage
 		if err := json.Unmarshal(line, &msg); err != nil {
-			h.logger.Printf("thread=%s unparseable stream-json line: %v", threadID, err)
+			h.logger.Info(fmt.Sprintf("thread=%s unparseable stream-json line: %v", threadID, err))
 			continue
 		}
 
@@ -417,7 +417,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		h.logger.Printf("thread=%s stdout scanner error: %v", threadID, err)
+		h.logger.Info(fmt.Sprintf("thread=%s stdout scanner error: %v", threadID, err))
 	}
 
 	// Wait for the process to exit (or kill it if timeout/cancelled).
@@ -454,7 +454,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 
 		// Log stderr for debugging
 		if errContent != "" {
-			h.logger.Printf("thread=%s claude stderr: %s", threadID, errContent)
+			h.logger.Info(fmt.Sprintf("thread=%s claude stderr: %s", threadID, errContent))
 		}
 
 		if errContent == "" {
@@ -503,7 +503,7 @@ func (h *Handler) handleAssistantMessage(ctx context.Context, threadID string, m
 }
 
 func (h *Handler) writeResponseMessage(ctx context.Context, threadID, content string) {
-	h.logger.Printf("thread=%s completed successfully", threadID)
+	h.logger.Info(fmt.Sprintf("thread=%s completed successfully", threadID))
 
 	cleanCtx, cleanCancel := cleanupCtx()
 	defer cleanCancel()
@@ -523,7 +523,7 @@ func (h *Handler) writeResponseMessage(ctx context.Context, threadID, content st
 }
 
 func (h *Handler) writeErrorMessage(ctx context.Context, threadID, content string) {
-	h.logger.Printf("thread=%s error: %s", threadID, content)
+	h.logger.Warn(fmt.Sprintf("thread=%s error: %s", threadID, content))
 
 	cleanCtx, cleanCancel := cleanupCtx()
 	defer cleanCancel()
@@ -545,7 +545,7 @@ func (h *Handler) writeErrorMessage(ctx context.Context, threadID, content strin
 // completeThread marks the thread complete without appending a message.
 // Used when the final result matches the last assistant message (dedup).
 func (h *Handler) completeThread(ctx context.Context, threadID string) {
-	h.logger.Printf("thread=%s completed successfully (dedup)", threadID)
+	h.logger.Info(fmt.Sprintf("thread=%s completed successfully (dedup)", threadID))
 
 	cleanCtx, cleanCancel := cleanupCtx()
 	defer cleanCancel()
