@@ -28,6 +28,9 @@ type Config struct {
 	MaxConcurrent     int
 	ShutdownGrace     time.Duration
 	WorkspaceDir      string
+	// OutputFormat controls the claude -p output mode: "text" (plain -p) or
+	// "stream-json" (--output-format stream-json --verbose). Default "text".
+	OutputFormat string
 	// TestNotify is an optional channel that receives the thread ID when
 	// a background subprocess completes. Only used in tests.
 	TestNotify chan string
@@ -42,12 +45,13 @@ func DefaultConfig() Config {
 		MaxConcurrent:     env.Int("MAX_CONCURRENT_REQUESTS", 5),
 		ShutdownGrace:     time.Duration(env.Int("REQUEST_SHUTDOWN_GRACE", 60)) * time.Second,
 		WorkspaceDir:      env.String("WORKSPACE_DIR", "/workspace"),
+		OutputFormat:      env.String("CLAUDE_OUTPUT_FORMAT", "text"),
 	}
 }
 
 // Handler manages claude -p subprocess lifecycles. It spawns one-shot claude
-// invocations per user request, parses the stream-json output, and writes
-// results to Redis via the tasklib client.
+// invocations per user request, reads stdout, and writes results to Redis via
+// the tasklib client.
 type Handler struct {
 	client *tasklib.Client
 	cfg    Config
@@ -108,12 +112,9 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 	}
 
 	// Create thread if it doesn't exist.
-	// Note: two concurrent Submit calls for the same new thread may both
-	// see ThreadExists=false and both call CreateThread. This is harmless:
-	// HSET is idempotent (last write wins, only updated_at changes).
 	exists, err := h.client.ThreadExists(ctx, threadID)
 	if err != nil {
-		<-h.sem // release semaphore slot
+		<-h.sem
 		return nil, fmt.Errorf("check thread exists: %w", err)
 	}
 	if !exists {
@@ -159,7 +160,6 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 
 	useResume := false
 	if sessionID != "" {
-		// Check if the session file still exists
 		if sessionFileExists(h.cfg.ClaudeSessionsDir, sessionID) {
 			useResume = true
 		} else {
@@ -177,11 +177,12 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 		}
 	}
 
-	// Build claude -p command. -p consumes the next argument as the prompt,
-	// so it must come after all other flags and be followed by the prompt text.
-	args := []string{
-		"--dangerously-skip-permissions",
-		"--output-format", "stream-json", "--verbose",
+	// Build claude -p command. In "text" mode (default) we use plain -p
+	// with no --output-format flag. In "stream-json" mode we add
+	// --output-format stream-json --verbose for backward compatibility.
+	args := []string{"--dangerously-skip-permissions"}
+	if h.cfg.OutputFormat == "stream-json" {
+		args = append(args, "--output-format", "stream-json", "--verbose")
 	}
 	if useResume {
 		args = append(args, "--resume", sessionID)
@@ -194,7 +195,6 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 	procCtx, cancel := context.WithTimeout(context.Background(), h.cfg.RequestTimeout)
 
 	// Clear previous completion state and mark thread as running.
-	// Must happen before the UI polls the thread state.
 	if err := h.client.ClearThreadComplete(ctx, threadID); err != nil {
 		h.logger.Info(fmt.Sprintf("thread=%s ClearThreadComplete error: %v", threadID, err))
 	}
@@ -210,7 +210,6 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 	h.wg.Add(1)
 	go h.runSubprocess(procCtx, cancel, threadID, requestID, args)
 
-	// Update last activity
 	h.client.UpdateThreadLastActivity(ctx, threadID)
 
 	return &SubmitResult{
@@ -220,9 +219,7 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 	}, nil
 }
 
-// Cancel cancels a running request for the given thread. It calls cancel()
-// on the subprocess context, which sends SIGTERM to claude -p. The background
-// goroutine detects the cancellation and writes an error message.
+// Cancel cancels a running request for the given thread.
 func (h *Handler) Cancel(threadID string) error {
 	h.mu.Lock()
 	cancel, ok := h.cancels[threadID]
@@ -238,8 +235,7 @@ func (h *Handler) Cancel(threadID string) error {
 	return ErrNoRunningRequest
 }
 
-// Shutdown gracefully stops all in-flight subprocesses. It cancels all
-// running requests and waits up to cfg.ShutdownGrace for them to exit.
+// Shutdown gracefully stops all in-flight subprocesses.
 func (h *Handler) Shutdown(ctx context.Context) error {
 	h.logger.Info(fmt.Sprintf("shutting down, cancelling in-flight requests"))
 
@@ -271,10 +267,7 @@ func (h *Handler) ActiveRequests() int {
 	return len(h.sem)
 }
 
-// cleanupCtx returns a context with a 30s deadline for Redis cleanup
-// operations. Using context.Background() in cleanup paths risks blocking
-// indefinitely if Redis is unreachable, leaking the semaphore slot and
-// per-thread request lock.
+// cleanupCtx returns a context with a 30s deadline for Redis cleanup operations.
 func cleanupCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 30*time.Second)
 }
@@ -316,10 +309,6 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		return
 	}
 
-	// Session files are stored in ~/.claude/projects/ by default.
-	// The Docker volume claude_sessions is mounted at ~/.claude so
-	// sessions persist across restarts — no extra env vars needed.
-
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		h.writeErrorMessage(ctx, threadID, fmt.Sprintf("failed to create stdout pipe: %v", err))
@@ -337,13 +326,11 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		return
 	}
 
-	// Check for cancellation before processing output
 	if h.isCancelled(ctx) {
 		return
 	}
 
-	// Read stdout line by line, parse stream-json.
-	// stderr is collected in a background goroutine for error reporting.
+	// Read stderr in a background goroutine for error reporting.
 	var stderrMu sync.Mutex
 	var stderrWg sync.WaitGroup
 	var lastStderr strings.Builder
@@ -357,7 +344,6 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 			stderrMu.Lock()
 			lastStderr.WriteString(line)
 			lastStderr.WriteByte('\n')
-			// Keep only the last 4KB
 			if lastStderr.Len() > 4096 {
 				s := lastStderr.String()
 				lastStderr.Reset()
@@ -370,19 +356,84 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		}
 	}()
 
-	completed := false
-	lastWritten := "" // dedup: skip response if identical to last assistant message
+	// Read stdout. In "text" mode (default) we accumulate plain text and write
+	// each line as a "plan" message for real-time UI updates. In "stream-json"
+	// mode we dispatch JSON messages (rollback path). The respective method
+	// may write response/error messages directly for stream-json.
+	var fullStdout strings.Builder
+	if h.cfg.OutputFormat == "stream-json" {
+		h.processStreamJSON(ctx, threadID, stdout, &fullStdout)
+	} else {
+		h.processPlainText(ctx, threadID, stdout, &fullStdout)
+	}
+
+	// Wait for the process to exit (or kill it if timeout/cancelled).
+	var waitErr error
+	if ctx.Err() != nil {
+		done := make(chan struct{})
+		go func() {
+			waitErr = cmd.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			cmd.Process.Signal(syscall.SIGKILL)
+			<-done
+		}
+	} else {
+		waitErr = cmd.Wait()
+	}
+
+	// Wait for stderr collector to finish now that the pipe is closed.
+	stderrWg.Wait()
+
+	// For plain text mode, determine completion from exit code.
+	// stream-json mode already wrote its response/error message in processStreamJSON.
+	if h.cfg.OutputFormat != "stream-json" {
+		if ctx.Err() == context.DeadlineExceeded {
+			h.writeErrorMessage(ctx, threadID, fmt.Sprintf("Master agent timed out after %s", h.cfg.RequestTimeout))
+		} else if ctx.Err() == context.Canceled {
+			h.writeErrorMessage(ctx, threadID, "Request cancelled")
+		} else if waitErr != nil {
+			stderrMu.Lock()
+			errContent := strings.TrimSpace(lastStderr.String())
+			stderrMu.Unlock()
+			if errContent == "" {
+				errContent = fmt.Sprintf("claude exited with error: %v", waitErr)
+			}
+			h.logger.Info(fmt.Sprintf("thread=%s claude stderr: %s", threadID, errContent))
+			h.writeErrorMessage(ctx, threadID, errContent)
+		} else {
+			result := strings.TrimSpace(fullStdout.String())
+			if result == "" {
+				h.writeErrorMessage(ctx, threadID, "claude exited without producing output")
+			} else {
+				h.writeResponseMessage(ctx, threadID, result)
+			}
+		}
+	}
+}
+
+// processStreamJSON reads and dispatches stream-json lines from stdout.
+// It writes plan/tool_call messages for assistant output and response/error
+// messages for the result. On return, fullStdout contains the full stdout.
+func (h *Handler) processStreamJSON(ctx context.Context, threadID string, stdout io.Reader, fullStdout *strings.Builder) {
+	lastWritten := ""
 	reader := bufio.NewReader(stdout)
 
 	for {
 		if h.isCancelled(ctx) {
-			// Process was cancelled — claude will be killed by context
 			break
 		}
 
 		rawLine, readErr := reader.ReadString('\n')
 		rawLine = strings.TrimRight(rawLine, "\r\n")
 		line := []byte(rawLine)
+		if fullStdout != nil {
+			fullStdout.WriteString(rawLine)
+			fullStdout.WriteByte('\n')
+		}
 		if len(line) == 0 {
 			if readErr != nil {
 				if readErr != io.EOF {
@@ -401,11 +452,9 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 
 		switch msg.Type {
 		case "system":
-			// init messages — discard
 			continue
 
 		case "user":
-			// tool result feedback — discard (workers write results via tasklib)
 			continue
 
 		case "assistant":
@@ -414,7 +463,6 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 			}
 
 		case "result":
-			completed = true
 			if msg.IsError {
 				errContent := msg.Result
 				if errContent == "" {
@@ -428,59 +476,41 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 			}
 		}
 	}
+}
 
+// processPlainText reads plain-text lines from stdout and accumulates them.
+// Each non-empty line is written as a "plan" message for real-time UI updates.
+// The caller handles the final response message after the process exits.
+func (h *Handler) processPlainText(ctx context.Context, threadID string, stdout io.Reader, fullStdout *strings.Builder) {
+	reader := bufio.NewReader(stdout)
 
-	// Wait for the process to exit (or kill it if timeout/cancelled).
-	// Must do this before reading lastStderr so the stderr pipe is closed
-	// and the collector goroutine has consumed all output.
-	if ctx.Err() != nil {
-		// Give claude a 10s grace period to exit on SIGTERM, then SIGKILL.
-		// Use a goroutine so cmd.Wait() is only called once (double-Wait
-		// is an error in Go's os/exec).
-		done := make(chan struct{})
-		go func() {
-			cmd.Wait()
-			close(done)
-		}()
-		select {
-		case <-done:
-		case <-time.After(10 * time.Second):
-			cmd.Process.Signal(syscall.SIGKILL)
-			<-done
-		}
-	} else {
-		cmd.Wait()
-	}
-
-	// Wait for stderr collector to finish now that the process exited
-	// and the pipe is closed.
-	stderrWg.Wait()
-
-	if !completed {
-		// Subprocess exited without emitting a result message
-		stderrMu.Lock()
-		errContent := strings.TrimSpace(lastStderr.String())
-		stderrMu.Unlock()
-
-		// Log stderr for debugging
-		if errContent != "" {
-			h.logger.Info(fmt.Sprintf("thread=%s claude stderr: %s", threadID, errContent))
+	for {
+		if h.isCancelled(ctx) {
+			break
 		}
 
-		if errContent == "" {
-			errContent = "claude exited without emitting a result message"
-		}
+		rawLine, readErr := reader.ReadString('\n')
+		rawLine = strings.TrimRight(rawLine, "\r\n")
+		if rawLine != "" {
+			if fullStdout != nil {
+				fullStdout.WriteString(rawLine)
+				fullStdout.WriteByte('\n')
+			}
 
-		if ctx.Err() == context.DeadlineExceeded {
-			errContent = fmt.Sprintf("Master agent timed out after %s", h.cfg.RequestTimeout)
-		} else if ctx.Err() == context.Canceled {
-			errContent = "Request cancelled"
+			cleanCtx, cleanCancel := cleanupCtx()
+			h.client.AppendMessage(cleanCtx, threadID, tasklib.Message{
+				Role:      "master",
+				Type:      "plan",
+				Content:   rawLine,
+				Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+			})
+			cleanCancel()
 		}
-
-		if !h.isCancelled(ctx) {
-			h.writeErrorMessage(ctx, threadID, errContent)
-		} else {
-			h.writeErrorMessage(ctx, threadID, "Request cancelled")
+		if readErr != nil {
+			if readErr != io.EOF {
+				h.logger.Info(fmt.Sprintf("thread=%s stdout reader error: %v", threadID, readErr))
+			}
+			break
 		}
 	}
 }
@@ -489,7 +519,6 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 
 // handleAssistantMessage classifies assistant output as "plan" or "tool_call"
 // and writes it to thread history for live progress display.
-// Returns the content written (empty string if nothing was written).
 func (h *Handler) handleAssistantMessage(ctx context.Context, threadID string, msg *streamMessage) string {
 	msgType := "plan"
 	if msg.Message != nil && hasToolUse(msg.Message.Content) {
@@ -553,7 +582,6 @@ func (h *Handler) writeErrorMessage(ctx context.Context, threadID, content strin
 }
 
 // completeThread marks the thread complete without appending a message.
-// Used when the final result matches the last assistant message (dedup).
 func (h *Handler) completeThread(ctx context.Context, threadID string) {
 	h.logger.Info(fmt.Sprintf("thread=%s completed successfully (dedup)", threadID))
 
@@ -570,8 +598,7 @@ func (h *Handler) isCancelled(ctx context.Context) bool {
 	return ctx.Err() != nil
 }
 
-// ValidThreadID rejects thread IDs containing path traversal sequences
-// or colons (which would break Redis key parsing in ListThreads).
+// ValidThreadID rejects thread IDs containing path traversal sequences or colons.
 func ValidThreadID(id string) bool {
 	if id == "" {
 		return false
@@ -583,11 +610,11 @@ func ValidThreadID(id string) bool {
 
 // streamMessage represents a single JSON line from claude --output-format stream-json.
 type streamMessage struct {
-	Type    string            `json:"type"`
-	Subtype string            `json:"subtype"`
-	IsError bool              `json:"is_error"`
-	Result  string            `json:"result"`
-	Message *streamAssistant  `json:"message"`
+	Type    string           `json:"type"`
+	Subtype string           `json:"subtype"`
+	IsError bool             `json:"is_error"`
+	Result  string           `json:"result"`
+	Message *streamAssistant `json:"message"`
 }
 
 type streamAssistant struct {
@@ -634,7 +661,6 @@ func sessionFileExists(sessionsDir, sessionID string) bool {
 		return false
 	}
 
-	// Session files are named <session-id>.json inside per-project directories
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -670,10 +696,6 @@ func mustUUID() string {
 	if err == nil {
 		return id
 	}
-	// Fallback: crypto/rand failure is catastrophic, but produce a valid
-	// UUID v4 so --session-id / --resume still work. crypto/rand failing
-	// here means tasklib.NewUUID() already failed the same way — try once
-	// more with a fresh read, then degrade to a deterministic suffix.
 	var b [16]byte
 	if _, err2 := crand.Read(b[:]); err2 == nil {
 		b[6] = (b[6] & 0x0f) | 0x40

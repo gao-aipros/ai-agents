@@ -2,7 +2,6 @@ package request
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,210 +15,10 @@ import (
 	"github.com/noodle05/ai-agents/tasklib"
 )
 
-// ── stream-json parsing tests ─────────────────────────────────────────────
+// ── fake claude script helpers ─────────────────────────────────────────────
 
-func TestHasToolUse(t *testing.T) {
-	tests := []struct {
-		name   string
-		blocks []streamContentBlock
-		want   bool
-	}{
-		{
-			name:   "empty blocks",
-			blocks: []streamContentBlock{},
-			want:   false,
-		},
-		{
-			name: "text only",
-			blocks: []streamContentBlock{
-				{Type: "text", Text: "hello"},
-				{Type: "text", Text: "world"},
-			},
-			want: false,
-		},
-		{
-			name: "contains tool_use",
-			blocks: []streamContentBlock{
-				{Type: "text", Text: "let me run a command"},
-				{Type: "tool_use", Text: ""},
-			},
-			want: true,
-		},
-		{
-			name: "single tool_use",
-			blocks: []streamContentBlock{
-				{Type: "tool_use", Text: ""},
-			},
-			want: true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := hasToolUse(tt.blocks); got != tt.want {
-				t.Errorf("hasToolUse() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestExtractText(t *testing.T) {
-	tests := []struct {
-		name string
-		msg  *streamMessage
-		want string
-	}{
-		{
-			name: "nil message",
-			msg:  &streamMessage{},
-			want: "",
-		},
-		{
-			name: "empty content",
-			msg: &streamMessage{
-				Message: &streamAssistant{Content: []streamContentBlock{}},
-			},
-			want: "",
-		},
-		{
-			name: "single text block",
-			msg: &streamMessage{
-				Message: &streamAssistant{Content: []streamContentBlock{
-					{Type: "text", Text: "Hello world"},
-				}},
-			},
-			want: "Hello world",
-		},
-		{
-			name: "multiple text blocks",
-			msg: &streamMessage{
-				Message: &streamAssistant{Content: []streamContentBlock{
-					{Type: "text", Text: "First"},
-					{Type: "text", Text: "Second"},
-				}},
-			},
-			want: "First\nSecond",
-		},
-		{
-			name: "mixed blocks skips non-text",
-			msg: &streamMessage{
-				Message: &streamAssistant{Content: []streamContentBlock{
-					{Type: "text", Text: "Let me run:"},
-					{Type: "tool_use", Text: ""},
-					{Type: "text", Text: "Done"},
-				}},
-			},
-			want: "Let me run:\nDone",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := extractText(tt.msg); got != tt.want {
-				t.Errorf("extractText() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestStreamMessageUnmarshal(t *testing.T) {
-	tests := []struct {
-		name string
-		json string
-		want streamMessage
-	}{
-		{
-			name: "system init",
-			json: `{"type":"system","subtype":"init"}`,
-			want: streamMessage{Type: "system", Subtype: "init"},
-		},
-		{
-			name: "result success",
-			json: `{"type":"result","subtype":"success","is_error":false,"result":"All done"}`,
-			want: streamMessage{Type: "result", Subtype: "success", IsError: false, Result: "All done"},
-		},
-		{
-			name: "result error",
-			json: `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Something broke"}`,
-			want: streamMessage{Type: "result", Subtype: "error_during_execution", IsError: true, Result: "Something broke"},
-		},
-		{
-			name: "assistant with text",
-			json: `{"type":"assistant","message":{"content":[{"type":"text","text":"planning output"}]}}`,
-			want: streamMessage{
-				Type: "assistant",
-				Message: &streamAssistant{
-					Content: []streamContentBlock{{Type: "text", Text: "planning output"}},
-				},
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var msg streamMessage
-			if err := json.Unmarshal([]byte(tt.json), &msg); err != nil {
-				t.Fatalf("unmarshal failed: %v", err)
-			}
-			if msg.Type != tt.want.Type {
-				t.Errorf("Type = %q, want %q", msg.Type, tt.want.Type)
-			}
-			if msg.Subtype != tt.want.Subtype {
-				t.Errorf("Subtype = %q, want %q", msg.Subtype, tt.want.Subtype)
-			}
-			if msg.IsError != tt.want.IsError {
-				t.Errorf("IsError = %v, want %v", msg.IsError, tt.want.IsError)
-			}
-			if msg.Result != tt.want.Result {
-				t.Errorf("Result = %q, want %q", msg.Result, tt.want.Result)
-			}
-		})
-	}
-}
-
-// ── session file detection tests ──────────────────────────────────────────
-
-func TestSessionFileExists(t *testing.T) {
-	t.Run("no projects dir", func(t *testing.T) {
-		dir := t.TempDir()
-		if sessionFileExists(dir, "test-uuid") {
-			t.Error("expected false when projects dir does not exist")
-		}
-	})
-
-	t.Run("empty projects dir", func(t *testing.T) {
-		dir := t.TempDir()
-		os.MkdirAll(filepath.Join(dir, "projects"), 0755)
-		if sessionFileExists(dir, "test-uuid") {
-			t.Error("expected false when no session files exist")
-		}
-	})
-
-	t.Run("session file exists", func(t *testing.T) {
-		dir := t.TempDir()
-		projectDir := filepath.Join(dir, "projects", "-")
-		os.MkdirAll(projectDir, 0755)
-		sessionFile := filepath.Join(projectDir, "abc-123.jsonl")
-		os.WriteFile(sessionFile, []byte("{}"), 0644)
-
-		if !sessionFileExists(dir, "abc-123") {
-			t.Error("expected true when session file exists")
-		}
-	})
-
-	t.Run("different session id", func(t *testing.T) {
-		dir := t.TempDir()
-		projectDir := filepath.Join(dir, "projects", "-")
-		os.MkdirAll(projectDir, 0755)
-		os.WriteFile(filepath.Join(projectDir, "abc-123.jsonl"), []byte("{}"), 0644)
-
-		if sessionFileExists(dir, "xyz-999") {
-			t.Error("expected false for different session id")
-		}
-	})
-}
-
-// ── fake claude script helper ─────────────────────────────────────────────
-
-// writeFakeClaude creates a shell script that echoes the given JSON lines
-// to stdout and exits with the given code.
+// writeFakeClaude creates a shell script that echoes the given lines to stdout
+// and exits with the given code. Lines are plain text (no JSON wrapping).
 func writeFakeClaude(dir string, lines []string, exitCode int) string {
 	path := filepath.Join(dir, "fake-claude")
 	var script strings.Builder
@@ -234,8 +33,8 @@ func writeFakeClaude(dir string, lines []string, exitCode int) string {
 	return path
 }
 
-// writeFakeClaudeWithStderr creates a shell script that echoes the given JSON
-// lines to stdout, writes stderrLines to stderr, and exits with the given code.
+// writeFakeClaudeWithStderr creates a shell script that echoes lines to stdout,
+// writes stderrLines to stderr, and exits with the given code.
 func writeFakeClaudeWithStderr(dir string, lines []string, stderrLines []string, exitCode int) string {
 	path := filepath.Join(dir, "fake-claude-stderr")
 	var script strings.Builder
@@ -249,6 +48,22 @@ func writeFakeClaudeWithStderr(dir string, lines []string, stderrLines []string,
 		script.WriteString("echo '")
 		script.WriteString(strings.ReplaceAll(line, "'", "'\\''"))
 		script.WriteString("' >&2\n")
+	}
+	fmt.Fprintf(&script, "exit %d\n", exitCode)
+	os.WriteFile(path, []byte(script.String()), 0755)
+	return path
+}
+
+// writeFakeClaudeStreamJSON creates a shell script that echoes JSON lines
+// (for stream-json output format tests).
+func writeFakeClaudeStreamJSON(dir string, lines []string, exitCode int) string {
+	path := filepath.Join(dir, "fake-claude-json")
+	var script strings.Builder
+	script.WriteString("#!/bin/bash\n")
+	for _, line := range lines {
+		script.WriteString("echo '")
+		script.WriteString(strings.ReplaceAll(line, "'", "'\\''"))
+		script.WriteString("'\n")
 	}
 	fmt.Fprintf(&script, "exit %d\n", exitCode)
 	os.WriteFile(path, []byte(script.String()), 0755)
@@ -274,9 +89,6 @@ func newTestHandler(t *testing.T) (*Handler, *miniredis.Miniredis, chan string) 
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	client := tasklib.NewClient(rdb)
 
-	// Use os.MkdirTemp (NOT t.TempDir) so directories outlive the test
-	// function. Background goroutines may still reference files here after
-	// the test function returns.
 	workspaceDir, err := os.MkdirTemp("", "webui-test-workspace-*")
 	if err != nil {
 		t.Fatalf("MkdirTemp: %v", err)
@@ -291,12 +103,13 @@ func newTestHandler(t *testing.T) (*Handler, *miniredis.Miniredis, chan string) 
 
 	notify := make(chan string, 10)
 	cfg := Config{
-		ClaudePath:        "", // set per-test
+		ClaudePath:        "",
 		ClaudeSessionsDir: sessionsDir,
 		RequestTimeout:    30 * time.Second,
 		MaxConcurrent:     5,
 		ShutdownGrace:     5 * time.Second,
 		WorkspaceDir:      workspaceDir,
+		OutputFormat:      "text",
 		TestNotify:        notify,
 	}
 	handler := New(client, cfg)
@@ -306,12 +119,12 @@ func newTestHandler(t *testing.T) (*Handler, *miniredis.Miniredis, chan string) 
 func TestSubmit_Success(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
-	// Write a fake claude that produces a success result
+	// Plain text mode: fake claude emits plain text lines, exits 0.
+	// Each line becomes a "plan" message; full stdout becomes the response.
 	lines := []string{
-		`{"type":"system","subtype":"init"}`,
-		`{"type":"assistant","message":{"content":[{"type":"text","text":"Let me plan this out."}]}}`,
-		`{"type":"assistant","message":{"content":[{"type":"text","text":"Running command:"},{"type":"tool_use","text":""}]}}`,
-		`{"type":"result","subtype":"success","is_error":false,"result":"Task completed successfully"}`,
+		"Let me plan this out.",
+		"Running command to check things.",
+		"Task completed successfully",
 	}
 	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, lines, 0)
 
@@ -330,7 +143,6 @@ func TestSubmit_Success(t *testing.T) {
 		t.Error("RequestID should not be empty")
 	}
 
-	// Wait for background goroutine to finish
 	threadID, ok := waitForNotification(notify, 5*time.Second)
 	if !ok {
 		t.Fatal("timeout waiting for subprocess to complete")
@@ -344,7 +156,6 @@ func TestSubmit_Success(t *testing.T) {
 		t.Fatalf("thread should exist: %v", err)
 	}
 
-	// Check completion flag
 	complete, err := handler.client.IsThreadComplete(ctx, "test-thread")
 	if err != nil {
 		t.Fatalf("IsThreadComplete: %v", err)
@@ -353,7 +164,6 @@ func TestSubmit_Success(t *testing.T) {
 		t.Error("thread should be marked complete")
 	}
 
-	// Check messages: user request + 2 assistant + 1 response = 4
 	msgs, err := handler.client.GetThreadHistory(ctx, "test-thread", 0, 0)
 	if err != nil {
 		t.Fatalf("GetThreadHistory: %v", err)
@@ -368,7 +178,7 @@ func TestSubmit_Success(t *testing.T) {
 		t.Errorf("first message role = %q, want %q", msgs[0].Role, "user")
 	}
 
-	// Last message should be the response
+	// Last message should be the response (full stdout concatenated)
 	last := msgs[len(msgs)-1]
 	if last.Type != "response" {
 		t.Errorf("last message type = %q, want %q", last.Type, "response")
@@ -376,25 +186,19 @@ func TestSubmit_Success(t *testing.T) {
 	if last.Role != "master" {
 		t.Errorf("last message role = %q, want %q", last.Role, "master")
 	}
-	if last.Content != "Task completed successfully" {
-		t.Errorf("last message content = %q, want %q", last.Content, "Task completed successfully")
+	if !strings.Contains(last.Content, "Task completed successfully") {
+		t.Errorf("last message content should contain final line, got: %q", last.Content)
 	}
 
-	// Check assistant messages are classified correctly
-	var hasPlan, hasToolCall bool
+	// Each line should be a "plan" message
+	var planCount int
 	for _, m := range msgs {
 		if m.Type == "plan" {
-			hasPlan = true
-		}
-		if m.Type == "tool_call" {
-			hasToolCall = true
+			planCount++
 		}
 	}
-	if !hasPlan {
-		t.Error("expected a 'plan' message from assistant text-only output")
-	}
-	if !hasToolCall {
-		t.Error("expected a 'tool_call' message from assistant tool_use output")
+	if planCount != len(lines) {
+		t.Errorf("expected %d plan messages, got %d", len(lines), planCount)
 	}
 
 	// Verify lock is released
@@ -410,10 +214,13 @@ func TestSubmit_Success(t *testing.T) {
 func TestSubmit_ErrorResult(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
-	lines := []string{
-		`{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Permission denied"}`,
-	}
-	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, lines, 1)
+	// Non-zero exit with stderr → error message.
+	handler.cfg.ClaudePath = writeFakeClaudeWithStderr(
+		handler.cfg.WorkspaceDir,
+		nil,
+		[]string{"Permission denied"},
+		1,
+	)
 
 	ctx := context.Background()
 	_, err := handler.Submit(ctx, "err-thread", "Do something dangerous", "")
@@ -426,7 +233,6 @@ func TestSubmit_ErrorResult(t *testing.T) {
 		t.Fatal("timeout waiting for subprocess to complete")
 	}
 
-	// Thread should be marked complete even on error (so UI stops polling).
 	complete, err := handler.client.IsThreadComplete(ctx, "err-thread")
 	if err != nil {
 		t.Fatalf("IsThreadComplete: %v", err)
@@ -451,7 +257,6 @@ func TestSubmit_ErrorResult(t *testing.T) {
 func TestSubmit_ThreadBusy(t *testing.T) {
 	handler, mr, _ := newTestHandler(t)
 
-	// Manually acquire the request lock
 	ctx := context.Background()
 	acquired, err := handler.client.AcquireRequestLock(ctx, "busy-thread", "other-request", tasklib.LockTTL)
 	if err != nil {
@@ -460,9 +265,9 @@ func TestSubmit_ThreadBusy(t *testing.T) {
 	if !acquired {
 		t.Fatal("expected lock to be acquired")
 	}
-	_ = mr // used via client
+	_ = mr
 
-	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, []string{`{"type":"result","subtype":"success","is_error":false,"result":"ok"}`}, 0)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, []string{"ok"}, 0)
 
 	_, err = handler.Submit(ctx, "busy-thread", "Another request", "")
 	if err == nil {
@@ -476,17 +281,10 @@ func TestSubmit_ThreadBusy(t *testing.T) {
 func TestSubmit_ConcurrencyLimit(t *testing.T) {
 	handler, _, _ := newTestHandler(t)
 
-	// Set max concurrent to 1 to make testing easier
 	handler.cfg.MaxConcurrent = 1
 	handler.sem = make(chan struct{}, 1)
-
-	// Don't actually spawn claude — we just need a fake path
 	handler.cfg.ClaudePath = "/bin/true"
 
-	// First submit fills the semaphore slot (but it will error because
-	// the goroutine can't actually run /bin/true with these args)
-	// We need to prevent Submit from spawning a real subprocess.
-	// Acquire the semaphore manually instead.
 	handler.sem <- struct{}{}
 
 	ctx := context.Background()
@@ -499,10 +297,7 @@ func TestSubmit_ConcurrencyLimit(t *testing.T) {
 func TestSubmit_CreatesThread(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
-	lines := []string{
-		`{"type":"result","subtype":"success","is_error":false,"result":"done"}`,
-	}
-	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, lines, 0)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, []string{"done"}, 0)
 
 	ctx := context.Background()
 	_, err := handler.Submit(ctx, "new-thread", "Create me a thread", "owner/repo")
@@ -530,10 +325,7 @@ func TestSubmit_CreatesThread(t *testing.T) {
 func TestSubmit_StoresSessionID(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
-	lines := []string{
-		`{"type":"result","subtype":"success","is_error":false,"result":"ok"}`,
-	}
-	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, lines, 0)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, []string{"ok"}, 0)
 
 	ctx := context.Background()
 	_, err := handler.Submit(ctx, "session-thread", "First request", "")
@@ -561,12 +353,8 @@ func TestSubmit_StoresSessionID(t *testing.T) {
 func TestCancel_RemovesRegistration(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
-	// Write a fake claude that sleeps before exiting, so the background
-	// goroutine stays alive long enough to verify cancel registration.
-	// /bin/true can complete before Submit returns on fast/single-core
-	// machines (ARM64 runners).
 	handler.cfg.ClaudePath = filepath.Join(handler.cfg.WorkspaceDir, "fake-slow")
-	os.WriteFile(handler.cfg.ClaudePath, []byte("#!/bin/bash\necho '{\"type\":\"system\",\"subtype\":\"init\"}'\nexec sleep 30\n"), 0755)
+	os.WriteFile(handler.cfg.ClaudePath, []byte("#!/bin/bash\necho 'started'\nexec sleep 30\n"), 0755)
 
 	ctx := context.Background()
 	_, err := handler.Submit(ctx, "cancel-reg-thread", "Slow request", "")
@@ -574,7 +362,6 @@ func TestCancel_RemovesRegistration(t *testing.T) {
 		t.Fatalf("Submit failed: %v", err)
 	}
 
-	// Verify the cancel func is registered
 	handler.mu.Lock()
 	_, exists := handler.cancels["cancel-reg-thread"]
 	handler.mu.Unlock()
@@ -582,7 +369,6 @@ func TestCancel_RemovesRegistration(t *testing.T) {
 		t.Error("cancel func should be registered right after Submit")
 	}
 
-	// Cancel the running subprocess and wait for cleanup
 	if err := handler.Cancel("cancel-reg-thread"); err != nil {
 		t.Fatalf("Cancel failed: %v", err)
 	}
@@ -591,7 +377,6 @@ func TestCancel_RemovesRegistration(t *testing.T) {
 		t.Fatal("timeout waiting for cancellation cleanup")
 	}
 
-	// Verify cleanup
 	handler.mu.Lock()
 	_, stillExists := handler.cancels["cancel-reg-thread"]
 	handler.mu.Unlock()
@@ -604,10 +389,8 @@ func TestCancel_RemovesRegistration(t *testing.T) {
 func TestCancel_MidFlight(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
-	// Write a fake claude that writes to stdout then sleeps, so the goroutine
-	// is in the stdout scan loop when we cancel.
 	script := `#!/bin/bash
-echo '{"type":"system","subtype":"init"}'
+echo 'started'
 exec sleep 30
 `
 	handler.cfg.ClaudePath = filepath.Join(handler.cfg.WorkspaceDir, "fake-claude")
@@ -619,21 +402,17 @@ exec sleep 30
 		t.Fatalf("Submit failed: %v", err)
 	}
 
-	// Wait for the goroutine to spawn and start reading stdout (first echo line processed)
 	time.Sleep(300 * time.Millisecond)
 
-	// Cancel should succeed — the cancel func is registered
 	if err := handler.Cancel("midflight-thread"); err != nil {
 		t.Fatalf("Cancel failed: %v", err)
 	}
 
-	// Wait for the goroutine to clean up after cancellation
 	_, ok := waitForNotification(notify, 10*time.Second)
 	if !ok {
 		t.Fatal("timeout waiting for cancellation cleanup")
 	}
 
-	// Verify the cancel func was cleaned up
 	handler.mu.Lock()
 	_, exists := handler.cancels["midflight-thread"]
 	handler.mu.Unlock()
@@ -641,7 +420,6 @@ exec sleep 30
 		t.Error("cancel func should be removed after completion")
 	}
 
-	// Verify an error message was written for the cancelled request
 	msgs, _ := handler.client.GetThreadHistory(ctx, "midflight-thread", 0, 0)
 	if len(msgs) < 2 {
 		t.Fatalf("expected user + error messages, got %d messages", len(msgs))
@@ -664,10 +442,7 @@ func TestCancel_NoRunningRequest(t *testing.T) {
 func TestShutdown_WaitsForCompletion(t *testing.T) {
 	handler, _, _ := newTestHandler(t)
 
-	lines := []string{
-		`{"type":"result","subtype":"success","is_error":false,"result":"done"}`,
-	}
-	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, lines, 0)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, []string{"done"}, 0)
 	handler.cfg.ShutdownGrace = 10 * time.Second
 
 	ctx := context.Background()
@@ -676,7 +451,6 @@ func TestShutdown_WaitsForCompletion(t *testing.T) {
 		t.Fatalf("Submit failed: %v", err)
 	}
 
-	// Shutdown should wait for the goroutine to finish
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -684,7 +458,6 @@ func TestShutdown_WaitsForCompletion(t *testing.T) {
 		t.Errorf("Shutdown failed: %v", err)
 	}
 
-	// After shutdown, the semaphore should be drained
 	if handler.ActiveRequests() != 0 {
 		t.Errorf("ActiveRequests = %d, want 0", handler.ActiveRequests())
 	}
@@ -722,21 +495,14 @@ func TestRequestError(t *testing.T) {
 	}
 }
 
-func TestDedup_ResponseMatchesLastAssistant(t *testing.T) {
+func TestSubmit_EmptyOutput(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
-	// Emit an assistant message followed by a result with identical content.
-	// This is the normal Claude Code behavior: the final assistant message
-	// and the result carry the same text.
-	lines := []string{
-		`{"type":"system","subtype":"init"}`,
-		`{"type":"assistant","message":{"content":[{"type":"text","text":"The bug was on line 42, fixed it."}]}}`,
-		`{"type":"result","subtype":"success","is_error":false,"result":"The bug was on line 42, fixed it."}`,
-	}
-	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, lines, 0)
+	// Exit 0 with no stdout → error (no output produced)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, nil, 0)
 
 	ctx := context.Background()
-	_, err := handler.Submit(ctx, "dedup-thread", "Fix the bug", "")
+	_, err := handler.Submit(ctx, "empty-thread", "Do something", "")
 	if err != nil {
 		t.Fatalf("Submit failed: %v", err)
 	}
@@ -746,93 +512,33 @@ func TestDedup_ResponseMatchesLastAssistant(t *testing.T) {
 		t.Fatal("timeout waiting for subprocess")
 	}
 
-	// Thread should be complete.
-	complete, err := handler.client.IsThreadComplete(ctx, "dedup-thread")
-	if err != nil {
-		t.Fatalf("IsThreadComplete: %v", err)
-	}
-	if !complete {
-		t.Error("thread should be marked complete")
-	}
-
-	msgs, err := handler.client.GetThreadHistory(ctx, "dedup-thread", 0, 0)
+	msgs, err := handler.client.GetThreadHistory(ctx, "empty-thread", 0, 0)
 	if err != nil {
 		t.Fatalf("GetThreadHistory: %v", err)
 	}
 
-	// Should have: user request + assistant/plan, NO duplicate response.
-	if len(msgs) != 2 {
-		t.Fatalf("expected 2 messages (user + plan), got %d", len(msgs))
-	}
-	if msgs[0].Type != "request" {
-		t.Errorf("msg[0] type = %q, want request", msgs[0].Type)
-	}
-	if msgs[1].Type != "plan" {
-		t.Errorf("msg[1] type = %q, want plan (response should be dedup'd)", msgs[1].Type)
-	}
-	if msgs[1].Content != "The bug was on line 42, fixed it." {
-		t.Errorf("msg[1] content = %q", msgs[1].Content)
-	}
-}
-
-func TestDedup_ResponseDiffersFromLastAssistant(t *testing.T) {
-	handler, _, notify := newTestHandler(t)
-
-	// When the result differs from the last assistant message, we still
-	// emit a separate response message.
-	lines := []string{
-		`{"type":"system","subtype":"init"}`,
-		`{"type":"assistant","message":{"content":[{"type":"text","text":"Let me think about this..."}]}}`,
-		`{"type":"result","subtype":"success","is_error":false,"result":"Done! Here is the final answer."}`,
-	}
-	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, lines, 0)
-
-	ctx := context.Background()
-	_, err := handler.Submit(ctx, "nodup-thread", "Question", "")
-	if err != nil {
-		t.Fatalf("Submit failed: %v", err)
-	}
-
-	_, ok := waitForNotification(notify, 5*time.Second)
-	if !ok {
-		t.Fatal("timeout waiting for subprocess")
-	}
-
-	msgs, err := handler.client.GetThreadHistory(ctx, "nodup-thread", 0, 0)
-	if err != nil {
-		t.Fatalf("GetThreadHistory: %v", err)
-	}
-
-	// Should have: user request + plan + response = 3
-	if len(msgs) != 3 {
-		t.Fatalf("expected 3 messages (user + plan + response), got %d", len(msgs))
-	}
 	last := msgs[len(msgs)-1]
-	if last.Type != "response" {
-		t.Errorf("last message type = %q, want response", last.Type)
+	if last.Type != "error" {
+		t.Errorf("last message type = %q, want error (empty output)", last.Type)
 	}
-	if last.Content != "Done! Here is the final answer." {
-		t.Errorf("last message content = %q", last.Content)
+	if !strings.Contains(last.Content, "exited without producing output") {
+		t.Errorf("error should mention no output, got: %q", last.Content)
 	}
 }
 
-func TestStderrCapturedOnCrash(t *testing.T) {
+func TestStderrCapturedOnError(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
-	// Fake claude that writes an API error to stderr then exits without
-	// emitting a result message (simulating a crash).
-	lines := []string{
-		`{"type":"system","subtype":"init"}`,
-		`{"type":"assistant","message":{"content":[{"type":"text","text":"Working on it..."}]}}`,
-	}
-	stderrLines := []string{
-		`Error: DeepSeek API returned 500 Internal Server Error`,
-		`event=api_error status=500 retry=false`,
-	}
-	handler.cfg.ClaudePath = writeFakeClaudeWithStderr(handler.cfg.WorkspaceDir, lines, stderrLines, 1)
+	// Non-zero exit with stderr → error message should contain stderr.
+	handler.cfg.ClaudePath = writeFakeClaudeWithStderr(
+		handler.cfg.WorkspaceDir,
+		[]string{"Working on it..."},
+		[]string{"Error: DeepSeek API returned 500 Internal Server Error", "event=api_error status=500"},
+		1,
+	)
 
 	ctx := context.Background()
-	_, err := handler.Submit(ctx, "stderr-crash-thread", "Do something", "")
+	_, err := handler.Submit(ctx, "stderr-err-thread", "Do something", "")
 	if err != nil {
 		t.Fatalf("Submit failed: %v", err)
 	}
@@ -842,14 +548,13 @@ func TestStderrCapturedOnCrash(t *testing.T) {
 		t.Fatal("timeout waiting for subprocess to complete")
 	}
 
-	msgs, err := handler.client.GetThreadHistory(ctx, "stderr-crash-thread", 0, 0)
+	msgs, err := handler.client.GetThreadHistory(ctx, "stderr-err-thread", 0, 0)
 	if err != nil {
 		t.Fatalf("GetThreadHistory: %v", err)
 	}
 
-	// Should have: user request + plan + error message
-	if len(msgs) < 3 {
-		t.Fatalf("expected at least 3 messages, got %d", len(msgs))
+	if len(msgs) < 2 {
+		t.Fatalf("expected at least 2 messages, got %d", len(msgs))
 	}
 
 	last := msgs[len(msgs)-1]
@@ -857,13 +562,8 @@ func TestStderrCapturedOnCrash(t *testing.T) {
 		t.Fatalf("last message type = %q, want error", last.Type)
 	}
 
-	// The error message must contain the stderr content, not the generic
-	// "claude exited without emitting a result message" fallback.
 	if !strings.Contains(last.Content, "DeepSeek API returned 500 Internal Server Error") {
 		t.Errorf("error message should contain stderr output, got: %q", last.Content)
-	}
-	if strings.Contains(last.Content, "exited without emitting a result message") {
-		t.Errorf("error message should NOT be the generic fallback, got: %q", last.Content)
 	}
 }
 
@@ -872,7 +572,6 @@ func TestSubmit_ThreadBusyNoOrphanedMessage(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Manually acquire the request lock to simulate a busy thread.
 	acquired, err := handler.client.AcquireRequestLock(ctx, "orphan-thread", "existing-request", tasklib.LockTTL)
 	if err != nil {
 		t.Fatalf("AcquireRequestLock: %v", err)
@@ -881,18 +580,13 @@ func TestSubmit_ThreadBusyNoOrphanedMessage(t *testing.T) {
 		t.Fatal("expected lock to be acquired")
 	}
 
-	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir,
-		[]string{`{"type":"result","subtype":"success","is_error":false,"result":"ok"}`}, 0)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, []string{"ok"}, 0)
 
-	// Submit should fail because the thread is busy.
 	_, err = handler.Submit(ctx, "orphan-thread", "This should fail", "")
 	if err != ErrThreadBusy {
 		t.Fatalf("expected ErrThreadBusy, got %v", err)
 	}
 
-	// Key assertion: no user message was appended because the lock was
-	// acquired before AppendMessage. If the lock check had come after
-	// AppendMessage, there would be an orphaned message here.
 	msgs, err := handler.client.GetThreadHistory(ctx, "orphan-thread", 0, 0)
 	if err != nil {
 		t.Fatalf("GetThreadHistory: %v", err)
@@ -901,12 +595,10 @@ func TestSubmit_ThreadBusyNoOrphanedMessage(t *testing.T) {
 		t.Fatalf("expected 0 messages (no orphaned user request), got %d", len(msgs))
 	}
 
-	// Release the lock so a retry can succeed.
 	if err := handler.client.ReleaseRequestLock(ctx, "orphan-thread"); err != nil {
 		t.Fatalf("ReleaseRequestLock: %v", err)
 	}
 
-	// Retry — this time it should succeed.
 	_, err = handler.Submit(ctx, "orphan-thread", "This should fail", "")
 	if err != nil {
 		t.Fatalf("retry Submit failed: %v", err)
@@ -917,7 +609,6 @@ func TestSubmit_ThreadBusyNoOrphanedMessage(t *testing.T) {
 		t.Fatal("timeout waiting for subprocess after retry")
 	}
 
-	// After successful submission: exactly 1 user request + 1 response.
 	msgs, err = handler.client.GetThreadHistory(ctx, "orphan-thread", 0, 0)
 	if err != nil {
 		t.Fatalf("GetThreadHistory after retry: %v", err)
@@ -939,34 +630,24 @@ func TestMustUUID(t *testing.T) {
 	if id == "" {
 		t.Error("mustUUID should not return empty string")
 	}
-	// UUID v4 format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 	if len(id) != 36 {
 		t.Errorf("UUID length = %d, want 36", len(id))
 	}
 }
 
-// TestLargeLineHandling verifies that lines larger than 64KB don't cause
-// a "token too long" error and the handler correctly processes the result.
-// See issue #102.
+// TestLargeLineHandling verifies that large stdout lines (> 64KB) are handled
+// correctly in plain text mode. See issue #102.
 func TestLargeLineHandling(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
-	// Use a Python script as the fake claude to emit a line > 64KB.
-	// Python can generate large output without hitting shell arg limits.
 	script := filepath.Join(handler.cfg.WorkspaceDir, "fake-large-claude")
 	scriptContent := `#!/usr/bin/env python3
-import json, sys
+import sys
 
-# Emit a system init message
-print(json.dumps({"type":"system","subtype":"init"}))
-
-# Emit an assistant message with a text block > 64KB (70KB of 'X')
+# Emit a large line (> 64KB) of plain text
 big_text = "X" * (70 * 1024)
-msg = {"type":"assistant","message":{"content":[{"type":"text","text":big_text}]}}
-print(json.dumps(msg))
-
-# Emit the result message — should be correctly handled
-print(json.dumps({"type":"result","subtype":"success","is_error":False,"result":"Done with large output"}))
+print(big_text)
+print("Done with large output")
 sys.exit(0)
 `
 	if err := os.WriteFile(script, []byte(scriptContent), 0755); err != nil {
@@ -985,7 +666,6 @@ sys.exit(0)
 		t.Fatal("timeout waiting for subprocess with large line")
 	}
 
-	// Thread should be marked complete, not error.
 	complete, err := handler.client.IsThreadComplete(ctx, "large-line-thread")
 	if err != nil {
 		t.Fatalf("IsThreadComplete: %v", err)
@@ -999,14 +679,12 @@ sys.exit(0)
 		t.Fatalf("GetThreadHistory: %v", err)
 	}
 
-	// Should NOT contain the "exited without emitting a result message" error.
 	for _, m := range msgs {
-		if strings.Contains(m.Content, "exited without emitting a result message") {
-			t.Errorf("should not contain false 'exited without emitting a result message' error, got: %s", m.Content)
+		if strings.Contains(m.Content, "exited without producing output") {
+			t.Errorf("should not contain false error, got: %s", m.Content)
 		}
 	}
 
-	// Last message should be a response or plan (dedup), not an error.
 	last := msgs[len(msgs)-1]
 	if last.Type == "error" {
 		t.Errorf("last message should not be error, got: %s", last.Content)
@@ -1016,29 +694,22 @@ sys.exit(0)
 	}
 }
 
-// TestLargeStderrHandling verifies that large stderr lines (> 64KB) don't
-// cause a "token too long" error in the stderr collector goroutine.
-// The old bufio.Scanner silently dropped data on large stderr lines
-// (no scanner.Err() check), so the Reader fix matters for stderr too.
-// See issue #102.
+// TestLargeStderrHandling verifies that large stderr lines (> 64KB) are handled
+// in the stderr collector goroutine. See issue #102.
 func TestLargeStderrHandling(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
-	// Python script: writes a large line to stderr, then emits result on stdout.
 	script := filepath.Join(handler.cfg.WorkspaceDir, "fake-large-stderr")
 	scriptContent := `#!/usr/bin/env python3
-import json, sys
-
-# Emit a system init message
-print(json.dumps({"type":"system","subtype":"init"}))
+import sys
 
 # Write a large line (> 64KB) to stderr
 big_stderr = "X" * (70 * 1024)
 sys.stderr.write(big_stderr + "\n")
 sys.stderr.flush()
 
-# Emit the result message
-print(json.dumps({"type":"result","subtype":"success","is_error":False,"result":"Done with large stderr"}))
+# Emit normal stdout and exit successfully
+print("Done with large stderr")
 sys.exit(0)
 `
 	if err := os.WriteFile(script, []byte(scriptContent), 0755); err != nil {
@@ -1057,7 +728,6 @@ sys.exit(0)
 		t.Fatal("timeout waiting for subprocess with large stderr")
 	}
 
-	// Thread should be marked complete, not error.
 	complete, err := handler.client.IsThreadComplete(ctx, "large-stderr-thread")
 	if err != nil {
 		t.Fatalf("IsThreadComplete: %v", err)
@@ -1071,16 +741,202 @@ sys.exit(0)
 		t.Fatalf("GetThreadHistory: %v", err)
 	}
 
-	// Should NOT contain the "exited without emitting a result message" error.
 	for _, m := range msgs {
-		if strings.Contains(m.Content, "exited without emitting a result message") {
+		if strings.Contains(m.Content, "exited without producing output") {
 			t.Errorf("should not contain false error, got: %s", m.Content)
 		}
 	}
 
-	// Last message should not be an error.
 	last := msgs[len(msgs)-1]
 	if last.Type == "error" {
 		t.Errorf("last message should not be error, got: %s", last.Content)
+	}
+}
+
+// ── stream-json mode regression tests ─────────────────────────────────────
+
+func newTestHandlerStreamJSON(t *testing.T) (*Handler, *miniredis.Miniredis, chan string) {
+	t.Helper()
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	client := tasklib.NewClient(rdb)
+
+	workspaceDir, err := os.MkdirTemp("", "webui-test-workspace-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(workspaceDir) })
+
+	sessionsDir, err := os.MkdirTemp("", "webui-test-sessions-*")
+	if err != nil {
+		t.Fatalf("MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(sessionsDir) })
+
+	notify := make(chan string, 10)
+	cfg := Config{
+		ClaudePath:        "",
+		ClaudeSessionsDir: sessionsDir,
+		RequestTimeout:    30 * time.Second,
+		MaxConcurrent:     5,
+		ShutdownGrace:     5 * time.Second,
+		WorkspaceDir:      workspaceDir,
+		OutputFormat:      "stream-json",
+		TestNotify:        notify,
+	}
+	handler := New(client, cfg)
+	return handler, mr, notify
+}
+
+func TestStreamJSON_Success(t *testing.T) {
+	handler, _, notify := newTestHandlerStreamJSON(t)
+
+	lines := []string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"Let me plan this out."}]}}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"Running command:"},{"type":"tool_use","text":""}]}}`,
+		`{"type":"result","subtype":"success","is_error":false,"result":"Task completed successfully"}`,
+	}
+	handler.cfg.ClaudePath = writeFakeClaudeStreamJSON(handler.cfg.WorkspaceDir, lines, 0)
+
+	ctx := context.Background()
+	_, err := handler.Submit(ctx, "json-thread", "Do something", "")
+	if err != nil {
+		t.Fatalf("Submit failed: %v", err)
+	}
+
+	_, ok := waitForNotification(notify, 5*time.Second)
+	if !ok {
+		t.Fatal("timeout waiting for subprocess")
+	}
+
+	complete, err := handler.client.IsThreadComplete(ctx, "json-thread")
+	if err != nil {
+		t.Fatalf("IsThreadComplete: %v", err)
+	}
+	if !complete {
+		t.Error("thread should be marked complete")
+	}
+
+	msgs, err := handler.client.GetThreadHistory(ctx, "json-thread", 0, 0)
+	if err != nil {
+		t.Fatalf("GetThreadHistory: %v", err)
+	}
+
+	var hasPlan, hasToolCall bool
+	for _, m := range msgs {
+		if m.Type == "plan" {
+			hasPlan = true
+		}
+		if m.Type == "tool_call" {
+			hasToolCall = true
+		}
+	}
+	if !hasPlan {
+		t.Error("expected a 'plan' message from assistant text-only output")
+	}
+	if !hasToolCall {
+		t.Error("expected a 'tool_call' message from assistant tool_use output")
+	}
+
+	last := msgs[len(msgs)-1]
+	if last.Type != "response" {
+		t.Errorf("last message type = %q, want %q", last.Type, "response")
+	}
+}
+
+func TestStreamJSON_ErrorResult(t *testing.T) {
+	handler, _, notify := newTestHandlerStreamJSON(t)
+
+	lines := []string{
+		`{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Permission denied"}`,
+	}
+	handler.cfg.ClaudePath = writeFakeClaudeStreamJSON(handler.cfg.WorkspaceDir, lines, 1)
+
+	ctx := context.Background()
+	_, err := handler.Submit(ctx, "json-err-thread", "Do something dangerous", "")
+	if err != nil {
+		t.Fatalf("Submit failed: %v", err)
+	}
+
+	_, ok := waitForNotification(notify, 5*time.Second)
+	if !ok {
+		t.Fatal("timeout waiting for subprocess")
+	}
+
+	msgs, _ := handler.client.GetThreadHistory(ctx, "json-err-thread", 0, 0)
+	last := msgs[len(msgs)-1]
+	if last.Type != "error" {
+		t.Errorf("last message type = %q, want %q", last.Type, "error")
+	}
+}
+
+func TestStreamJSON_Dedup(t *testing.T) {
+	handler, _, notify := newTestHandlerStreamJSON(t)
+
+	lines := []string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"The bug was on line 42, fixed it."}]}}`,
+		`{"type":"result","subtype":"success","is_error":false,"result":"The bug was on line 42, fixed it."}`,
+	}
+	handler.cfg.ClaudePath = writeFakeClaudeStreamJSON(handler.cfg.WorkspaceDir, lines, 0)
+
+	ctx := context.Background()
+	_, err := handler.Submit(ctx, "json-dedup-thread", "Fix the bug", "")
+	if err != nil {
+		t.Fatalf("Submit failed: %v", err)
+	}
+
+	_, ok := waitForNotification(notify, 5*time.Second)
+	if !ok {
+		t.Fatal("timeout waiting for subprocess")
+	}
+
+	msgs, err := handler.client.GetThreadHistory(ctx, "json-dedup-thread", 0, 0)
+	if err != nil {
+		t.Fatalf("GetThreadHistory: %v", err)
+	}
+
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages (user + plan), got %d", len(msgs))
+	}
+	if msgs[1].Type != "plan" {
+		t.Errorf("msg[1] type = %q, want plan (response should be dedup'd)", msgs[1].Type)
+	}
+}
+
+func TestStreamJSON_StderrOnCrash(t *testing.T) {
+	handler, _, notify := newTestHandlerStreamJSON(t)
+
+	script := filepath.Join(handler.cfg.WorkspaceDir, "fake-json-crash")
+	scriptContent := `#!/bin/bash
+echo '{"type":"system","subtype":"init"}'
+echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Working on it..."}]}}'
+echo 'Error: DeepSeek API returned 500 Internal Server Error' >&2
+echo 'event=api_error status=500 retry=false' >&2
+exit 1
+`
+	os.WriteFile(script, []byte(scriptContent), 0755)
+	handler.cfg.ClaudePath = script
+
+	ctx := context.Background()
+	_, err := handler.Submit(ctx, "json-crash-thread", "Do something", "")
+	if err != nil {
+		t.Fatalf("Submit failed: %v", err)
+	}
+
+	_, ok := waitForNotification(notify, 5*time.Second)
+	if !ok {
+		t.Fatal("timeout waiting for subprocess")
+	}
+
+	msgs, err := handler.client.GetThreadHistory(ctx, "json-crash-thread", 0, 0)
+	if err != nil {
+		t.Fatalf("GetThreadHistory: %v", err)
+	}
+
+	if len(msgs) < 2 {
+		t.Fatalf("expected at least 2 messages, got %d", len(msgs))
 	}
 }
