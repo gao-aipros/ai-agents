@@ -395,11 +395,20 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 	if h.cfg.OutputFormat == "stream-json" {
 		if !streamCompleted {
 			// Stream-json process exited without emitting a result message.
-			stderrMu.Lock()
-			errContent := strings.TrimSpace(lastStderr.String())
-			stderrMu.Unlock()
-			if errContent == "" {
-				errContent = fmt.Sprintf("claude exited with error: %v", waitErr)
+			var errContent string
+			if ctx.Err() == context.DeadlineExceeded {
+				errContent = fmt.Sprintf("Master agent timed out after %s", h.cfg.RequestTimeout)
+			} else if ctx.Err() == context.Canceled {
+				errContent = "Request cancelled"
+			} else {
+				stderrMu.Lock()
+				errContent = strings.TrimSpace(lastStderr.String())
+				stderrMu.Unlock()
+				if errContent == "" && waitErr != nil {
+					errContent = fmt.Sprintf("claude exited with error: %v", waitErr)
+				} else if errContent == "" {
+					errContent = "claude exited without emitting a result message"
+				}
 			}
 			h.logger.Info(fmt.Sprintf("thread=%s claude stderr: %s", threadID, errContent))
 			h.writeErrorMessage(ctx, threadID, errContent)
