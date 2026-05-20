@@ -1015,3 +1015,72 @@ sys.exit(0)
 		t.Errorf("last message role = %q, want master", last.Role)
 	}
 }
+
+// TestLargeStderrHandling verifies that large stderr lines (> 64KB) don't
+// cause a "token too long" error in the stderr collector goroutine.
+// The old bufio.Scanner silently dropped data on large stderr lines
+// (no scanner.Err() check), so the Reader fix matters for stderr too.
+// See issue #102.
+func TestLargeStderrHandling(t *testing.T) {
+	handler, _, notify := newTestHandler(t)
+
+	// Python script: writes a large line to stderr, then emits result on stdout.
+	script := filepath.Join(handler.cfg.WorkspaceDir, "fake-large-stderr")
+	scriptContent := `#!/usr/bin/env python3
+import json, sys
+
+# Emit a system init message
+print(json.dumps({"type":"system","subtype":"init"}))
+
+# Write a large line (> 64KB) to stderr
+big_stderr = "X" * (70 * 1024)
+sys.stderr.write(big_stderr + "\n")
+sys.stderr.flush()
+
+# Emit the result message
+print(json.dumps({"type":"result","subtype":"success","is_error":False,"result":"Done with large stderr"}))
+sys.exit(0)
+`
+	if err := os.WriteFile(script, []byte(scriptContent), 0755); err != nil {
+		t.Fatalf("WriteFile fake-large-stderr: %v", err)
+	}
+	handler.cfg.ClaudePath = script
+
+	ctx := context.Background()
+	_, err := handler.Submit(ctx, "large-stderr-thread", "Do something", "")
+	if err != nil {
+		t.Fatalf("Submit failed: %v", err)
+	}
+
+	_, ok := waitForNotification(notify, 10*time.Second)
+	if !ok {
+		t.Fatal("timeout waiting for subprocess with large stderr")
+	}
+
+	// Thread should be marked complete, not error.
+	complete, err := handler.client.IsThreadComplete(ctx, "large-stderr-thread")
+	if err != nil {
+		t.Fatalf("IsThreadComplete: %v", err)
+	}
+	if !complete {
+		t.Error("thread should be marked complete after large-stderr output")
+	}
+
+	msgs, err := handler.client.GetThreadHistory(ctx, "large-stderr-thread", 0, 0)
+	if err != nil {
+		t.Fatalf("GetThreadHistory: %v", err)
+	}
+
+	// Should NOT contain the "exited without emitting a result message" error.
+	for _, m := range msgs {
+		if strings.Contains(m.Content, "exited without emitting a result message") {
+			t.Errorf("should not contain false error, got: %s", m.Content)
+		}
+	}
+
+	// Last message should not be an error.
+	last := msgs[len(msgs)-1]
+	if last.Type == "error" {
+		t.Errorf("last message should not be error, got: %s", last.Content)
+	}
+}

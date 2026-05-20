@@ -1,12 +1,12 @@
 package request
 
 import (
-	"io"
 	"bufio"
 	"context"
 	crand "crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -353,19 +353,17 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		reader := bufio.NewReader(stderr)
 		for {
 			line, readErr := reader.ReadString('\n')
-			line = strings.TrimSuffix(line, "\n")
-			if line != "" {
-				stderrMu.Lock()
-				lastStderr.WriteString(line)
-				lastStderr.WriteByte('\n')
-				// Keep only the last 4KB
-				if lastStderr.Len() > 4096 {
-					s := lastStderr.String()
-					lastStderr.Reset()
-					lastStderr.WriteString(s[len(s)-4096:])
-				}
-				stderrMu.Unlock()
+			line = strings.TrimRight(line, "\r\n")
+			stderrMu.Lock()
+			lastStderr.WriteString(line)
+			lastStderr.WriteByte('\n')
+			// Keep only the last 4KB
+			if lastStderr.Len() > 4096 {
+				s := lastStderr.String()
+				lastStderr.Reset()
+				lastStderr.WriteString(s[len(s)-4096:])
 			}
+			stderrMu.Unlock()
 			if readErr != nil {
 				break
 			}
@@ -383,7 +381,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		}
 
 		rawLine, readErr := reader.ReadString('\n')
-		rawLine = strings.TrimSuffix(rawLine, "\n")
+		rawLine = strings.TrimRight(rawLine, "\r\n")
 		line := []byte(rawLine)
 		if len(line) == 0 {
 			if readErr != nil {
