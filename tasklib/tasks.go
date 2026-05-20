@@ -320,7 +320,7 @@ func (c *Client) GetTask(ctx context.Context, taskID string) (*Task, error) {
 			t.LastStartedAt = val
 		case "completed_at":
 			t.CompletedAt = val
-		case "created_at":
+		case "created_at": // TODO: remove after deploy + TTLTask (24h) migration window
 			if t.EnqueuedAt == "" {
 				t.EnqueuedAt = val
 			}
@@ -447,6 +447,7 @@ func (c *Client) ListTasks(ctx context.Context, worker, status, threadID string,
 		if task.EnqueuedAt == "" {
 			task.EnqueuedAt, _ = c.rdb.Get(ctx, TaskKey(task.TaskID, "enqueued_at")).Result()
 			if task.EnqueuedAt == "" {
+				// TODO: remove after deploy + TTLTask (24h) migration window
 				task.EnqueuedAt, _ = c.rdb.Get(ctx, TaskKey(task.TaskID, "created_at")).Result()
 				if task.EnqueuedAt == "" {
 					task.EnqueuedAt = "-"
@@ -687,6 +688,7 @@ func (c *Client) CancelTask(ctx context.Context, taskID, cancelledBy string) err
 }
 
 // RequeueStale requeues stale in-flight tasks for a given worker type.
+// Uses last_started_at for staleness detection (diverges from task.py which uses created_at).
 // Matches task.py cmd_requeue_stale behavior.
 func (c *Client) RequeueStale(ctx context.Context, worker string, olderThan time.Duration) ([]string, error) {
 	var requeued []string
