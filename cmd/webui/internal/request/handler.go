@@ -392,7 +392,21 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 	// Text mode: use exit code + accumulated stdout.
 	// Stream-json mode: rely on processStreamJSON's result message;
 	// if none arrived (crash), fall back to stderr/exit code.
-	if h.cfg.OutputFormat == "text" {
+	if h.cfg.OutputFormat == "stream-json" {
+		if !streamCompleted {
+			// Stream-json process exited without emitting a result message.
+			stderrMu.Lock()
+			errContent := strings.TrimSpace(lastStderr.String())
+			stderrMu.Unlock()
+			if errContent == "" {
+				errContent = fmt.Sprintf("claude exited with error: %v", waitErr)
+			}
+			h.logger.Info(fmt.Sprintf("thread=%s claude stderr: %s", threadID, errContent))
+			h.writeErrorMessage(ctx, threadID, errContent)
+		}
+	} else {
+		// Text mode (and any unrecognized mode, including "" default):
+		// use exit code + accumulated stdout.
 		if ctx.Err() == context.DeadlineExceeded {
 			h.writeErrorMessage(ctx, threadID, fmt.Sprintf("Master agent timed out after %s", h.cfg.RequestTimeout))
 		} else if ctx.Err() == context.Canceled {
@@ -414,16 +428,6 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 				h.writeResponseMessage(ctx, threadID, result)
 			}
 		}
-	} else if !streamCompleted {
-		// Stream-json process exited without emitting a result message.
-		stderrMu.Lock()
-		errContent := strings.TrimSpace(lastStderr.String())
-		stderrMu.Unlock()
-		if errContent == "" {
-			errContent = fmt.Sprintf("claude exited with error: %v", waitErr)
-		}
-		h.logger.Info(fmt.Sprintf("thread=%s claude stderr: %s", threadID, errContent))
-		h.writeErrorMessage(ctx, threadID, errContent)
 	}
 }
 

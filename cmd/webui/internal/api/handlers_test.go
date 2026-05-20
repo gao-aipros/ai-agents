@@ -64,6 +64,7 @@ func newTestRouter(t *testing.T) *testHarness {
 		MaxConcurrent:     5,
 		ShutdownGrace:     5 * time.Second,
 		WorkspaceDir:      workspaceDir,
+			OutputFormat:      "text",
 		TestNotify:        notify,
 	}
 
