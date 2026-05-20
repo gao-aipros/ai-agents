@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -61,8 +63,8 @@ func makeMsg(role, content, ts string, taskID string) string {
 	return string(data)
 }
 
-func newLogger() *logger {
-	return &logger{worker: testWorker}
+func newLogger() *slog.Logger {
+	return slog.New(slog.NewJSONHandler(io.Discard, nil)).With("worker", testWorker)
 }
 
 // ── mock execCommand ──────────────────────────────────────────────────────────

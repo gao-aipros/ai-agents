@@ -3,7 +3,8 @@ package api
 import (
 	"bytes"
 	"encoding/json"
-	"log"
+	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/noodle05/ai-agents/cmd/webui/internal/templates"
@@ -33,7 +34,7 @@ func IsHTMX(r *http.Request) bool {
 func Page(w http.ResponseWriter, r *templates.Renderer, contentTemplate string, data interface{}) {
 	var buf bytes.Buffer
 	if err := r.Page(&buf, contentTemplate, data); err != nil {
-		log.Printf("[webui] template page error: %v", err)
+		slog.Warn(fmt.Sprintf("[webui] template page error: %v", err))
 		Error(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
@@ -46,7 +47,7 @@ func Page(w http.ResponseWriter, r *templates.Renderer, contentTemplate string, 
 func Partial(w http.ResponseWriter, r *templates.Renderer, name string, data interface{}) {
 	var buf bytes.Buffer
 	if err := r.Partial(&buf, name, data); err != nil {
-		log.Printf("[webui] template partial %s error: %v", name, err)
+		slog.Warn(fmt.Sprintf("[webui] template partial %s error: %v", name, err))
 		Error(w, http.StatusInternalServerError, "internal server error")
 		return
 	}

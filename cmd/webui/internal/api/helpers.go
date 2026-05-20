@@ -3,7 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -47,7 +47,7 @@ func removeSessionFile(sessionID string) {
 	projectsDir := filepath.Join(claudeSessionsDir, "projects")
 	entries, err := os.ReadDir(projectsDir)
 	if err != nil {
-		log.Printf("[webui] removeSessionFile ReadDir error: %v", err)
+		slog.Warn(fmt.Sprintf("[webui] removeSessionFile ReadDir error: %v", err))
 		return
 	}
 	for _, entry := range entries {
@@ -70,7 +70,7 @@ func removeSessionFile(sessionID string) {
 // Prevents internal details (Redis addresses, filesystem paths, etc.)
 // from leaking to API consumers.
 func serverError(w http.ResponseWriter, msg string, err error) {
-	log.Printf("[webui] %s: %v", msg, err)
+	slog.Warn(fmt.Sprintf("[webui] %s: %v", msg, err))
 	Error(w, http.StatusInternalServerError, msg)
 }
 

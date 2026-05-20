@@ -1,7 +1,8 @@
 package api
 
 import (
-	"log"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -27,7 +28,7 @@ func (sr *systemResource) health(w http.ResponseWriter, r *http.Request) {
 
 	workers, err := sr.client.GetWorkerStats(r.Context())
 	if err != nil {
-		log.Printf("[webui] health GetWorkerStats error: %v", err)
+		slog.Warn(fmt.Sprintf("[webui] health GetWorkerStats error: %v", err))
 	}
 
 	Respond(w, r, http.StatusOK, map[string]interface{}{
@@ -46,7 +47,7 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 	counterKeys := []string{"stats:task_total", "stats:task_done", "stats:task_failed", "stats:task_cancelled"}
 	vals, err := rdb.MGet(ctx, counterKeys...).Result()
 	if err != nil {
-		log.Printf("[webui] stats counters error: %v", err)
+		slog.Warn(fmt.Sprintf("[webui] stats counters error: %v", err))
 		Error(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -57,12 +58,12 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 		}
 		s, ok := v.(string)
 		if !ok {
-			log.Printf("[webui] stats counter: unexpected type %T for value %v", v, v)
+			slog.Warn(fmt.Sprintf("[webui] stats counter: unexpected type %T for value %v", v, v))
 			return 0
 		}
 		n, err := strconv.Atoi(s)
 		if err != nil {
-			log.Printf("[webui] stats counter parse error for value %q: %v", s, err)
+			slog.Warn(fmt.Sprintf("[webui] stats counter parse error for value %q: %v", s, err))
 		}
 		return n
 	}
@@ -74,7 +75,7 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 	// running = size of active_tasks hash
 	running, err := rdb.HLen(ctx, "active_tasks").Result()
 	if err != nil {
-		log.Printf("[webui] stats: active_tasks HLen error: %v", err)
+		slog.Warn(fmt.Sprintf("[webui] stats: active_tasks HLen error: %v", err))
 		running = 0
 	}
 

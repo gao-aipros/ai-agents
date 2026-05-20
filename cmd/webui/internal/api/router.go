@@ -3,7 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -48,18 +48,23 @@ func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templ
 
 	r.Route("/api", func(r chi.Router) {
 		sys := &systemResource{client: client, handler: handler}
+		diag := &diagnosticsResource{client: client}
+		evt := &eventsResource{client: client}
 		wrk := &workersResource{client: client, renderer: renderer}
 		req := &requestsResource{client: client, handler: handler, renderer: renderer}
 		thr := &threadsResource{client: client, renderer: renderer}
 		tsk := &tasksResource{client: client, renderer: renderer}
 
-		// Health / stats
+		// Health / stats / diagnostics / events
 		r.Get("/health", sys.health)
 		r.Get("/stats", sys.stats)
+		r.Get("/diagnostics", diag.get)
+		r.Get("/events", evt.systemEvents)
 
 		// Workers
 		r.Get("/workers", wrk.list)
 		r.Get("/workers/{worker_type}", wrk.get)
+		r.Get("/workers/{worker_type}/instances", wrk.instances)
 
 		// Requests — strict rate limits
 		r.With(rateLimitMiddleware(requestsLimiter), maxBytesMiddleware(32*1024)).
@@ -72,6 +77,7 @@ func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templ
 		r.Get("/threads", thr.list)
 		r.Get("/threads/{thread_id}", thr.get)
 		r.Get("/threads/{thread_id}/history", thr.history)
+		r.Get("/threads/{thread_id}/events", evt.threadEvents)
 		r.With(rateLimitMiddleware(defaultLimiter)).
 			Delete("/threads/{thread_id}", thr.deleteThread)
 		r.With(rateLimitMiddleware(defaultLimiter)).
@@ -112,7 +118,7 @@ func (pr *pageResource) dashboard(w http.ResponseWriter, r *http.Request) {
 func (pr *pageResource) threadList(w http.ResponseWriter, r *http.Request) {
 	threads, err := pr.client.ListThreads(r.Context())
 	if err != nil {
-		log.Printf("[webui] thread list page error: %v", err)
+		slog.Warn(fmt.Sprintf("[webui] thread list page error: %v", err))
 		threads = nil
 	}
 	Page(w, pr.renderer, "page-thread-list", map[string]interface{}{
@@ -139,7 +145,7 @@ func (pr *pageResource) threadDetail(w http.ResponseWriter, r *http.Request) {
 
 	thread, err := pr.client.GetThread(r.Context(), threadID)
 	if err != nil {
-		log.Printf("[webui] thread detail page error: %v", err)
+		slog.Warn(fmt.Sprintf("[webui] thread detail page error: %v", err))
 		Page(w, pr.renderer, "page-thread-detail", map[string]interface{}{"Thread": nil})
 		return
 	}

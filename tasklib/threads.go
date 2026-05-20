@@ -229,7 +229,7 @@ func (c *Client) IsThreadLocked(ctx context.Context, threadID string) (bool, err
 
 // UnlockThread releases a thread lock. Safe to call multiple times (DEL is idempotent).
 func (c *Client) UnlockThread(ctx context.Context, threadID string) error {
-	return c.rdb.Del(ctx, ThreadLockKey(threadID)).Err()
+	return c.rdb.Del(ctx, ThreadLockKey(threadID), ThreadLockedAtKey(threadID)).Err()
 }
 
 // SetActiveTask adds or updates an entry in the active_tasks hash.
@@ -328,6 +328,102 @@ func ParseThreadUpdateFields(status, design, pr string) map[string]string {
 		fields["gh_pr_number"] = pr
 	}
 	return fields
+}
+
+// ThreadDiagnostics aggregates diagnostic information for a thread.
+type ThreadDiagnostics struct {
+	ThreadID       string          `json:"thread_id"`
+	Status         string          `json:"status"`
+	UpdatedAt      string          `json:"updated_at"`
+	CorrelationID  string          `json:"correlation_id"`
+	LastError      string          `json:"last_error,omitempty"`
+	Lock           *LockInfo       `json:"lock,omitempty"`
+	TaskCounts     map[string]int  `json:"task_counts"`
+	RecentEvents   []Event         `json:"recent_events"`
+	StuckTasks     []StuckTaskInfo `json:"stuck_tasks,omitempty"`
+}
+
+// LockInfo describes a thread lock.
+type LockInfo struct {
+	HolderTask  string `json:"holder_task"`
+	LockedAt    string `json:"locked_at,omitempty"`
+	HeldSeconds int64  `json:"held_seconds,omitempty"`
+}
+
+// StuckTaskInfo describes a task that has been running too long.
+type StuckTaskInfo struct {
+	TaskID       string `json:"task_id"`
+	Worker       string `json:"worker"`
+	StartedAt    string `json:"started_at"`
+	StaleMinutes int64  `json:"stale_minutes"`
+}
+
+// GetThreadDiagnostics collects diagnostic information for a thread.
+func (c *Client) GetThreadDiagnostics(ctx context.Context, threadID string) (*ThreadDiagnostics, error) {
+	thread, err := c.GetThread(ctx, threadID)
+	if err != nil {
+		return nil, err
+	}
+
+	d := &ThreadDiagnostics{
+		ThreadID:      threadID,
+		Status:        thread.Status,
+		UpdatedAt:     thread.UpdatedAt,
+		CorrelationID: thread.CorrelationID,
+		TaskCounts:    make(map[string]int),
+	}
+
+	// Lock state
+	holder, err := c.rdb.Get(ctx, ThreadLockKey(threadID)).Result()
+	if err == nil && holder != "" {
+		d.Lock = &LockInfo{HolderTask: holder}
+		lockedAt, err := c.rdb.Get(ctx, ThreadLockedAtKey(threadID)).Result()
+		if err == nil && lockedAt != "" {
+			d.Lock.LockedAt = lockedAt
+			if t, err := time.Parse("2006-01-02T15:04:05Z", lockedAt); err == nil {
+				d.Lock.HeldSeconds = int64(time.Since(t).Seconds())
+			}
+		}
+	}
+
+	// Task counts by status + find last error
+	tasks, err := c.ListTasks(ctx, "", "", threadID, 200, 0)
+	if err == nil {
+		for _, t := range tasks {
+			d.TaskCounts[t.Status]++
+			if t.Status == "failed" && d.LastError == "" {
+				if t.ErrorMessage != "" {
+					d.LastError = t.ErrorMessage
+				} else if t.Result != "" {
+					d.LastError = t.Result
+				}
+			}
+		}
+	}
+
+	// Recent events
+	events, _ := c.GetThreadEvents(ctx, threadID, 20)
+	d.RecentEvents = events
+	if d.RecentEvents == nil {
+		d.RecentEvents = []Event{}
+	}
+
+	// Stuck tasks (running > 30 min)
+	for _, t := range tasks {
+		if t.Status == "running" && t.StartedAt != "" {
+			started, err := time.Parse("2006-01-02T15:04:05Z", t.StartedAt)
+			if err == nil && time.Since(started) > 30*time.Minute {
+				d.StuckTasks = append(d.StuckTasks, StuckTaskInfo{
+					TaskID:       t.TaskID,
+					Worker:       t.Worker,
+					StartedAt:    t.StartedAt,
+					StaleMinutes: int64(time.Since(started).Minutes()),
+				})
+			}
+		}
+	}
+
+	return d, nil
 }
 
 // ParsePRNumber converts a string PR number to int (for CLI usage).

@@ -36,6 +36,8 @@ var (
 	listStatus         string
 	listThread         string
 	listLimit          int
+	listVerbose       bool
+	whyThread         string
 	waitID             string
 	waitTimeout        int
 	requeueWorker      string
@@ -122,6 +124,7 @@ func main() {
 	listCmd.Flags().StringVar(&listStatus, "status", "", "")
 	listCmd.Flags().StringVar(&listThread, "thread", "", "")
 	listCmd.Flags().IntVar(&listLimit, "limit", 50, "")
+	listCmd.Flags().BoolVar(&listVerbose, "verbose", false, "")
 	root.AddCommand(listCmd)
 
 	// ── task wait ───────────────────────────────────────────────────────
@@ -230,6 +233,16 @@ func main() {
 	groupWaitCmd.MarkFlagRequired("thread")
 	groupWaitCmd.MarkFlagRequired("group")
 	root.AddCommand(groupWaitCmd)
+
+	// ── task why ─────────────────────────────────────────────────────────
+	whyCmd := &cobra.Command{
+		Use:  "why",
+		Short: "Diagnose a thread — why is it stuck or what happened?",
+		RunE: cmdWhy,
+	}
+	whyCmd.Flags().StringVar(&whyThread, "thread", "", "")
+	whyCmd.MarkFlagRequired("thread")
+	root.AddCommand(whyCmd)
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -419,6 +432,23 @@ func cmdList(cmd *cobra.Command, args []string) error {
 
 	if len(rows) == 0 {
 		fmt.Println("(no tasks)")
+		return nil
+	}
+
+	if listVerbose {
+		// Verbose: show enriched fields
+		for _, entry := range rows {
+			taskID := fmt.Sprintf("%v", entry["task_id"])
+			task, err := c.GetTask(ctx, taskID)
+			if err != nil {
+				data, _ := json.MarshalIndent(entry, "", "  ")
+				fmt.Println(string(data))
+				continue
+			}
+			data, _ := json.MarshalIndent(task, "", "  ")
+			fmt.Println(string(data))
+			fmt.Println("---")
+		}
 		return nil
 	}
 
@@ -619,16 +649,43 @@ func cmdThreadState(cmd *cobra.Command, args []string) error {
 	c := getClient()
 	ctx := context.Background()
 
-	state, err := c.RDB().HGetAll(ctx, tasklib.ThreadStateKey(tsID)).Result()
+	thread, err := c.GetThread(ctx, tsID)
 	if err != nil {
 		die(err.Error())
 	}
-	if len(state) == 0 {
-		fmt.Println("{}")
-		return nil
-	}
-	data, _ := json.MarshalIndent(state, "", "  ")
+
+	data, _ := json.MarshalIndent(thread, "", "  ")
 	fmt.Println(string(data))
+
+	// Show recent events
+	events, err := c.GetThreadEvents(ctx, tsID, 20)
+	if err == nil && len(events) > 0 {
+		fmt.Println("\nRecent events:")
+		for _, ev := range events {
+			fmt.Printf("  [%s] %s", ev.Timestamp, ev.Type)
+			if ev.TaskID != "" {
+				fmt.Printf(" task=%s", ev.TaskID)
+			}
+			if ev.WorkerType != "" {
+				fmt.Printf(" worker=%s", ev.WorkerType)
+			}
+			fmt.Println()
+		}
+	}
+
+	// Task summary for this thread
+	tasks, err := c.ListTasks(ctx, "", "", tsID, 200, 0)
+	if err == nil && len(tasks) > 0 {
+		counts := make(map[string]int)
+		for _, t := range tasks {
+			counts[t.Status]++
+		}
+		fmt.Println("\nTask summary:")
+		for status, count := range counts {
+			fmt.Printf("  %s: %d\n", status, count)
+		}
+	}
+
 	return nil
 }
 
@@ -726,6 +783,84 @@ func cmdGroupWait(cmd *cobra.Command, args []string) error {
 		die(fmt.Sprintf("group %q: %s", result.Label, result.Status))
 		return nil
 	}
+}
+
+// ── task why ──────────────────────────────────────────────────────────────
+
+func cmdWhy(cmd *cobra.Command, args []string) error {
+	c := getClient()
+	ctx := context.Background()
+
+	d, err := c.GetThreadDiagnostics(ctx, whyThread)
+	if err != nil {
+		die(err.Error())
+	}
+
+	fmt.Printf("Thread: %s\n", d.ThreadID)
+	fmt.Printf("Status: %s", d.Status)
+	if d.UpdatedAt != "" {
+		fmt.Printf(" (updated %s)", d.UpdatedAt)
+	}
+	fmt.Println()
+	if d.CorrelationID != "" {
+		fmt.Printf("Correlation ID: %s\n", d.CorrelationID)
+	}
+
+	// Lock state
+	if d.Lock != nil {
+		fmt.Printf("\nLock:\n")
+		fmt.Printf("  Holder task: %s\n", d.Lock.HolderTask)
+		if d.Lock.LockedAt != "" {
+			fmt.Printf("  Locked at:   %s", d.Lock.LockedAt)
+			if d.Lock.HeldSeconds > 0 {
+				fmt.Printf(" (%ds ago)", d.Lock.HeldSeconds)
+			}
+			fmt.Println()
+		}
+	} else {
+		fmt.Println("\nLock: none")
+	}
+
+	// Task counts
+	fmt.Println("\nTask summary:")
+	for status, count := range d.TaskCounts {
+		fmt.Printf("  %s: %d\n", status, count)
+	}
+	if len(d.TaskCounts) == 0 {
+		fmt.Println("  (no tasks)")
+	}
+
+	// Last error
+	if d.LastError != "" {
+		fmt.Println("\nLast error:")
+		fmt.Println(d.LastError)
+	}
+
+	// Stuck tasks
+	if len(d.StuckTasks) > 0 {
+		fmt.Println("\nStuck tasks (running > 30 min):")
+		for _, t := range d.StuckTasks {
+			fmt.Printf("  %s — worker=%s, started=%s, stale=%dm\n",
+				t.TaskID, t.Worker, t.StartedAt, t.StaleMinutes)
+		}
+	}
+
+	// Recent events
+	if len(d.RecentEvents) > 0 {
+		fmt.Println("\nRecent events (last 20):")
+		for _, ev := range d.RecentEvents {
+			fmt.Printf("  [%s] %s", ev.Timestamp, ev.Type)
+			if ev.TaskID != "" {
+				fmt.Printf(" task=%s", ev.TaskID)
+			}
+			if ev.WorkerType != "" {
+				fmt.Printf(" worker=%s", ev.WorkerType)
+			}
+			fmt.Println()
+		}
+	}
+
+	return nil
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────

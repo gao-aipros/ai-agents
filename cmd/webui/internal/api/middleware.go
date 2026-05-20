@@ -3,7 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -21,7 +21,7 @@ var apiKey string
 func init() {
 	apiKey = os.Getenv("WEBUI_API_KEY")
 	if apiKey == "" {
-		log.Printf("[webui] WARNING: WEBUI_API_KEY is not set — all /api/ endpoints are open (no auth)")
+		slog.Warn(fmt.Sprintf("[webui] WARNING: WEBUI_API_KEY is not set — all /api/ endpoints are open (no auth)"))
 	}
 }
 
@@ -109,7 +109,7 @@ func recoverMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
-				log.Printf("[webui] panic: %v", rec)
+				slog.Warn(fmt.Sprintf("[webui] panic: %v", rec))
 				Error(w, http.StatusInternalServerError, "internal server error")
 			}
 		}()

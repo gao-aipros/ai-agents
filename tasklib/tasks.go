@@ -77,15 +77,21 @@ func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction stri
 	if err != nil {
 		return nil, fmt.Errorf("lock acquire: %w", err)
 	}
+	if ok {
+		c.rdb.Set(ctx, ThreadLockedAtKey(threadID), now, LockTTL)
+	}
 	if !ok {
 		holder, _ := c.rdb.Get(ctx, lockKey).Result()
 		if !c.isTaskActive(ctx, holder) {
-			if err := c.rdb.Del(ctx, lockKey).Err(); err != nil {
+			if err := c.rdb.Del(ctx, lockKey, ThreadLockedAtKey(threadID)).Err(); err != nil {
 				return nil, fmt.Errorf("lock stale-clear delete: %w", err)
 			}
 			ok, err = c.rdb.SetNX(ctx, lockKey, taskID, LockTTL).Result()
 			if err != nil {
 				return nil, fmt.Errorf("lock acquire (after stale clear): %w", err)
+			}
+			if ok {
+				c.rdb.Set(ctx, ThreadLockedAtKey(threadID), now, LockTTL)
 			}
 			if !ok {
 				holder, _ = c.rdb.Get(ctx, lockKey).Result()
@@ -104,11 +110,11 @@ func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction stri
 		"metadata": map[string]string{"task_id": taskID},
 	})
 	if err != nil {
-		c.rdb.Del(ctx, lockKey)
+		c.rdb.Del(ctx, lockKey, ThreadLockedAtKey(threadID))
 		return nil, fmt.Errorf("marshal message: %w", err)
 	}
 	if err := c.rdb.RPush(ctx, ThreadMessagesKey(threadID), string(msg)).Err(); err != nil {
-		c.rdb.Del(ctx, lockKey) // best-effort rollback
+		c.rdb.Del(ctx, lockKey, ThreadLockedAtKey(threadID)) // best-effort rollback
 		return nil, fmt.Errorf("thread history append: %w", err)
 	}
 	c.rdb.Expire(ctx, ThreadMessagesKey(threadID), TTLThread)
@@ -120,11 +126,11 @@ func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction stri
 		Instruction: instruction,
 	})
 	if err != nil {
-		c.rdb.Del(ctx, lockKey)
+		c.rdb.Del(ctx, lockKey, ThreadLockedAtKey(threadID))
 		return nil, fmt.Errorf("marshal payload: %w", err)
 	}
 	if err := c.rdb.LPush(ctx, QueueKey(worker), string(payload)).Err(); err != nil {
-		c.rdb.Del(ctx, lockKey)
+		c.rdb.Del(ctx, lockKey, ThreadLockedAtKey(threadID))
 		return nil, fmt.Errorf("queue push: %w", err)
 	}
 
@@ -138,9 +144,17 @@ func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction stri
 	pipe.Incr(ctx, "stats:task_total")
 	pipe.Expire(ctx, "stats:task_total", TTLStats)
 	if _, err := pipe.Exec(ctx); err != nil {
-		c.rdb.Del(ctx, lockKey)
+		c.rdb.Del(ctx, lockKey, ThreadLockedAtKey(threadID))
 		return nil, fmt.Errorf("task init: %w", err)
 	}
+
+	// Best-effort event: task_enqueued
+	c.PushThreadEvent(ctx, threadID, &Event{
+		Type:       EventTaskEnqueued,
+		TaskID:     taskID,
+		WorkerType: worker,
+		Detail:     TaskEnqueuedDetail{QueueDepthAfter: int(c.rdb.LLen(ctx, QueueKey(worker)).Val())},
+	})
 
 	return &Task{
 		TaskID:      taskID,
@@ -266,6 +280,14 @@ func (c *Client) EnqueueGroup(ctx context.Context, worker, threadID, groupLabel,
 		return nil, fmt.Errorf("task init: %w", err)
 	}
 
+
+		// Best-effort event: task_enqueued
+		c.PushThreadEvent(ctx, threadID, &Event{
+			Type:       EventTaskEnqueued,
+			TaskID:     taskID,
+			WorkerType: worker,
+			Detail:     TaskEnqueuedDetail{QueueDepthAfter: int(c.rdb.LLen(ctx, QueueKey(worker)).Val())},
+		})
 	return &Task{
 		TaskID:      taskID,
 		ThreadID:    threadID,
