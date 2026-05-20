@@ -396,6 +396,9 @@ func TestCmdRequeueStale(t *testing.T) {
 	if s := readTaskKey(taskID, "status"); s != "pending" {
 		t.Errorf("expected status=pending after requeue, got %s", s)
 	}
+	if rc := readTaskKey(taskID, "retry_count"); rc != "1" {
+		t.Errorf("expected retry_count=1 after requeue, got %s", rc)
+	}
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
