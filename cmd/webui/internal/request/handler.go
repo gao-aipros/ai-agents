@@ -356,13 +356,13 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		}
 	}()
 
-	// Read stdout. In "text" mode (default) we accumulate plain text and write
-	// each line as a "plan" message for real-time UI updates. In "stream-json"
-	// mode we dispatch JSON messages (rollback path). The respective method
-	// may write response/error messages directly for stream-json.
+	// Read stdout. In "text" mode we accumulate plain text and write each
+	// line as a "plan" message. In "stream-json" mode we dispatch JSON messages
+	// (rollback path) and detect completion via the "result" message.
 	var fullStdout strings.Builder
+	streamCompleted := false
 	if h.cfg.OutputFormat == "stream-json" {
-		h.processStreamJSON(ctx, threadID, stdout, &fullStdout)
+		streamCompleted = h.processStreamJSON(ctx, threadID, stdout)
 	} else {
 		h.processPlainText(ctx, threadID, stdout, &fullStdout)
 	}
@@ -388,9 +388,11 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 	// Wait for stderr collector to finish now that the pipe is closed.
 	stderrWg.Wait()
 
-	// For plain text mode, determine completion from exit code.
-	// stream-json mode already wrote its response/error message in processStreamJSON.
-	if h.cfg.OutputFormat != "stream-json" {
+	// Determine completion.
+	// Text mode: use exit code + accumulated stdout.
+	// Stream-json mode: rely on processStreamJSON's result message;
+	// if none arrived (crash), fall back to stderr/exit code.
+	if h.cfg.OutputFormat == "text" {
 		if ctx.Err() == context.DeadlineExceeded {
 			h.writeErrorMessage(ctx, threadID, fmt.Sprintf("Master agent timed out after %s", h.cfg.RequestTimeout))
 		} else if ctx.Err() == context.Canceled {
@@ -412,13 +414,24 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 				h.writeResponseMessage(ctx, threadID, result)
 			}
 		}
+	} else if !streamCompleted {
+		// Stream-json process exited without emitting a result message.
+		stderrMu.Lock()
+		errContent := strings.TrimSpace(lastStderr.String())
+		stderrMu.Unlock()
+		if errContent == "" {
+			errContent = fmt.Sprintf("claude exited with error: %v", waitErr)
+		}
+		h.logger.Info(fmt.Sprintf("thread=%s claude stderr: %s", threadID, errContent))
+		h.writeErrorMessage(ctx, threadID, errContent)
 	}
 }
 
 // processStreamJSON reads and dispatches stream-json lines from stdout.
 // It writes plan/tool_call messages for assistant output and response/error
-// messages for the result. On return, fullStdout contains the full stdout.
-func (h *Handler) processStreamJSON(ctx context.Context, threadID string, stdout io.Reader, fullStdout *strings.Builder) {
+// messages for the result. Returns true if a result message was processed.
+func (h *Handler) processStreamJSON(ctx context.Context, threadID string, stdout io.Reader) bool {
+	completed := false
 	lastWritten := ""
 	reader := bufio.NewReader(stdout)
 
@@ -430,10 +443,6 @@ func (h *Handler) processStreamJSON(ctx context.Context, threadID string, stdout
 		rawLine, readErr := reader.ReadString('\n')
 		rawLine = strings.TrimRight(rawLine, "\r\n")
 		line := []byte(rawLine)
-		if fullStdout != nil {
-			fullStdout.WriteString(rawLine)
-			fullStdout.WriteByte('\n')
-		}
 		if len(line) == 0 {
 			if readErr != nil {
 				if readErr != io.EOF {
@@ -463,6 +472,7 @@ func (h *Handler) processStreamJSON(ctx context.Context, threadID string, stdout
 			}
 
 		case "result":
+			completed = true
 			if msg.IsError {
 				errContent := msg.Result
 				if errContent == "" {
@@ -476,6 +486,7 @@ func (h *Handler) processStreamJSON(ctx context.Context, threadID string, stdout
 			}
 		}
 	}
+	return completed
 }
 
 // processPlainText reads plain-text lines from stdout and accumulates them.
@@ -498,12 +509,14 @@ func (h *Handler) processPlainText(ctx context.Context, threadID string, stdout 
 			}
 
 			cleanCtx, cleanCancel := cleanupCtx()
-			h.client.AppendMessage(cleanCtx, threadID, tasklib.Message{
+			if err := h.client.AppendMessage(cleanCtx, threadID, tasklib.Message{
 				Role:      "master",
 				Type:      "plan",
 				Content:   rawLine,
 				Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
-			})
+			}); err != nil {
+				h.logger.Warn(fmt.Sprintf("thread=%s AppendMessage error: %v", threadID, err))
+			}
 			cleanCancel()
 		}
 		if readErr != nil {

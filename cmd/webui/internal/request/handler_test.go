@@ -54,22 +54,6 @@ func writeFakeClaudeWithStderr(dir string, lines []string, stderrLines []string,
 	return path
 }
 
-// writeFakeClaudeStreamJSON creates a shell script that echoes JSON lines
-// (for stream-json output format tests).
-func writeFakeClaudeStreamJSON(dir string, lines []string, exitCode int) string {
-	path := filepath.Join(dir, "fake-claude-json")
-	var script strings.Builder
-	script.WriteString("#!/bin/bash\n")
-	for _, line := range lines {
-		script.WriteString("echo '")
-		script.WriteString(strings.ReplaceAll(line, "'", "'\\''"))
-		script.WriteString("'\n")
-	}
-	fmt.Fprintf(&script, "exit %d\n", exitCode)
-	os.WriteFile(path, []byte(script.String()), 0755)
-	return path
-}
-
 // waitForNotification waits for a notification on the given channel or times out.
 func waitForNotification(ch <-chan string, timeout time.Duration) (string, bool) {
 	select {
@@ -753,6 +737,75 @@ sys.exit(0)
 	}
 }
 
+func TestDefaultConfig_OutputFormat(t *testing.T) {
+	// Default is "text" when env var is unset.
+	t.Setenv("CLAUDE_OUTPUT_FORMAT", "")
+	cfg := DefaultConfig()
+	if cfg.OutputFormat != "text" {
+		t.Errorf("default OutputFormat = %q, want %q", cfg.OutputFormat, "text")
+	}
+
+	// Explicit stream-json.
+	t.Setenv("CLAUDE_OUTPUT_FORMAT", "stream-json")
+	cfg = DefaultConfig()
+	if cfg.OutputFormat != "stream-json" {
+		t.Errorf("OutputFormat = %q, want %q", cfg.OutputFormat, "stream-json")
+	}
+
+	// Invalid value is passed through (validated at use site).
+	t.Setenv("CLAUDE_OUTPUT_FORMAT", "bogus")
+	cfg = DefaultConfig()
+	if cfg.OutputFormat != "bogus" {
+		t.Errorf("OutputFormat = %q, want %q", cfg.OutputFormat, "bogus")
+	}
+}
+
+
+func TestSubmit_StderrWithSuccess(t *testing.T) {
+	handler, _, notify := newTestHandler(t)
+
+	// Exit 0 with warning on stderr → should be marked complete, not error.
+	handler.cfg.ClaudePath = writeFakeClaudeWithStderr(
+		handler.cfg.WorkspaceDir,
+		[]string{"Task completed successfully"},
+		[]string{"Warning: deprecation notice"},
+		0,
+	)
+
+	ctx := context.Background()
+	_, err := handler.Submit(ctx, "stderr-warn-thread", "Do something", "")
+	if err != nil {
+		t.Fatalf("Submit failed: %v", err)
+	}
+
+	_, ok := waitForNotification(notify, 5*time.Second)
+	if !ok {
+		t.Fatal("timeout waiting for subprocess")
+	}
+
+	complete, err := handler.client.IsThreadComplete(ctx, "stderr-warn-thread")
+	if err != nil {
+		t.Fatalf("IsThreadComplete: %v", err)
+	}
+	if !complete {
+		t.Error("thread should be marked complete when exit=0 with stderr warnings")
+	}
+
+	msgs, err := handler.client.GetThreadHistory(ctx, "stderr-warn-thread", 0, 0)
+	if err != nil {
+		t.Fatalf("GetThreadHistory: %v", err)
+	}
+
+	last := msgs[len(msgs)-1]
+	if last.Type == "error" {
+		t.Errorf("last message should not be error when exit=0, got: %q", last.Content)
+	}
+	if last.Type != "response" {
+		t.Errorf("last message type = %q, want response", last.Type)
+	}
+}
+
+
 // ── stream-json mode regression tests ─────────────────────────────────────
 
 func newTestHandlerStreamJSON(t *testing.T) (*Handler, *miniredis.Miniredis, chan string) {
@@ -798,7 +851,7 @@ func TestStreamJSON_Success(t *testing.T) {
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"Running command:"},{"type":"tool_use","text":""}]}}`,
 		`{"type":"result","subtype":"success","is_error":false,"result":"Task completed successfully"}`,
 	}
-	handler.cfg.ClaudePath = writeFakeClaudeStreamJSON(handler.cfg.WorkspaceDir, lines, 0)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, lines, 0)
 
 	ctx := context.Background()
 	_, err := handler.Submit(ctx, "json-thread", "Do something", "")
@@ -852,7 +905,7 @@ func TestStreamJSON_ErrorResult(t *testing.T) {
 	lines := []string{
 		`{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Permission denied"}`,
 	}
-	handler.cfg.ClaudePath = writeFakeClaudeStreamJSON(handler.cfg.WorkspaceDir, lines, 1)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, lines, 1)
 
 	ctx := context.Background()
 	_, err := handler.Submit(ctx, "json-err-thread", "Do something dangerous", "")
@@ -880,7 +933,7 @@ func TestStreamJSON_Dedup(t *testing.T) {
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"The bug was on line 42, fixed it."}]}}`,
 		`{"type":"result","subtype":"success","is_error":false,"result":"The bug was on line 42, fixed it."}`,
 	}
-	handler.cfg.ClaudePath = writeFakeClaudeStreamJSON(handler.cfg.WorkspaceDir, lines, 0)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, lines, 0)
 
 	ctx := context.Background()
 	_, err := handler.Submit(ctx, "json-dedup-thread", "Fix the bug", "")
@@ -931,6 +984,15 @@ exit 1
 		t.Fatal("timeout waiting for subprocess")
 	}
 
+	// Thread must be marked complete even on crash (BLOCKER: thread stuck forever).
+	complete, err := handler.client.IsThreadComplete(ctx, "json-crash-thread")
+	if err != nil {
+		t.Fatalf("IsThreadComplete: %v", err)
+	}
+	if !complete {
+		t.Error("thread should be marked complete after stream-json crash")
+	}
+
 	msgs, err := handler.client.GetThreadHistory(ctx, "json-crash-thread", 0, 0)
 	if err != nil {
 		t.Fatalf("GetThreadHistory: %v", err)
@@ -938,5 +1000,14 @@ exit 1
 
 	if len(msgs) < 2 {
 		t.Fatalf("expected at least 2 messages, got %d", len(msgs))
+	}
+
+	// Last message should be an error containing the stderr output.
+	last := msgs[len(msgs)-1]
+	if last.Type != "error" {
+		t.Errorf("last message type = %q, want error", last.Type)
+	}
+	if !strings.Contains(last.Content, "DeepSeek API returned 500 Internal Server Error") {
+		t.Errorf("error message should contain stderr output, got: %q", last.Content)
 	}
 }
