@@ -83,13 +83,13 @@ Already authenticated via `GH_TOKEN`. Clone: `gh repo clone owner/repo /workspac
 
    # Enqueue all 4 workers — capture task IDs and check for errors
    T1=$(task enqueue --worker copilot --thread <thread_id> --group design-review \
-       --instruction "Review docs/high-level-design.md, docs/detailed-design.md, docs/implementation-phases.md. Check correctness, consistency, gaps, security, performance. Propose alternatives with rationale. Write to docs/design-review-copilot.md." | jq -r '.task_id')
+       --instruction "/code-review Review docs/high-level-design.md, docs/detailed-design.md, docs/implementation-phases.md. Check correctness, consistency, gaps, security, performance. Propose alternatives with rationale. Write to docs/design-review-copilot.md." | jq -r '.task_id')
    T2=$(task enqueue --worker opencode --thread <thread_id> --group design-review \
-       --instruction "Review docs/high-level-design.md, docs/detailed-design.md, docs/implementation-phases.md. Check correctness, consistency, gaps, security, performance. Propose alternatives with rationale. Write to docs/design-review-opencode.md." | jq -r '.task_id')
+       --instruction "/code-review Review docs/high-level-design.md, docs/detailed-design.md, docs/implementation-phases.md. Check correctness, consistency, gaps, security, performance. Propose alternatives with rationale. Write to docs/design-review-opencode.md." | jq -r '.task_id')
    T3=$(task enqueue --worker claude --thread <thread_id> --group design-review \
-       --instruction "Review docs/high-level-design.md, docs/detailed-design.md, docs/implementation-phases.md. Check correctness, consistency, gaps, security, performance. Propose alternatives with rationale. Write to docs/design-review-claude.md." | jq -r '.task_id')
+       --instruction "/code-review Review docs/high-level-design.md, docs/detailed-design.md, docs/implementation-phases.md. Check correctness, consistency, gaps, security, performance. Propose alternatives with rationale. Write to docs/design-review-claude.md." | jq -r '.task_id')
    T4=$(task enqueue --worker codex --thread <thread_id> --group design-review \
-       --instruction "Review docs/high-level-design.md, docs/detailed-design.md, docs/implementation-phases.md. Check correctness, consistency, gaps, security, performance. Propose alternatives with rationale. Write to docs/design-review-codex.md." | jq -r '.task_id')
+       --instruction "/code-review Review docs/high-level-design.md, docs/detailed-design.md, docs/implementation-phases.md. Check correctness, consistency, gaps, security, performance. Propose alternatives with rationale. Write to docs/design-review-codex.md." | jq -r '.task_id')
 
    # Verify all enqueues succeeded before waiting
    FAILED_ENQUEUE=false
@@ -114,7 +114,7 @@ Already authenticated via `GH_TOKEN`. Clone: `gh repo clone owner/repo /workspac
      for TID in $FAILED; do
        WORKER=$(task status --id "$TID" | jq -r .worker)
        RT=$(task enqueue --worker "$WORKER" --thread <thread_id> --group design-review-retry \
-           --instruction "Retry your design review. Write to docs/design-review-$WORKER.md." | jq -r '.task_id')
+           --instruction "/code-review Retry your design review. Write to docs/design-review-$WORKER.md." | jq -r '.task_id')
        if [ -z "$RT" ] || [ "$RT" = "null" ]; then
          RETRY_FAILED=true
          break
@@ -135,7 +135,7 @@ Already authenticated via `GH_TOKEN`. Clone: `gh repo clone owner/repo /workspac
 5. **Assign implementation** to `claude` or `codex`:
    ```bash
    IMPL_TASK=$(task enqueue --worker claude --thread <thread_id> \
-       --instruction "Implement per docs/high-level-design.md, docs/detailed-design.md, docs/implementation-phases.md. Write unit tests. Push branch and create PR. Report PR number." | jq -r '.task_id')
+       --instruction "/code-author Implement per docs/high-level-design.md, docs/detailed-design.md, docs/implementation-phases.md. Write unit tests. Push branch and create PR. Report PR number." | jq -r '.task_id')
    task wait --id "$IMPL_TASK"
    ```
 6. **Capture the PR number**:
@@ -155,11 +155,11 @@ Already authenticated via `GH_TOKEN`. Clone: `gh repo clone owner/repo /workspac
 
    # If claude implemented → codex, copilot, opencode review
    T1=$(task enqueue --worker codex --thread <thread_id> --group code-review \
-       --instruction "Review PR #$PR. Write summary to docs/code-review-codex.md, then 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-codex.md'." | jq -r '.task_id')
+       --instruction "/code-review Review PR #$PR. Write summary to docs/code-review-codex.md, then 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-codex.md'." | jq -r '.task_id')
    T2=$(task enqueue --worker copilot --thread <thread_id> --group code-review \
-       --instruction "Review PR #$PR. Write summary to docs/code-review-copilot.md, then 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-copilot.md'." | jq -r '.task_id')
+       --instruction "/code-review Review PR #$PR. Write summary to docs/code-review-copilot.md, then 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-copilot.md'." | jq -r '.task_id')
    T3=$(task enqueue --worker opencode --thread <thread_id> --group code-review \
-       --instruction "Review PR #$PR. Write summary to docs/code-review-opencode.md, then 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-opencode.md'." | jq -r '.task_id')
+       --instruction "/code-review Review PR #$PR. Write summary to docs/code-review-opencode.md, then 'gh pr review $PR --approve|--request-changes --body-file docs/code-review-opencode.md'." | jq -r '.task_id')
 
    # Verify all enqueues succeeded before waiting
    FAILED_ENQUEUE=false
@@ -184,7 +184,7 @@ Already authenticated via `GH_TOKEN`. Clone: `gh repo clone owner/repo /workspac
      for TID in $FAILED; do
        WORKER=$(task status --id "$TID" | jq -r .worker)
        RT=$(task enqueue --worker "$WORKER" --thread <thread_id> --group code-review-retry \
-           --instruction "Retry your code review. Write to docs/code-review-$WORKER.md." | jq -r '.task_id')
+           --instruction "/code-review Retry your code review. Write to docs/code-review-$WORKER.md." | jq -r '.task_id')
        if [ -z "$RT" ] || [ "$RT" = "null" ]; then
          RETRY_FAILED=true
          break
@@ -203,7 +203,7 @@ Already authenticated via `GH_TOKEN`. Clone: `gh repo clone owner/repo /workspac
 8. **If changes requested**, ask implementer to revise:
    ```bash
    REVISE_TASK=$(task enqueue --worker claude --thread <thread_id> \
-       --instruction "Read all code reviews in docs/code-review-*.md. Address feedback. Push to PR #$PR." | jq -r '.task_id')
+       --instruction "/code-author Read all code reviews in docs/code-review-*.md. Address feedback. Push to PR #$PR." | jq -r '.task_id')
    task wait --id "$REVISE_TASK"
    ```
    Re-run step 7. Loop until all approve. **Compact if conversation grows long.**
