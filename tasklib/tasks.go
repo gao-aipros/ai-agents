@@ -437,7 +437,10 @@ func (c *Client) ListTasks(ctx context.Context, worker, status, threadID string,
 			if task.StartedAt == "" {
 				task.StartedAt, _ = c.rdb.Get(ctx, TaskKey(task.TaskID, "enqueued_at")).Result()
 				if task.StartedAt == "" {
-					task.StartedAt = "-"
+					task.StartedAt, _ = c.rdb.Get(ctx, TaskKey(task.TaskID, "created_at")).Result()
+					if task.StartedAt == "" {
+						task.StartedAt = "-"
+					}
 				}
 			}
 		}

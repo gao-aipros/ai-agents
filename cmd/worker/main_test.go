@@ -797,6 +797,28 @@ func TestCancelledStatusStored(t *testing.T) {
 	if status != "cancelled" {
 		t.Errorf("expected status=cancelled, got %s", status)
 	}
+
+	// Verify lifecycle keys set by worker cancel path
+	who, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "cancelled_by")).Result()
+	if who == "" {
+		t.Error("expected cancelled_by to be set")
+	}
+
+	cat, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "cancelled_at")).Result()
+	if cat == "" || !strings.Contains(cat, "Z") {
+		t.Errorf("expected cancelled_at as ISO8601 with Z suffix, got '%s'", cat)
+	}
+
+	cps, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "cancelled_previous_status")).Result()
+	if cps != "running" {
+		t.Errorf("expected cancelled_previous_status='running', got '%s'", cps)
+	}
+
+	// stats:task_cancelled should be incremented
+	cancCount, _ := rdb.Get(context.Background(), "stats:task_cancelled").Result()
+	if n, _ := strconv.Atoi(cancCount); n < 1 {
+		t.Errorf("expected stats:task_cancelled >= 1, got %s", cancCount)
+	}
 }
 
 func TestCancelledResultMessage(t *testing.T) {

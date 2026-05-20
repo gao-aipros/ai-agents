@@ -70,6 +70,7 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 	// running = size of active_tasks hash
 	running, err := rdb.HLen(ctx, "active_tasks").Result()
 	if err != nil {
+		log.Printf("[webui] stats: active_tasks HLen error: %v", err)
 		running = 0
 	}
 
