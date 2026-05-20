@@ -55,11 +55,14 @@ func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templ
 		thr := &threadsResource{client: client, renderer: renderer}
 		tsk := &tasksResource{client: client, renderer: renderer}
 
-		// Health / stats / diagnostics / events
+		// Health / stats / diagnostics / events / metrics
 		r.Get("/health", sys.health)
 		r.Get("/stats", sys.stats)
 		r.Get("/diagnostics", diag.get)
 		r.Get("/events", evt.systemEvents)
+		r.Get("/metrics", func(w http.ResponseWriter, r *http.Request) {
+			metricsHandler(client).ServeHTTP(w, r)
+		})
 
 		// Workers
 		r.Get("/workers", wrk.list)

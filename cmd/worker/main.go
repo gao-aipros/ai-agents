@@ -103,6 +103,8 @@ func main() {
 		hostname = "worker"
 	}
 
+	alertCfg := tasklib.LoadAlertConfig()
+
 	queueKey := tasklib.QueueKey(workerType)
 	processingKey := tasklib.ProcessingKey(workerType)
 
@@ -179,7 +181,7 @@ func main() {
 		}
 
 		processOneTask(log, client, rdb, result, workerType, agentCmd,
-			taskTimeout, historyWindow, workspaceDir, processingKey, hostname, &tasksProcessed)
+			taskTimeout, historyWindow, workspaceDir, processingKey, hostname, &tasksProcessed, alertCfg)
 	}
 
 	log.Info("worker shutting down")
@@ -202,6 +204,7 @@ func processOneTask(
 	defaultTimeout, defaultHistoryWindow int,
 	workspaceDir, processingKey, hostname string,
 	tasksProcessed *atomic.Int64,
+	alertCfg tasklib.AlertConfig,
 ) {
 	var taskPayload struct {
 		TaskID        string `json:"task_id"`
@@ -452,6 +455,16 @@ func processOneTask(
 			CorrelationID:  correlationID,
 			Detail:         tasklib.TaskFailedDetail{ExitCode: exitCode, ErrorMessage: cappedStderr},
 		})
+		if alertCfg.IsEnabled() && alertCfg.OnFailed {
+			alertCfg.SendAlert(tasklib.AlertTaskFailed, map[string]any{
+				"task_id":         taskID,
+				"thread_id":       threadID,
+				"worker":          workerType,
+				"worker_hostname": hostname,
+				"exit_code":       exitCode,
+				"error_message":   cappedStderr,
+			})
+		}
 	}
 
 	// Append result to thread history (cap at 10k chars)

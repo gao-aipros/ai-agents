@@ -37,6 +37,8 @@ var (
 	listThread         string
 	listLimit          int
 	listVerbose       bool
+	eventsLimit       int
+	eventsType        string
 	whyThread         string
 	waitID             string
 	waitTimeout        int
@@ -233,6 +235,16 @@ func main() {
 	groupWaitCmd.MarkFlagRequired("thread")
 	groupWaitCmd.MarkFlagRequired("group")
 	root.AddCommand(groupWaitCmd)
+
+	// ── task events ──────────────────────────────────────────────────────
+	eventsCmd := &cobra.Command{
+		Use:   "events",
+		Short: "Show recent system-wide events",
+		RunE:  cmdEvents,
+	}
+	eventsCmd.Flags().IntVar(&eventsLimit, "limit", 50, "")
+	eventsCmd.Flags().StringVar(&eventsType, "type", "", "")
+	root.AddCommand(eventsCmd)
 
 	// ── task why ─────────────────────────────────────────────────────────
 	whyCmd := &cobra.Command{
@@ -783,6 +795,46 @@ func cmdGroupWait(cmd *cobra.Command, args []string) error {
 		die(fmt.Sprintf("group %q: %s", result.Label, result.Status))
 		return nil
 	}
+}
+
+// ── task events ────────────────────────────────────────────────────────────
+
+func cmdEvents(cmd *cobra.Command, args []string) error {
+	c := getClient()
+	ctx := context.Background()
+
+	limit := eventsLimit
+	if limit <= 0 {
+		limit = 50
+	}
+
+	events, err := c.GetSystemEvents(ctx, limit)
+	if err != nil {
+		die(err.Error())
+	}
+
+	// Client-side type filter when --type is set
+	if eventsType != "" && len(events) > 0 {
+		filtered := make([]tasklib.Event, 0)
+		for _, ev := range events {
+			if ev.Type == eventsType {
+				filtered = append(filtered, ev)
+			}
+		}
+		events = filtered
+	}
+
+	if len(events) == 0 {
+		fmt.Println("(no events)")
+		return nil
+	}
+
+	for _, ev := range events {
+		data, _ := json.MarshalIndent(ev, "", "  ")
+		fmt.Println(string(data))
+		fmt.Println("---")
+	}
+	return nil
 }
 
 // ── task why ──────────────────────────────────────────────────────────────

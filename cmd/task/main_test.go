@@ -746,3 +746,84 @@ func TestCmdThreadCleanupTraversalRejected(t *testing.T) {
 		t.Errorf("expected 'Invalid thread ID', got: %s", panicMsg)
 	}
 }
+
+// ── task events tests ───────────────────────────────────────────────────────
+
+func TestCmdEvents_Empty(t *testing.T) {
+	_, cleanup := setupTestRedis(t)
+	defer cleanup()
+
+	output := captureOutput(func() {
+		cmd := getEventsRootForTest()
+		cmd.SetArgs([]string{"events"})
+		cmd.Execute()
+	})
+	if !strings.Contains(output, "(no events)") {
+		t.Errorf("expected '(no events)', got: %s", output)
+	}
+}
+
+func TestCmdEvents_WithData(t *testing.T) {
+	_, cleanup := setupTestRedis(t)
+	defer cleanup()
+
+	// Push some events
+	c := getClient()
+	c.PushSystemEvent(context.Background(), &tasklib.Event{
+		Type:       tasklib.EventWorkerOnline,
+		WorkerType: "claude",
+		WorkerHostname: "test-host",
+	})
+	c.PushSystemEvent(context.Background(), &tasklib.Event{
+		Type:       tasklib.EventWorkerOnline,
+		WorkerType: "copilot",
+		WorkerHostname: "test-host-2",
+	})
+
+	output := captureOutput(func() {
+		cmd := getEventsRootForTest()
+		cmd.SetArgs([]string{"events", "--limit", "10"})
+		cmd.Execute()
+	})
+	if !strings.Contains(output, "worker_online") {
+		t.Errorf("expected 'worker_online' in output, got: %s", output)
+	}
+}
+
+func TestCmdEvents_TypeFilter(t *testing.T) {
+	_, cleanup := setupTestRedis(t)
+	defer cleanup()
+
+	c := getClient()
+	c.PushSystemEvent(context.Background(), &tasklib.Event{
+		Type:       tasklib.EventWorkerOnline,
+		WorkerType: "claude",
+	})
+	c.PushSystemEvent(context.Background(), &tasklib.Event{
+		Type:       tasklib.EventWorkerOffline,
+		WorkerType: "claude",
+	})
+
+	output := captureOutput(func() {
+		cmd := getEventsRootForTest()
+		cmd.SetArgs([]string{"events", "--type", "worker_offline"})
+		cmd.Execute()
+	})
+	if !strings.Contains(output, "worker_offline") {
+		t.Errorf("expected 'worker_offline' in output, got: %s", output)
+	}
+	if strings.Contains(output, "worker_online") {
+		t.Errorf("expected no 'worker_online' when filtered, got: %s", output)
+	}
+}
+
+// ── task events test helpers ─────────────────────────────────────────────────
+
+func getEventsRootForTest() *cobra.Command {
+	root := &cobra.Command{Use: "task"}
+	eventsCmd := &cobra.Command{Use: "events", RunE: cmdEvents}
+	eventsCmd.Flags().IntVar(&eventsLimit, "limit", 50, "")
+	eventsCmd.Flags().StringVar(&eventsType, "type", "", "")
+	root.AddCommand(eventsCmd)
+	return root
+}
