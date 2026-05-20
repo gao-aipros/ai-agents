@@ -72,7 +72,7 @@ func TestCancelTaskSetsFlagAndCancelledBy(t *testing.T) {
 		t.Errorf("expected cancelled_by 'user', got '%s'", who)
 	}
 
-	// Counter is owned by the worker cancel path — CancelTask only sets the flag
+	// CancelTask sets the cancel flag and cancelled_by; the worker cancel path owns stats:task_cancelled
 }
 
 // ── Task key tests ─────────────────────────────────────────────────────────

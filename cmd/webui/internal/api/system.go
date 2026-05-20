@@ -1,9 +1,9 @@
 package api
 
 import (
-	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/noodle05/ai-agents/cmd/webui/internal/request"
 	"github.com/noodle05/ai-agents/tasklib"
@@ -60,8 +60,8 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[webui] stats counter: unexpected type %T for value %v", v, v)
 			return 0
 		}
-		var n int
-		if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
+		n, err := strconv.Atoi(s)
+		if err != nil {
 			log.Printf("[webui] stats counter parse error for value %q: %v", s, err)
 		}
 		return n
@@ -96,14 +96,13 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	Respond(w, r, http.StatusOK, map[string]interface{}{
-		"total_tasks":     total,
-		"done":            done,
-		"failed":          failed,
-		"cancelled":       cancelled,
-		"running":         int(running),
-		"pending":         int(pending),
-		"success_rate":     successRate,
-		"avg_duration_sec": 0, // deprecated: removed in counter-based rewrite
+		"tasks_enqueued_ever": total,
+		"done":               done,
+		"failed":             failed,
+		"cancelled":          cancelled,
+		"running":            int(running),
+		"pending":            int(pending),
+		"success_rate":       successRate,
 		"queue_depths":     queueDepths,
 		"active_requests":  sr.handler.ActiveRequests(),
 	})

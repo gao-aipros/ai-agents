@@ -162,7 +162,7 @@ func TestPerTaskKeysHaveTTL(t *testing.T) {
 	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed)
 
-	for _, suffix := range []string{"status", "worker", "thread_id", "description", "started_at", "result", "exit_code", "completed_at"} {
+	for _, suffix := range []string{"status", "worker", "thread_id", "description", "started_at", "last_started_at", "worker_hostname", "result", "exit_code", "completed_at"} {
 		ttl := mr.TTL(tasklib.TaskKey(testTaskID, suffix))
 		if ttl <= 0 {
 			t.Errorf("task:%s:%s has no TTL (ttl=%d)", testTaskID, suffix, ttl)
