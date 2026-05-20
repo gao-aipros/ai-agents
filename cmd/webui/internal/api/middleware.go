@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	chimw "github.com/go-chi/chi/v5/middleware"
 )
 
 const apiKeyCookieName = "webui_api_key"
@@ -261,6 +263,32 @@ func rateLimitMiddleware(rl *rateLimiter) func(http.Handler) http.Handler {
 				return
 			}
 			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// ── access log ────────────────────────────────────────────────────────────
+
+// accessLogMiddleware logs HTTP requests via the provided slog.Logger.
+// When logger is nil, it's a no-op (access logging disabled).
+func accessLogMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if logger == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+			start := time.Now()
+			ww := chimw.NewWrapResponseWriter(w, r.ProtoMajor)
+			next.ServeHTTP(ww, r)
+			logger.Info("request",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"query", r.URL.RawQuery,
+				"status", ww.Status(),
+				"bytes", ww.BytesWritten(),
+				"duration_ms", time.Since(start).Milliseconds(),
+			)
 		})
 	}
 }

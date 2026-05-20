@@ -73,7 +73,7 @@ func newTestRouter(t *testing.T) *testHarness {
 	if err != nil {
 		t.Fatalf("templates.New: %v", err)
 	}
-	router := NewRouter(client, handler, renderer, bgCtx)
+	router := NewRouter(client, handler, renderer, bgCtx, nil)
 
 	return &testHarness{
 		Router:       router,

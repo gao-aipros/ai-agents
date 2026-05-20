@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -21,8 +22,17 @@ import (
 )
 
 func main() {
+	logLevelFlag := flag.String("log-level", "", "log level (debug, info, warn, error)")
+	logAccessFlag := flag.Bool("log-access", false, "log HTTP requests to stderr")
+	flag.Parse()
+
+	levelStr := *logLevelFlag
+	if levelStr == "" {
+		levelStr = os.Getenv("LOG_LEVEL")
+	}
+
 	logLevel := new(slog.LevelVar)
-	switch strings.ToLower(os.Getenv("LOG_LEVEL")) {
+	switch strings.ToLower(levelStr) {
 	case "debug":
 		logLevel.Set(slog.LevelDebug)
 	case "warn", "warning":
@@ -41,12 +51,23 @@ func main() {
 		}
 		return a
 	}
-	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+	handlerOpts := &slog.HandlerOptions{
 		Level:       logLevel,
 		ReplaceAttr: replaceAttr,
-	})
-	log := slog.New(handler).With("component", "webui")
+	}
+	appHandler := slog.NewJSONHandler(os.Stderr, handlerOpts)
+	log := slog.New(appHandler).With("component", "webui")
 	slog.SetDefault(log)
+
+	accessEnabled := *logAccessFlag || strings.ToLower(os.Getenv("LOG_ACCESS")) == "true"
+	var accessLogger *slog.Logger
+	if accessEnabled {
+		accessHandler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+			Level:       slog.LevelInfo,
+			ReplaceAttr: replaceAttr,
+		})
+		accessLogger = slog.New(accessHandler)
+	}
 
 	cfg := request.DefaultConfig()
 	port := env.String("WEBUI_PORT", "8000")
@@ -86,7 +107,7 @@ func main() {
 	}
 
 	// Build chi router with page routes, API endpoints, and static files
-	router := api.NewRouter(client, reqHandler, renderer, bgCtx)
+	router := api.NewRouter(client, reqHandler, renderer, bgCtx, accessLogger)
 
 	srv := &http.Server{
 		Addr:    ":" + port,
