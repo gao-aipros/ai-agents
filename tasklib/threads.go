@@ -229,10 +229,13 @@ func (c *Client) IsThreadLocked(ctx context.Context, threadID string) (bool, err
 
 // UnlockThread releases a thread lock. Safe to call multiple times (DEL is idempotent).
 func (c *Client) UnlockThread(ctx context.Context, threadID string) error {
+	// Read holder before DEL for the lock_released event
+	holder, _ := c.rdb.Get(ctx, ThreadLockKey(threadID)).Result()
 	err := c.rdb.Del(ctx, ThreadLockKey(threadID), ThreadLockedAtKey(threadID)).Err()
 	// Best-effort event: lock_released
 	c.PushThreadEvent(ctx, threadID, &Event{
 		Type: EventLockReleased,
+		Detail: LockDetail{HolderTaskID: holder},
 	})
 	return err
 }

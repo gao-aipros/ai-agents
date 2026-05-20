@@ -183,6 +183,13 @@ func main() {
 	}
 
 	log.Info("worker shutting down")
+
+	// Best-effort event: worker_offline on shutdown
+	client.PushSystemEvent(context.Background(), &tasklib.Event{
+		Type:           tasklib.EventWorkerOffline,
+		WorkerType:     workerType,
+		WorkerHostname: hostname,
+	})
 }
 
 // ── task processing ───────────────────────────────────────────────────────────

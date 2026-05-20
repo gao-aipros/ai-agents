@@ -54,7 +54,7 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 
 	toInt := func(v interface{}) (int, bool) {
 		if v == nil {
-			return 0, false
+			return 0, true // key not set yet, valid zero
 		}
 		s, ok := v.(string)
 		if !ok {
@@ -68,10 +68,11 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 		}
 		return n, true
 	}
-	total, _ := toInt(vals[0])
-	done, _ := toInt(vals[1])
-	failed, _ := toInt(vals[2])
-	cancelled, _ := toInt(vals[3])
+	total, totalOK := toInt(vals[0])
+	done, doneOK := toInt(vals[1])
+	failed, failedOK := toInt(vals[2])
+	cancelled, cancelledOK := toInt(vals[3])
+	countersOK := totalOK && doneOK && failedOK && cancelledOK
 
 	// running = size of active_tasks hash
 	running, err := rdb.HLen(ctx, "active_tasks").Result()
@@ -93,21 +94,25 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	successRate := 0.0
-	if done+failed > 0 {
+	if countersOK && done+failed > 0 {
 		successRate = float64(done) / float64(done+failed) * 100
 	}
 
-	Respond(w, r, http.StatusOK, map[string]interface{}{
-		"total_tasks":          total,
-		"tasks_enqueued_ever":  total,
+	resp := map[string]interface{}{
 		"done":                 done,
 		"failed":               failed,
 		"cancelled":            cancelled,
 		"running":              int(running),
 		"pending":              int(pending),
-		"success_rate":         successRate,
 		"avg_duration_sec":     nil,
 		"queue_depths":         queueDepths,
 		"active_requests":      sr.handler.ActiveRequests(),
-	})
+	}
+	if countersOK {
+		resp["total_tasks"] = total
+		resp["tasks_enqueued_ever"] = total
+		resp["success_rate"] = successRate
+	}
+	Respond(w, r, http.StatusOK, resp)
+
 }

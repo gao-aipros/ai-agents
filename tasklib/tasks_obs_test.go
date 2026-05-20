@@ -734,3 +734,165 @@ func TestStaleLockNotClearedForActiveHolder(t *testing.T) {
 		t.Error("Enqueue should fail when lock holder is still active")
 	}
 }
+
+
+// ── new event emission tests ──────────────────────────────────────────────────
+
+func TestRequeueStaleEmitsTaskRequeued(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctxbg(), "thr-req", "")
+	// Set up a stale task in the processing list
+	payload := `{"task_id":"req-1","thread_id":"thr-req","instruction":"do X"}`
+	c.rdb.LPush(ctxbg(), ProcessingKey("claude"), payload)
+	c.rdb.Set(ctxbg(), TaskKey("req-1", "status"), "running", 0)
+	c.rdb.Set(ctxbg(), TaskKey("req-1", "last_started_at"), "2020-01-01T00:00:00Z", 0)
+
+	_, err := c.RequeueStale(ctxbg(), "claude", 10*time.Minute)
+	if err != nil {
+		t.Fatalf("RequeueStale failed: %v", err)
+	}
+
+	events, _ := c.GetThreadEvents(ctxbg(), "thr-req", 10)
+	found := false
+	for _, ev := range events {
+		if ev.Type == EventTaskRequeued {
+			found = true
+			if ev.TaskID != "req-1" {
+				t.Errorf("expected task_id 'req-1', got '%s'", ev.TaskID)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected task_requeued event after RequeueStale")
+	}
+}
+
+func TestUnlockThreadEmitsLockReleased(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctxbg(), "thr-ul-ev", "")
+	c.rdb.Set(ctxbg(), ThreadLockKey("thr-ul-ev"), "task-1", LockTTL)
+	c.rdb.Set(ctxbg(), ThreadLockedAtKey("thr-ul-ev"), "2025-06-01T10:00:00Z", LockTTL)
+
+	err := c.UnlockThread(ctxbg(), "thr-ul-ev")
+	if err != nil {
+		t.Fatalf("UnlockThread failed: %v", err)
+	}
+
+	events, _ := c.GetThreadEvents(ctxbg(), "thr-ul-ev", 10)
+	found := false
+	for _, ev := range events {
+		if ev.Type == EventLockReleased {
+			found = true
+			// Verify holder_task_id is populated
+			detail, ok := ev.Detail.(map[string]interface{})
+			if ok {
+				if htid, exists := detail["holder_task_id"]; !exists || htid == "" {
+					t.Error("lock_released event should have holder_task_id in detail")
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("expected lock_released event after UnlockThread")
+	}
+}
+
+func TestGroupWaitEmitsGroupComplete(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctxbg(), "thr-gc", "")
+	// Create group tasks that are already done
+	for i, tid := range []string{"gc-1", "gc-2"} {
+		c.rdb.Set(ctxbg(), TaskKey(tid, "status"), "done", TTLTask)
+		c.rdb.SAdd(ctxbg(), GroupTasksKey("thr-gc", "test-group"), tid)
+		_ = i
+	}
+
+	result, err := c.GroupWait(ctxbg(), "thr-gc", "test-group", 5*time.Second)
+	if err != nil {
+		t.Fatalf("GroupWait failed: %v", err)
+	}
+	if result.Status != "complete" {
+		t.Fatalf("expected complete, got %s", result.Status)
+	}
+
+	events, _ := c.GetThreadEvents(ctxbg(), "thr-gc", 10)
+	found := false
+	for _, ev := range events {
+		if ev.Type == EventGroupComplete {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected group_complete event after GroupWait")
+	}
+}
+
+func TestWorkerOfflineEmittedOnExpiry(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Set a heartbeat with very short TTL (already expired)
+	c.rdb.Set(ctxbg(), HeartbeatKey("claude", "expired-host"), "{}", 0)
+
+	// Trigger GetWorkerStats which scans heartbeats
+	_, err := c.GetWorkerStats(ctxbg())
+	if err != nil {
+		t.Fatalf("GetWorkerStats failed: %v", err)
+	}
+
+	// Check system events for worker_offline
+	events, _ := c.GetSystemEvents(ctxbg(), 20)
+	found := false
+	for _, ev := range events {
+		if ev.Type == EventWorkerOffline && ev.WorkerHostname == "expired-host" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected worker_offline system event for expired heartbeat")
+	}
+}
+
+func TestThreadStatusChangeEmitsEvent(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctxbg(), "thr-tsc", "")
+	// Simulate WaitTask completion: updateThreadStatus is called
+	// We can trigger it indirectly by calling UpdateThread
+	c.UpdateThread(ctxbg(), "thr-tsc", map[string]string{"status": "complete"})
+
+	// Now call updateThreadStatus via WaitTask path
+	// Actually, updateThreadStatus is unexported. Let's test via the event
+	// from Enqueue + WaitTask completion
+	// For now, just verify the event system is wired.
+
+	// Create a task and wait for it to complete (done)
+	c.rdb.Set(ctxbg(), TaskKey("tsc-task", "status"), "done", TTLTask)
+	c.rdb.Set(ctxbg(), TaskKey("tsc-task", "thread_id"), "thr-tsc", TTLTask)
+
+	// Directly call updateThreadStatus — it's unexported but in the same package
+	c.updateThreadStatus(ctxbg(), "thr-tsc", "done")
+
+	events, _ := c.GetThreadEvents(ctxbg(), "thr-tsc", 10)
+	found := false
+	for _, ev := range events {
+		if ev.Type == EventThreadStatusChange {
+			found = true
+			detail, ok := ev.Detail.(map[string]interface{})
+			if ok {
+				if to, exists := detail["to"]; !exists || to != "complete" {
+					t.Errorf("expected to='complete', got detail=%v", detail)
+				}
+				// From should be set (prev status)
+				if from, exists := detail["from"]; !exists || from == "" {
+					t.Error("thread_status_change should have non-empty from field")
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("expected thread_status_change event")
+	}
+}

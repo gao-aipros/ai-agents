@@ -565,7 +565,7 @@ func (c *Client) WaitTask(ctx context.Context, taskID, threadID string, timeout 
 			if groupLabel == "" {
 				if threadID != "" {
 					c.updateThreadStatus(ctx, threadID, status)
-					c.rdb.Del(ctx, ThreadLockKey(threadID))
+					c.UnlockThread(ctx, threadID)
 				}
 			}
 			return t, nil
@@ -576,7 +576,7 @@ func (c *Client) WaitTask(ctx context.Context, taskID, threadID string, timeout 
 			groupLabel, _ := c.rdb.Get(ctx, TaskKey(taskID, "group")).Result()
 			if groupLabel == "" {
 				if threadID != "" {
-					c.rdb.Del(ctx, ThreadLockKey(threadID))
+					c.UnlockThread(ctx, threadID)
 				}
 			}
 			return nil, fmt.Errorf("Timed out waiting for task %s (status: %s)", taskID, status)
@@ -587,7 +587,7 @@ func (c *Client) WaitTask(ctx context.Context, taskID, threadID string, timeout 
 			groupLabel, _ := c.rdb.Get(ctx, TaskKey(taskID, "group")).Result()
 			if groupLabel == "" {
 				if threadID != "" {
-					c.rdb.Del(ctx, ThreadLockKey(threadID))
+					c.UnlockThread(ctx, threadID)
 				}
 			}
 			return nil, ctx.Err()
@@ -788,12 +788,13 @@ func (c *Client) RequeueStale(ctx context.Context, worker string, olderThan time
 // Silently ignores errors — best-effort, same as lock release.
 func (c *Client) updateThreadStatus(ctx context.Context, threadID, taskStatus string) {
 	threadStatus := threadStatusFromTask(taskStatus)
+	prevStatus, _ := c.rdb.HGet(ctx, ThreadStateKey(threadID), "status").Result()
 	_ = c.UpdateThread(ctx, threadID, map[string]string{"status": threadStatus})
 
 	// Best-effort event: thread_status_change
 	c.PushThreadEvent(ctx, threadID, &Event{
 		Type: EventThreadStatusChange,
-		Detail: ThreadStatusChangeDetail{To: threadStatus},
+		Detail: ThreadStatusChangeDetail{From: prevStatus, To: threadStatus},
 	})
 }
 
