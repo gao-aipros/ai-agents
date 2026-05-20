@@ -918,6 +918,14 @@ func TestStreamJSON_ErrorResult(t *testing.T) {
 		t.Fatal("timeout waiting for subprocess")
 	}
 
+	complete, err := handler.client.IsThreadComplete(ctx, "json-err-thread")
+	if err != nil {
+		t.Fatalf("IsThreadComplete: %v", err)
+	}
+	if !complete {
+		t.Error("thread should be marked complete after stream-json error result")
+	}
+
 	msgs, _ := handler.client.GetThreadHistory(ctx, "json-err-thread", 0, 0)
 	last := msgs[len(msgs)-1]
 	if last.Type != "error" {
@@ -949,6 +957,14 @@ func TestStreamJSON_Dedup(t *testing.T) {
 	msgs, err := handler.client.GetThreadHistory(ctx, "json-dedup-thread", 0, 0)
 	if err != nil {
 		t.Fatalf("GetThreadHistory: %v", err)
+	}
+
+	complete, err := handler.client.IsThreadComplete(ctx, "json-dedup-thread")
+	if err != nil {
+		t.Fatalf("IsThreadComplete: %v", err)
+	}
+	if !complete {
+		t.Error("thread should be marked complete after stream-json dedup")
 	}
 
 	if len(msgs) != 2 {
