@@ -52,12 +52,9 @@ func TestCheckStuckTasks_DetectsStuck(t *testing.T) {
 		WebhookURL:     "https://hooks.example.com/alert", // enable
 	}
 
-	// Capture the alert via env
-	var alertFired bool
-	// Since SendAlert is fire-and-forget, we verify the function doesn't panic
-	// and that it traverses the active_tasks hash correctly.
+	// Smoke test — verifies checkStuckTasks doesn't panic on active_tasks traversal.
+	// SendAlert is fire-and-forget; we just confirm the function completes.
 	checkStuckTasks(context.Background(), rdb, cfg, make(map[string]time.Time), 5*time.Minute)
-	_ = alertFired
 }
 
 func TestCheckStuckTasks_SkipsNonRunning(t *testing.T) {
@@ -288,7 +285,7 @@ func TestHeartbeatData_HasTimestamp(t *testing.T) {
 	}
 	// Auto-populated by UpdateWorkerHeartbeat
 	payload, _ := json.Marshal(hb)
-	if strings.Contains(string(payload), "last_heartbeat_at") {
-		t.Log("HeartbeatData includes last_heartbeat_at field")
+	if !strings.Contains(string(payload), "last_heartbeat_at") {
+		t.Errorf("HeartbeatData JSON missing last_heartbeat_at field: %s", string(payload))
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 )
 
@@ -60,8 +59,6 @@ func TestAlertConfigBoolVariants(t *testing.T) {
 		if cfg.OnFailed != tc.expect {
 			t.Errorf("ALERT_ON_FAILED=%q -> OnFailed=%v, want %v", tc.val, cfg.OnFailed, tc.expect)
 		}
-		// Reset for next iteration
-		os.Unsetenv("ALERT_ON_FAILED")
 	}
 }
 
