@@ -732,8 +732,12 @@ func (c *Client) RequeueStale(ctx context.Context, worker string, olderThan time
 			c.rdb.LPush(ctx, queueKey, itemJSON)
 			c.rdb.LRem(ctx, processingKey, 0, itemJSON)
 			c.rdb.Set(ctx, TaskKey(task.TaskID, "status"), "pending", TTLTask)
-			c.rdb.Incr(ctx, TaskKey(task.TaskID, "retry_count"))
-			c.rdb.Expire(ctx, TaskKey(task.TaskID, "retry_count"), TTLTask)
+			{
+				pipe := c.rdb.Pipeline()
+				pipe.Incr(ctx, TaskKey(task.TaskID, "retry_count"))
+				pipe.Expire(ctx, TaskKey(task.TaskID, "retry_count"), TTLTask)
+				pipe.Exec(ctx)
+			}
 			requeued = append(requeued, task.TaskID)
 		}
 	}

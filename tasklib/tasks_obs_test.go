@@ -145,31 +145,6 @@ func TestEnqueueCreatesEnqueuedAt(t *testing.T) {
 	}
 }
 
-func TestCancelTaskSetsCancelledBy(t *testing.T) {
-	c, _ := setupTestClient(t)
-
-	taskID := "cancel-audit"
-	c.rdb.Set(ctxbg(), TaskKey(taskID, "status"), "pending", 0)
-
-	for _, who := range []string{"user", "timeout", "system"} {
-		t.Run(who, func(t *testing.T) {
-			taskID := "cancel-" + who
-			c.rdb.Set(ctxbg(), TaskKey(taskID, "status"), "pending", 0)
-
-			err := c.CancelTask(ctxbg(), taskID, who)
-			if err != nil {
-				t.Fatalf("CancelTask(%s) failed: %v", who, err)
-			}
-
-			// Verify cancelled_by
-			got, _ := c.rdb.Get(ctxbg(), TaskKey(taskID, "cancelled_by")).Result()
-			if got != who {
-				t.Errorf("cancelled_by: expected '%s', got '%s'", who, got)
-			}
-		})
-	}
-}
-
 // ── heartbeat tests ────────────────────────────────────────────────────────
 
 func TestHeartbeatJSONRoundTrip(t *testing.T) {

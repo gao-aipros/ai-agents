@@ -288,6 +288,7 @@ func processOneTask(
 
 		rdb.LRem(context.Background(), processingKey, 0, taskJSON)
 		client.RemoveActiveTask(context.Background(), taskID)
+		tasksProcessed.Add(1)
 		return
 	}
 
