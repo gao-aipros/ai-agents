@@ -1,5 +1,10 @@
 # Copilot Instructions
 
+## Domain terminology
+
+This project maintains a domain glossary at [CONTEXT.md](CONTEXT.md). Read it before making naming decisions — it defines canonical terms (e.g., _access log_, _admin endpoint_) and lists synonyms to avoid. See also `docs/agents/domain.md` for how agents should consume project documentation.
+
+
 ## Architecture
 
 Multi-agent Docker orchestration where a master agent (Claude Code) delegates tasks to worker agents (Claude Code, Codex, Copilot, OpenCode). All agents run in Docker containers, communicating via a Redis task queue (control plane) and a shared `/workspace` volume (data plane).

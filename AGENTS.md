@@ -1,11 +1,10 @@
-# CLAUDE.md
+# AGENTS.md
+
 
 ## Domain terminology
 
 This project maintains a domain glossary at [CONTEXT.md](CONTEXT.md). Read it before making naming decisions — it defines canonical terms (e.g., _access log_, _admin endpoint_) and lists synonyms to avoid. See also `docs/agents/domain.md` for how agents should consume project documentation.
-
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex agents when working with code in this repository.
 
 ## Architecture
 
