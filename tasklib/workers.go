@@ -30,10 +30,11 @@ type WorkerInstance struct {
 
 // HeartbeatData is the JSON payload written into heartbeat keys.
 type HeartbeatData struct {
-	Hostname       string `json:"hostname"`
-	TasksProcessed int    `json:"tasks_processed"`
-	QueueDepth     int    `json:"queue_depth"`
-	UptimeSeconds  int64  `json:"uptime_seconds"`
+	Hostname        string `json:"hostname"`
+	TasksProcessed  int    `json:"tasks_processed"`
+	QueueDepth      int    `json:"queue_depth"`
+	UptimeSeconds   int64  `json:"uptime_seconds"`
+	LastHeartbeatAt string `json:"last_heartbeat_at"`
 }
 
 // GetWorkerStats retrieves stats for all worker types via SCAN on heartbeat keys.
@@ -115,7 +116,11 @@ func (c *Client) GetWorkerInfo(ctx context.Context, workerType string) (*WorkerI
 
 // UpdateWorkerHeartbeat sets a heartbeat key with 30s TTL, writing a JSON
 // payload with instance-level data (hostname, tasks_processed, etc.).
+// Auto-populates LastHeartbeatAt if the caller leaves it empty.
 func (c *Client) UpdateWorkerHeartbeat(ctx context.Context, workerType, hostname string, data HeartbeatData) error {
+	if data.LastHeartbeatAt == "" {
+		data.LastHeartbeatAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	}
 	payload, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("marshal heartbeat: %w", err)

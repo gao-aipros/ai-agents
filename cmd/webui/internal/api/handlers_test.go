@@ -1296,3 +1296,90 @@ func TestHandleSubmitRequest_FollowUpHTMXReplyConfirmed(t *testing.T) {
 
 	waitForNotification(th.Notify, 10*time.Second)
 }
+
+// ── /api/metrics tests ─────────────────────────────────────────────────────
+
+func TestMetricsEndpoint_Returns200(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	rdb := th.Client.RDB()
+	rdb.Set(context.Background(), "stats:task_done", "10", 0)
+	rdb.Set(context.Background(), "stats:task_failed", "2", 0)
+	rdb.Set(context.Background(), "stats:task_cancelled", "1", 0)
+	rdb.HSet(context.Background(), "active_tasks", "task-1", `{"status":"running"}`)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/metrics", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	w := httptest.NewRecorder()
+	th.Router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
+	}
+
+	body := w.Body.String()
+	expectedMetrics := []string{
+		"ai_agents_tasks_total",
+		"ai_agents_threads_active",
+		"ai_agents_threads_stuck",
+		"ai_agents_workers_online",
+		"ai_agents_queue_depth",
+		"ai_agents_tasks_running",
+		"ai_agents_tasks_pending",
+	}
+	for _, name := range expectedMetrics {
+		if !strings.Contains(body, name) {
+			t.Errorf("expected metric %q in output", name)
+		}
+	}
+	if !strings.Contains(body, "# HELP ai_agents_tasks_total") {
+		t.Error("missing HELP line for ai_agents_tasks_total")
+	}
+	if !strings.Contains(body, "# TYPE ai_agents_tasks_total counter") {
+		t.Error("missing TYPE line for ai_agents_tasks_total")
+	}
+}
+
+func TestMetricsEndpoint_StatusLabels(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	rdb := th.Client.RDB()
+	rdb.Set(context.Background(), "stats:task_done", "5", 0)
+	rdb.Set(context.Background(), "stats:task_failed", "3", 0)
+	rdb.Set(context.Background(), "stats:task_cancelled", "2", 0)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/metrics", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	w := httptest.NewRecorder()
+	th.Router.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, st := range []string{"done", "failed", "cancelled"} {
+		if !strings.Contains(body, `status="`+st+`"`) {
+			t.Errorf("expected status label %q in output", st)
+		}
+	}
+}
+
+func TestMetricsEndpoint_QueueDepthLabels(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	rdb := th.Client.RDB()
+	rdb.LPush(context.Background(), tasklib.QueueKey("claude"), "task-json-1")
+	rdb.LPush(context.Background(), tasklib.QueueKey("copilot"), "task-json-2")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/metrics", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	w := httptest.NewRecorder()
+	th.Router.ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, wt := range tasklib.WorkerTypes {
+		if !strings.Contains(body, `worker_type="`+wt+`"`) {
+			t.Errorf("expected worker_type label %q in output", wt)
+		}
+	}
+}

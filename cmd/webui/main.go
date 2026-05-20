@@ -79,6 +79,12 @@ func main() {
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	defer bgCancel()
 
+	// Background alert monitor for stuck threads and lost heartbeats
+	alertCfg := tasklib.LoadAlertConfig()
+	if alertCfg.IsEnabled() {
+		go runAlertMonitor(bgCtx, rdb, alertCfg)
+	}
+
 	// Build chi router with page routes, API endpoints, and static files
 	router := api.NewRouter(client, reqHandler, renderer, bgCtx)
 
