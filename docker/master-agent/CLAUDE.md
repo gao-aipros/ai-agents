@@ -193,7 +193,7 @@ task list [--worker <w>] [--status running] [--limit 20]
 task thread-list
 task requeue-stale [--worker <w>] [--older-than 600]
 task cancel --id <task_id>
-task unlock --thread $THREAD
+task unlock --thread <thread_id>
 ```
 
 ## Guidelines
