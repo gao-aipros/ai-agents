@@ -55,7 +55,11 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 		if v == nil {
 			return 0
 		}
-		s, _ := v.(string)
+		s, ok := v.(string)
+		if !ok {
+			log.Printf("[webui] stats counter: unexpected type %T for value %v", v, v)
+			return 0
+		}
 		var n int
 		if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
 			log.Printf("[webui] stats counter parse error for value %q: %v", s, err)
@@ -98,8 +102,9 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 		"cancelled":       cancelled,
 		"running":         int(running),
 		"pending":         int(pending),
-		"success_rate":    successRate,
-		"queue_depths":    queueDepths,
-		"active_requests": sr.handler.ActiveRequests(),
+		"success_rate":     successRate,
+		"avg_duration_sec": 0, // deprecated: removed in counter-based rewrite
+		"queue_depths":     queueDepths,
+		"active_requests":  sr.handler.ActiveRequests(),
 	})
 }

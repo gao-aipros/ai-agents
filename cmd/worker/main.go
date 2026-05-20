@@ -192,7 +192,9 @@ func processOneTask(
 
 	// Read correlation_id from thread state
 	correlationID := ""
-	if threadState, _ := client.GetThread(context.Background(), threadID); threadState != nil {
+	if threadState, err := client.GetThread(context.Background(), threadID); err != nil {
+		log.log("debug", "correlation_id lookup failed", "error", err.Error())
+	} else if threadState != nil {
 		correlationID = threadState.CorrelationID
 	}
 
@@ -344,7 +346,11 @@ func processOneTask(
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "completed_at"), completedAt, tasklib.TTLTask)
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "status"), status, tasklib.TTLTask)
 	if status == "failed" {
-		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "error_message"), stderr, tasklib.TTLTask)
+		cappedStderr := stderr
+		if len(cappedStderr) > 10000 {
+			cappedStderr = cappedStderr[:10000]
+		}
+		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "error_message"), cappedStderr, tasklib.TTLTask)
 		pipe.Incr(context.Background(), "stats:task_failed")
 		pipe.Expire(context.Background(), "stats:task_failed", tasklib.TTLStats)
 	} else {

@@ -50,7 +50,7 @@ func TestStatsCounterOnEnqueueGroup(t *testing.T) {
 	}
 }
 
-func TestStatsCounterOnCancelTask(t *testing.T) {
+func TestCancelTaskSetsFlagAndCancelledBy(t *testing.T) {
 	c, _ := setupTestClient(t)
 
 	c.rdb.Set(ctxbg(), TaskKey("ct-stats", "status"), "pending", 0)

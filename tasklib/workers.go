@@ -24,7 +24,7 @@ type WorkerInstance struct {
 	TasksProcessed  int    `json:"tasks_processed"`
 	QueueDepth      int    `json:"queue_depth"`
 	UptimeSeconds   int64  `json:"uptime_seconds"`
-	LastHeartbeat   string `json:"last_heartbeat"`
+	LastHeartbeatPayload string `json:"last_heartbeat"`
 	Online          bool   `json:"online"`
 }
 
@@ -155,7 +155,7 @@ func (c *Client) GetWorkerInstances(ctx context.Context, workerType string) ([]W
 				TasksProcessed:  hb.TasksProcessed,
 				QueueDepth:      hb.QueueDepth,
 				UptimeSeconds:   hb.UptimeSeconds,
-				LastHeartbeat:   raw,
+				LastHeartbeatPayload: raw,
 				Online:          online,
 			})
 		}
