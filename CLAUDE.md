@@ -222,7 +222,7 @@ See `.env.example` for all variables. Key ones:
 | Thread events | `task thread-state --id <thread-id>` |
 | System events | `task events --limit 50` |
 | Worker instances | `curl -H "Authorization: Bearer $WEBUI_API_KEY" http://localhost:8000/api/workers/<type>/instances` |
-| Health check | `curl http://localhost:8000/api/diagnostics` |
+| Health check | `curl -H "Authorization: Bearer $WEBUI_API_KEY" http://localhost:8000/api/diagnostics` |
 
 ### Common workflows
 
@@ -259,12 +259,12 @@ task thread-state --id <thread-id>
 **"What happened across the system?"**
 ```bash
 task events --limit 100
-# Or: curl "http://localhost:8000/api/events?limit=100"
+# Or: curl -H "Authorization: Bearer $WEBUI_API_KEY" "http://localhost:8000/api/events?limit=100"
 ```
 
 **"Is anything broken right now?"**
 ```bash
-curl http://localhost:8000/api/diagnostics
+curl -H "Authorization: Bearer $WEBUI_API_KEY" http://localhost:8000/api/diagnostics
 # Check: stale_tasks, locks, queue_depths, redis_memory
 ```
 
