@@ -21,7 +21,15 @@ func (er *eventsResource) systemEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	eventType := r.URL.Query().Get("type")
 
-	events, err := er.client.GetSystemEvents(r.Context(), limit)
+	// Fetch a larger batch when type-filtering to improve hit rate
+	fetchLimit := limit
+	if eventType != "" {
+		fetchLimit = limit * 3
+		if fetchLimit > 1000 {
+			fetchLimit = 1000
+		}
+	}
+	events, err := er.client.GetSystemEvents(r.Context(), fetchLimit)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("[webui] system events error: %v", err))
 		Error(w, http.StatusInternalServerError, "internal error")

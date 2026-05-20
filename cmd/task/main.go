@@ -549,10 +549,10 @@ func cmdRequeueStale(cmd *cobra.Command, args []string) error {
 				c.RDB().LPush(ctx, queueKey, itemJSON)
 				c.RDB().LRem(ctx, processingKey, 0, itemJSON)
 				c.RDB().Set(ctx, tasklib.TaskKey(task.TaskID, "status"), "pending", tasklib.TTLTask)
-			pipe := c.RDB().Pipeline()
-			pipe.Incr(ctx, tasklib.TaskKey(task.TaskID, "retry_count"))
-			pipe.Expire(ctx, tasklib.TaskKey(task.TaskID, "retry_count"), tasklib.TTLTask)
-			pipe.Exec(ctx)
+				pipe := c.RDB().Pipeline()
+				pipe.Incr(ctx, tasklib.TaskKey(task.TaskID, "retry_count"))
+				pipe.Expire(ctx, tasklib.TaskKey(task.TaskID, "retry_count"), tasklib.TTLTask)
+				pipe.Exec(ctx)
 
 				displayStatus := oldStatus
 				if displayStatus == "" {

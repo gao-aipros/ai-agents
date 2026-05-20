@@ -284,7 +284,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 	defer h.wg.Done()
 	defer func() {
 		if r := recover(); r != nil {
-			h.logger.Info(fmt.Sprintf("panic in subprocess goroutine thread=%s: %v", threadID, r))
+			h.logger.Warn(fmt.Sprintf("panic in subprocess goroutine thread=%s: %v", threadID, r))
 			h.writeErrorMessage(ctx, threadID, fmt.Sprintf("internal error: panic in handler: %v", r))
 		}
 	}()
@@ -523,7 +523,7 @@ func (h *Handler) writeResponseMessage(ctx context.Context, threadID, content st
 }
 
 func (h *Handler) writeErrorMessage(ctx context.Context, threadID, content string) {
-	h.logger.Info(fmt.Sprintf("thread=%s error: %s", threadID, content))
+	h.logger.Warn(fmt.Sprintf("thread=%s error: %s", threadID, content))
 
 	cleanCtx, cleanCancel := cleanupCtx()
 	defer cleanCancel()

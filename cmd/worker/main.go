@@ -58,7 +58,16 @@ func main() {
 	}
 
 	logLevel := new(slog.LevelVar)
-	logLevel.Set(slog.LevelInfo)
+	switch strings.ToLower(os.Getenv("LOG_LEVEL")) {
+	case "debug":
+		logLevel.Set(slog.LevelDebug)
+	case "warn", "warning":
+		logLevel.Set(slog.LevelWarn)
+	case "error":
+		logLevel.Set(slog.LevelError)
+	default:
+		logLevel.Set(slog.LevelInfo)
+	}
 	replaceAttr := func(groups []string, a slog.Attr) slog.Attr {
 		if a.Key == slog.LevelKey {
 			return slog.String("level", strings.ToLower(a.Value.String()))

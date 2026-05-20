@@ -229,7 +229,12 @@ func (c *Client) IsThreadLocked(ctx context.Context, threadID string) (bool, err
 
 // UnlockThread releases a thread lock. Safe to call multiple times (DEL is idempotent).
 func (c *Client) UnlockThread(ctx context.Context, threadID string) error {
-	return c.rdb.Del(ctx, ThreadLockKey(threadID), ThreadLockedAtKey(threadID)).Err()
+	err := c.rdb.Del(ctx, ThreadLockKey(threadID), ThreadLockedAtKey(threadID)).Err()
+	// Best-effort event: lock_released
+	c.PushThreadEvent(ctx, threadID, &Event{
+		Type: EventLockReleased,
+	})
+	return err
 }
 
 // SetActiveTask adds or updates an entry in the active_tasks hash.
@@ -296,7 +301,7 @@ func (c *Client) SetThreadTTL(ctx context.Context, threadID string, ttl time.Dur
 	pipe.Expire(ctx, ThreadRunningKey(threadID), ttl)
 	pipe.Expire(ctx, ThreadSessionIDKey(threadID), ttl)
 	pipe.Expire(ctx, ThreadLastActivityKey(threadID), ttl)
-	pipe.Expire(ctx, ThreadLockKey(threadID), ttl)
+	// Skip ThreadLockKey: extending lock TTL on keep can make a held lock permanent
 	_, err := pipe.Exec(ctx)
 	return err
 }
@@ -331,6 +336,8 @@ func ParseThreadUpdateFields(status, design, pr string) map[string]string {
 }
 
 // ThreadDiagnostics aggregates diagnostic information for a thread.
+// TaskCounts reflects at most the most recent 200 tasks. If a thread has more
+// than 200 tasks, older tasks are not reflected in counts or LastError.
 type ThreadDiagnostics struct {
 	ThreadID       string          `json:"thread_id"`
 	Status         string          `json:"status"`
@@ -341,6 +348,7 @@ type ThreadDiagnostics struct {
 	TaskCounts     map[string]int  `json:"task_counts"`
 	RecentEvents   []Event         `json:"recent_events"`
 	StuckTasks     []StuckTaskInfo `json:"stuck_tasks,omitempty"`
+	Warnings       []string        `json:"warnings,omitempty"`
 }
 
 // LockInfo describes a thread lock.
@@ -388,7 +396,9 @@ func (c *Client) GetThreadDiagnostics(ctx context.Context, threadID string) (*Th
 
 	// Task counts by status + find last error
 	tasks, err := c.ListTasks(ctx, "", "", threadID, 200, 0)
-	if err == nil {
+	if err != nil {
+		d.Warnings = append(d.Warnings, "failed to list tasks: "+err.Error())
+	} else {
 		for _, t := range tasks {
 			d.TaskCounts[t.Status]++
 			if t.Status == "failed" && d.LastError == "" {

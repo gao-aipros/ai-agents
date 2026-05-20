@@ -91,9 +91,12 @@ func (c *Client) PushEvent(ctx context.Context, listKey string, ev *Event) {
 	ev.Timestamp = ts()
 	data, err := json.Marshal(ev)
 	if err != nil {
+		// Use package-level log since tasklib has no slog dependency
+		fmt.Printf("event marshal error: %v\n", err)
 		return
 	}
 	if err := c.rdb.RPush(ctx, listKey, string(data)).Err(); err != nil {
+		fmt.Printf("event rpush error: %v\n", err)
 		return
 	}
 }

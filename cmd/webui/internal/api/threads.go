@@ -216,7 +216,7 @@ func (tr *threadsResource) deleteWorkspace(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	slog.Warn(fmt.Sprintf("[webui] workspace deleted thread=%s", threadID))
+	slog.Info(fmt.Sprintf("[webui] workspace deleted thread=%s", threadID))
 	Respond(w, r, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -332,7 +332,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 		removeSessionFile(sessionID)
 	}
 
-	slog.Warn(fmt.Sprintf("[webui] thread deleted thread=%s", threadID))
+	slog.Info(fmt.Sprintf("[webui] thread deleted thread=%s", threadID))
 	Respond(w, r, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -360,6 +360,6 @@ func (tr *threadsResource) resetSession(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	slog.Warn(fmt.Sprintf("[webui] session reset thread=%s", threadID))
+	slog.Info(fmt.Sprintf("[webui] session reset thread=%s", threadID))
 	Respond(w, r, http.StatusOK, map[string]string{"status": "session reset"})
 }

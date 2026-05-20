@@ -52,25 +52,26 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	toInt := func(v interface{}) int {
+	toInt := func(v interface{}) (int, bool) {
 		if v == nil {
-			return 0
+			return 0, false
 		}
 		s, ok := v.(string)
 		if !ok {
-			slog.Warn(fmt.Sprintf("[webui] stats counter: unexpected type %T for value %v", v, v))
-			return 0
+			slog.Warn("stats counter: unexpected type", "type", fmt.Sprintf("%T", v), "value", v)
+			return 0, false
 		}
 		n, err := strconv.Atoi(s)
 		if err != nil {
-			slog.Warn(fmt.Sprintf("[webui] stats counter parse error for value %q: %v", s, err))
+			slog.Warn("stats counter parse error", "value", s, "error", err)
+			return 0, false
 		}
-		return n
+		return n, true
 	}
-	total := toInt(vals[0])
-	done := toInt(vals[1])
-	failed := toInt(vals[2])
-	cancelled := toInt(vals[3])
+	total, _ := toInt(vals[0])
+	done, _ := toInt(vals[1])
+	failed, _ := toInt(vals[2])
+	cancelled, _ := toInt(vals[3])
 
 	// running = size of active_tasks hash
 	running, err := rdb.HLen(ctx, "active_tasks").Result()
@@ -97,14 +98,16 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	Respond(w, r, http.StatusOK, map[string]interface{}{
-		"tasks_enqueued_ever": total,
-		"done":               done,
-		"failed":             failed,
-		"cancelled":          cancelled,
-		"running":            int(running),
-		"pending":            int(pending),
-		"success_rate":       successRate,
-		"queue_depths":     queueDepths,
-		"active_requests":  sr.handler.ActiveRequests(),
+		"total_tasks":          total,
+		"tasks_enqueued_ever":  total,
+		"done":                 done,
+		"failed":               failed,
+		"cancelled":            cancelled,
+		"running":              int(running),
+		"pending":              int(pending),
+		"success_rate":         successRate,
+		"avg_duration_sec":     nil,
+		"queue_depths":         queueDepths,
+		"active_requests":      sr.handler.ActiveRequests(),
 	})
 }

@@ -74,6 +74,18 @@ func (c *Client) isTaskActive(ctx context.Context, taskID string) bool {
 	return true
 }
 
+// acquireLockScript atomically acquires a thread lock and sets locked_at.
+// KEYS[1] = lock key, KEYS[2] = locked_at key
+// ARGV[1] = task ID (lock value), ARGV[2] = TTL seconds, ARGV[3] = timestamp
+// Returns 1 if acquired, 0 if lock already held.
+var acquireLockScript = redis.NewScript(`
+if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'EX', ARGV[2]) then
+  redis.call('SET', KEYS[2], ARGV[3], 'EX', ARGV[2])
+  return 1
+end
+return 0
+`)
+
 // ts returns the current time as an ISO8601 UTC string (same format as task.py).
 func ts() string {
 	return time.Now().UTC().Format("2006-01-02T15:04:05Z")

@@ -68,7 +68,10 @@ func (dr *diagnosticsResource) get(w http.ResponseWriter, r *http.Request) {
 	}
 	diag["redis_memory"] = memInfo
 
-	keyCounts, _ := keySpaceCounts(ctx, rdb)
+	keyCounts, err := keySpaceCounts(ctx, rdb)
+	if err != nil {
+		slog.Warn("key-space count error", "error", err)
+	}
 	diag["key_counts"] = keyCounts
 
 	Respond(w, r, http.StatusOK, diag)

@@ -683,3 +683,54 @@ func TestCancelTaskAllCancelledByValues(t *testing.T) {
 		})
 	}
 }
+
+
+// ── stale-lock auto-clear test ────────────────────────────────────────────────
+
+func TestStaleLockAutoClearOnEnqueue(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Set up: create a thread, set a lock held by a "done" task (stale)
+	c.CreateThread(ctxbg(), "thr-stale", "")
+	c.rdb.Set(ctxbg(), ThreadLockKey("thr-stale"), "old-task-done", LockTTL)
+	c.rdb.Set(ctxbg(), ThreadLockedAtKey("thr-stale"), "2020-01-01T00:00:00Z", LockTTL)
+	// Mark the holder task as done (terminal)
+	c.rdb.Set(ctxbg(), TaskKey("old-task-done", "status"), "done", TTLTask)
+
+	// Enqueue should detect the stale lock, clear it, and acquire
+	task, err := c.Enqueue(ctxbg(), "claude", "thr-stale", "new work")
+	if err != nil {
+		t.Fatalf("Enqueue should succeed after stale-lock clear, got: %v", err)
+	}
+
+	// The new task should have acquired the lock
+	holder, _ := c.rdb.Get(ctxbg(), ThreadLockKey("thr-stale")).Result()
+	if holder != task.TaskID {
+		t.Errorf("expected lock holder to be new task '%s', got '%s'", task.TaskID, holder)
+	}
+
+	// locked_at should be set to a recent timestamp (not the old one)
+	lockedAt, _ := c.rdb.Get(ctxbg(), ThreadLockedAtKey("thr-stale")).Result()
+	if lockedAt == "2020-01-01T00:00:00Z" {
+		t.Error("locked_at should be updated, not the old stale value")
+	}
+	if lockedAt == "" {
+		t.Error("locked_at should be set after lock acquisition")
+	}
+}
+
+func TestStaleLockNotClearedForActiveHolder(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Set up: thread locked by a "running" task (active, not stale)
+	c.CreateThread(ctxbg(), "thr-active", "")
+	c.rdb.Set(ctxbg(), ThreadLockKey("thr-active"), "task-running", LockTTL)
+	c.rdb.Set(ctxbg(), ThreadLockedAtKey("thr-active"), "2020-01-01T00:00:00Z", LockTTL)
+	c.rdb.Set(ctxbg(), TaskKey("task-running", "status"), "running", TTLTask)
+
+	// Enqueue should fail because the lock holder is still active
+	_, err := c.Enqueue(ctxbg(), "claude", "thr-active", "wait your turn")
+	if err == nil {
+		t.Error("Enqueue should fail when lock holder is still active")
+	}
+}
