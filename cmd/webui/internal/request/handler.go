@@ -1,6 +1,7 @@
 package request
 
 import (
+	"io"
 	"bufio"
 	"context"
 	crand "crypto/rand"
@@ -349,35 +350,48 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 	stderrWg.Add(1)
 	go func() {
 		defer stderrWg.Done()
-		scanner := bufio.NewScanner(stderr)
-		scanner.Buffer(make([]byte, 64*1024), 64*1024)
-		for scanner.Scan() {
-			stderrMu.Lock()
-			lastStderr.WriteString(scanner.Text())
-			lastStderr.WriteByte('\n')
-			// Keep only the last 4KB
-			if lastStderr.Len() > 4096 {
-				s := lastStderr.String()
-				lastStderr.Reset()
-				lastStderr.WriteString(s[len(s)-4096:])
+		reader := bufio.NewReader(stderr)
+		for {
+			line, readErr := reader.ReadString('\n')
+			line = strings.TrimSuffix(line, "\n")
+			if line != "" {
+				stderrMu.Lock()
+				lastStderr.WriteString(line)
+				lastStderr.WriteByte('\n')
+				// Keep only the last 4KB
+				if lastStderr.Len() > 4096 {
+					s := lastStderr.String()
+					lastStderr.Reset()
+					lastStderr.WriteString(s[len(s)-4096:])
+				}
+				stderrMu.Unlock()
 			}
-			stderrMu.Unlock()
+			if readErr != nil {
+				break
+			}
 		}
 	}()
 
 	completed := false
 	lastWritten := "" // dedup: skip response if identical to last assistant message
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 64*1024), 64*1024) // 64KB line buffer
+	reader := bufio.NewReader(stdout)
 
-	for scanner.Scan() {
+	for {
 		if h.isCancelled(ctx) {
 			// Process was cancelled — claude will be killed by context
 			break
 		}
 
-		line := scanner.Bytes()
+		rawLine, readErr := reader.ReadString('\n')
+		rawLine = strings.TrimSuffix(rawLine, "\n")
+		line := []byte(rawLine)
 		if len(line) == 0 {
+			if readErr != nil {
+				if readErr != io.EOF {
+					h.logger.Info(fmt.Sprintf("thread=%s stdout reader error: %v", threadID, readErr))
+				}
+				break
+			}
 			continue
 		}
 
@@ -416,9 +430,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 			}
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		h.logger.Info(fmt.Sprintf("thread=%s stdout scanner error: %v", threadID, err))
-	}
+
 
 	// Wait for the process to exit (or kill it if timeout/cancelled).
 	// Must do this before reading lastStderr so the stderr pipe is closed
