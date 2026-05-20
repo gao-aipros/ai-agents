@@ -51,10 +51,11 @@ func main() {
 		}
 		return a
 	}
-	appHandler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+	handlerOpts := &slog.HandlerOptions{
 		Level:       logLevel,
 		ReplaceAttr: replaceAttr,
-	})
+	}
+	appHandler := slog.NewJSONHandler(os.Stderr, handlerOpts)
 	log := slog.New(appHandler).With("component", "webui")
 	slog.SetDefault(log)
 
@@ -62,7 +63,7 @@ func main() {
 	var accessLogger *slog.Logger
 	if accessEnabled {
 		accessHandler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-			Level:       logLevel,
+			Level:       slog.LevelInfo,
 			ReplaceAttr: replaceAttr,
 		})
 		accessLogger = slog.New(accessHandler)

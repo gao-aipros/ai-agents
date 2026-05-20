@@ -613,3 +613,32 @@ func TestAccessLogMiddleware_Enabled_ErrorStatus(t *testing.T) {
 		t.Errorf("log missing method: %s", buf.String())
 	}
 }
+
+func TestAccessLogMiddleware_Enabled_Implicit200(t *testing.T) {
+	var buf bytes.Buffer
+	h := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
+	logger := slog.New(h)
+
+	handler := accessLogMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	}))
+
+	r := httptest.NewRequest("GET", "/api/health?tail=10", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	output := buf.String()
+	if !strings.Contains(output, `"status":200`) {
+		t.Errorf("log missing implicit status 200: %s", output)
+	}
+	if !strings.Contains(output, `"bytes":2`) {
+		t.Errorf("log missing bytes (want 2): %s", output)
+	}
+	if !strings.Contains(output, `"query":"tail=10"`) {
+		t.Errorf("log missing query string: %s", output)
+	}
+}

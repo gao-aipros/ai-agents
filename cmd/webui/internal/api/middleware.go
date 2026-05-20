@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	chimw "github.com/go-chi/chi/v5/middleware"
 )
 
 const apiKeyCookieName = "webui_api_key"
@@ -277,53 +279,18 @@ func accessLogMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 				return
 			}
 			start := time.Now()
-			ww := newWrapResponseWriter(w, r.ProtoMajor)
+			ww := chimw.NewWrapResponseWriter(w, r.ProtoMajor)
 			next.ServeHTTP(ww, r)
 			logger.Info("request",
 				"method", r.Method,
 				"path", r.URL.Path,
+				"query", r.URL.RawQuery,
 				"status", ww.Status(),
 				"bytes", ww.BytesWritten(),
 				"duration_ms", time.Since(start).Milliseconds(),
 			)
 		})
 	}
-}
-
-type wrapResponseWriter struct {
-	http.ResponseWriter
-	status      int
-	bytes       int
-	wroteHeader bool
-}
-
-func newWrapResponseWriter(w http.ResponseWriter, protoMajor int) *wrapResponseWriter {
-	return &wrapResponseWriter{ResponseWriter: w, status: http.StatusOK}
-}
-
-func (w *wrapResponseWriter) BytesWritten() int {
-	return w.bytes
-}
-
-func (w *wrapResponseWriter) Status() int {
-	return w.status
-}
-
-func (w *wrapResponseWriter) WriteHeader(code int) {
-	if !w.wroteHeader {
-		w.status = code
-		w.wroteHeader = true
-	}
-	w.ResponseWriter.WriteHeader(code)
-}
-
-func (w *wrapResponseWriter) Write(b []byte) (int, error) {
-	if !w.wroteHeader {
-		w.wroteHeader = true
-	}
-	n, err := w.ResponseWriter.Write(b)
-	w.bytes += n
-	return n, err
 }
 
 // ── body size limit ───────────────────────────────────────────────────────
