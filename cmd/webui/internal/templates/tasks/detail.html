@@ -26,7 +26,7 @@
       </div>
       <div class="state-item">
         <div class="label">Created</div>
-        <div class="value mono" style="font-size:12px">{{if .Task.CreatedAt}}<time datetime="{{.Task.CreatedAt}}">{{.Task.CreatedAt}}</time>{{else}}-{{end}}</div>
+        <div class="value mono" style="font-size:12px">{{if .Task.EnqueuedAt}}<time datetime="{{.Task.EnqueuedAt}}">{{.Task.EnqueuedAt}}</time>{{else}}-{{end}}</div>
       </div>
       <div class="state-item">
         <div class="label">Completed</div>

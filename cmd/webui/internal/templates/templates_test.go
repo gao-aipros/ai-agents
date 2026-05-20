@@ -569,7 +569,7 @@ func TestTimeElement_TaskTable(t *testing.T) {
 		"TaskID":    "task-1",
 		"Worker":    "claude",
 		"Status":    "done",
-		"CreatedAt": "2026-05-19T14:30:00Z",
+		"EnqueuedAt": "2026-05-19T14:30:00Z",
 	}
 	data := map[string]interface{}{"Tasks": []interface{}{task}}
 
@@ -580,7 +580,7 @@ func TestTimeElement_TaskTable(t *testing.T) {
 	output := string(buf.data)
 
 	if !strings.Contains(output, `<time datetime="2026-05-19T14:30:00Z">`) {
-		t.Error("task-table should contain <time datetime=...> for CreatedAt")
+		t.Error("task-table should contain <time datetime=...> for EnqueuedAt")
 	}
 }
 
@@ -600,10 +600,10 @@ func TestTimeElement_TaskTable_Empty(t *testing.T) {
 	output := string(buf.data)
 
 	if strings.Contains(output, "<time") {
-		t.Error("task-table should not contain <time> when CreatedAt is empty")
+		t.Error("task-table should not contain <time> when EnqueuedAt is empty")
 	}
 	if !strings.Contains(output, ">-<") {
-		t.Error("task-table should show '-' fallback when CreatedAt is empty")
+		t.Error("task-table should show '-' fallback when EnqueuedAt is empty")
 	}
 }
 
@@ -617,7 +617,7 @@ func TestTimeElement_TaskDetail(t *testing.T) {
 		"TaskID":      "task-1",
 		"Worker":      "claude",
 		"Status":      "done",
-		"CreatedAt":   "2026-05-19T14:30:00Z",
+		"EnqueuedAt":   "2026-05-19T14:30:00Z",
 		"ExitCode":    "0",
 		"CompletedAt": "2026-05-19T14:35:00Z",
 		"Instruction":  "test",
@@ -631,7 +631,7 @@ func TestTimeElement_TaskDetail(t *testing.T) {
 	output := string(buf.data)
 
 	if !strings.Contains(output, `<time datetime="2026-05-19T14:30:00Z">`) {
-		t.Error("task detail should contain <time> for CreatedAt")
+		t.Error("task detail should contain <time> for EnqueuedAt")
 	}
 	if !strings.Contains(output, `<time datetime="2026-05-19T14:35:00Z">`) {
 		t.Error("task detail should contain <time> for CompletedAt")

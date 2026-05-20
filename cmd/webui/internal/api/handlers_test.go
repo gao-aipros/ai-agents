@@ -178,8 +178,8 @@ func TestHandleStats(t *testing.T) {
 
 	var resp map[string]interface{}
 	readJSON(w, &resp)
-	if _, ok := resp["total_tasks"]; !ok {
-		t.Error("stats missing total_tasks")
+	if _, ok := resp["tasks_enqueued_ever"]; !ok {
+		t.Error("stats missing tasks_enqueued_ever")
 	}
 	if _, ok := resp["queue_depths"]; !ok {
 		t.Error("stats missing queue_depths")

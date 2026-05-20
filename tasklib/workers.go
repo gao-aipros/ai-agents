@@ -18,6 +18,24 @@ type WorkerInfo struct {
 // WorkerStats is the full per-worker-type stats map.
 type WorkerStats map[string]*WorkerInfo
 
+// WorkerInstance represents a single worker instance (hostname-level).
+type WorkerInstance struct {
+	Hostname        string `json:"hostname"`
+	TasksProcessed  int    `json:"tasks_processed"`
+	QueueDepth      int    `json:"queue_depth"`
+	UptimeSeconds   int64  `json:"uptime_seconds"`
+	LastHeartbeatPayload string `json:"last_heartbeat"`
+	Online          bool   `json:"online"`
+}
+
+// HeartbeatData is the JSON payload written into heartbeat keys.
+type HeartbeatData struct {
+	Hostname       string `json:"hostname"`
+	TasksProcessed int    `json:"tasks_processed"`
+	QueueDepth     int    `json:"queue_depth"`
+	UptimeSeconds  int64  `json:"uptime_seconds"`
+}
+
 // GetWorkerStats retrieves stats for all worker types via SCAN on heartbeat keys.
 // Reports online count based on heartbeat key existence (TTL-based liveness).
 func (c *Client) GetWorkerStats(ctx context.Context) (WorkerStats, error) {
@@ -89,8 +107,62 @@ func (c *Client) GetWorkerInfo(ctx context.Context, workerType string) (*WorkerI
 	return info, nil
 }
 
-// UpdateWorkerHeartbeat sets a heartbeat key with 30s TTL.
-func (c *Client) UpdateWorkerHeartbeat(ctx context.Context, workerType, hostname string) error {
-	return c.rdb.SetEx(ctx, HeartbeatKey(workerType, hostname), "1", 30*time.Second).Err()
+// UpdateWorkerHeartbeat sets a heartbeat key with 30s TTL, writing a JSON
+// payload with instance-level data (hostname, tasks_processed, etc.).
+func (c *Client) UpdateWorkerHeartbeat(ctx context.Context, workerType, hostname string, data HeartbeatData) error {
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshal heartbeat: %w", err)
+	}
+	return c.rdb.SetEx(ctx, HeartbeatKey(workerType, hostname), string(payload), 30*time.Second).Err()
 }
 
+// GetWorkerInstances returns per-hostname detail for a worker type by parsing
+// heartbeat JSON values from the existing SCAN.
+func (c *Client) GetWorkerInstances(ctx context.Context, workerType string) ([]WorkerInstance, error) {
+	pattern := fmt.Sprintf("worker:%s:*:heartbeat", workerType)
+	var instances []WorkerInstance
+
+	var cursor uint64
+	for {
+		keys, nextCursor, err := c.rdb.Scan(ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return nil, fmt.Errorf("scan worker instances: %w", err)
+		}
+		for _, key := range keys {
+			parts := strings.SplitN(key, ":", 4)
+			if len(parts) < 4 {
+				continue
+			}
+			hostname := parts[2]
+
+			raw, err := c.rdb.Get(ctx, key).Result()
+			if err != nil {
+				continue
+			}
+
+			var hb HeartbeatData
+			if err := json.Unmarshal([]byte(raw), &hb); err != nil {
+				// Backward-compat: old format was literal "1"
+				hb = HeartbeatData{Hostname: hostname}
+			}
+
+			ttl, _ := c.rdb.TTL(ctx, key).Result()
+			online := ttl > 0
+
+			instances = append(instances, WorkerInstance{
+				Hostname:        hb.Hostname,
+				TasksProcessed:  hb.TasksProcessed,
+				QueueDepth:      hb.QueueDepth,
+				UptimeSeconds:   hb.UptimeSeconds,
+				LastHeartbeatPayload: raw,
+				Online:          online,
+			})
+		}
+		cursor = nextCursor
+		if cursor == 0 {
+			break
+		}
+	}
+	return instances, nil
+}
