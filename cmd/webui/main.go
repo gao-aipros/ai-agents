@@ -76,7 +76,6 @@ func main() {
 	}
 
 	adminAPIKey := env.String("ADMIN_API_KEY", os.Getenv("WEBUI_API_KEY"))
-	api.SetAdminKey(adminAPIKey)
 
 	cfg := request.DefaultConfig()
 	port := env.String("WEBUI_PORT", "8000")

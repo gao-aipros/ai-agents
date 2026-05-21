@@ -27,7 +27,7 @@ func TestAdminAuthMiddleware_NoKeySet(t *testing.T) {
 	}
 }
 
-func TestAdminAuthMiddleware_KeySet_NoHeader(t *testing.T) {
+func TestAdminAuthMiddleware_MissingAuth(t *testing.T) {
 	handler := adminAuthMiddleware("admin-secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -39,9 +39,12 @@ func TestAdminAuthMiddleware_KeySet_NoHeader(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
 	}
+	if !strings.Contains(w.Body.String(), "missing admin API key") {
+		t.Errorf("body should say 'missing admin API key', got %q", w.Body.String())
+	}
 }
 
-func TestAdminAuthMiddleware_KeySet_ValidBearer(t *testing.T) {
+func TestAdminAuthMiddleware_ValidBearer(t *testing.T) {
 	handler := adminAuthMiddleware("admin-secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -56,13 +59,31 @@ func TestAdminAuthMiddleware_KeySet_ValidBearer(t *testing.T) {
 	}
 }
 
-func TestAdminAuthMiddleware_KeySet_WrongKey(t *testing.T) {
+func TestAdminAuthMiddleware_InvalidBearer(t *testing.T) {
 	handler := adminAuthMiddleware("admin-secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
 	r := httptest.NewRequest("GET", "/api/admin/log-access", nil)
 	r.Header.Set("Authorization", "Bearer wrong-key")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+	if !strings.Contains(w.Body.String(), "invalid admin API key") {
+		t.Errorf("body should say 'invalid admin API key', got %q", w.Body.String())
+	}
+}
+
+func TestAdminAuthMiddleware_WrongScheme(t *testing.T) {
+	handler := adminAuthMiddleware("admin-secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r := httptest.NewRequest("GET", "/api/admin/log-access", nil)
+	r.Header.Set("Authorization", "Basic admin-secret")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
 
@@ -184,7 +205,6 @@ func TestAdminPutLogAccess_IdempotentEnable(t *testing.T) {
 	h := newAdminTestHarness()
 	h.accessLog.Store(h.newAccessLogger()) // already enabled
 
-	// First PUT: same state, should return 200 with enabled=true
 	w := h.Do("PUT", "/api/admin/log-access", `{"enabled":true}`)
 
 	if w.Code != http.StatusOK {
@@ -214,13 +234,11 @@ func TestAdminPutLogAccess_IdempotentDisable(t *testing.T) {
 func TestAdminPutLogAccess_EnableCreatesWorkingLogger(t *testing.T) {
 	h := newAdminTestHarness()
 
-	// Enable logging
 	w := h.Do("PUT", "/api/admin/log-access", `{"enabled":true}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("enable failed: %d", w.Code)
 	}
 
-	// Verify the logger actually logs
 	logger := h.accessLog.Load()
 	if logger == nil {
 		t.Fatal("logger is nil after enable")
@@ -266,6 +284,27 @@ func TestAdminPutLogAccess_InvalidJSON(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+}
+
+func TestAdminPutLogAccess_TrailingGarbage(t *testing.T) {
+	h := newAdminTestHarness()
+	w := h.Do("PUT", "/api/admin/log-access", `{"enabled":true}garbage`)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+}
+
+func TestAdminPutLogAccess_MissingContentType(t *testing.T) {
+	h := newAdminTestHarness()
+	r := httptest.NewRequest("PUT", "/api/admin/log-access", strings.NewReader(`{"enabled":true}`))
+	// Don't set Content-Type
+	w := httptest.NewRecorder()
+	h.admin.logAccessHandler(w, r)
+
+	if w.Code != http.StatusUnsupportedMediaType {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusUnsupportedMediaType)
 	}
 }
 

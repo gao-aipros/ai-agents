@@ -21,7 +21,7 @@ import (
 func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templates.Renderer, shutdownCtx context.Context, accessLog *atomic.Pointer[slog.Logger], adminKey string, newAccessLogger func() *slog.Logger) chi.Router {
 	r := chi.NewRouter()
 
-	// Middleware stack
+	// Middleware stack (all middleware must be registered before any routes in chi)
 	r.Use(sanitizeQueryMiddleware)
 	r.Use(accessLogMiddleware(accessLog))
 	r.Use(chimw.RealIP)
@@ -94,7 +94,7 @@ func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templ
 		r.Get("/tasks/{task_id}", tsk.get)
 		r.Get("/tasks/{task_id}/result", tsk.result)
 
-		// Admin
+		// Admin (gated by adminAuthMiddleware; authMiddleware skips /api/admin/ paths)
 		admin := &adminResource{accessLog: accessLog, newAccessLogger: newAccessLogger}
 		r.With(adminAuthMiddleware(adminKey)).Get("/admin/log-access", admin.logAccessHandler)
 		r.With(adminAuthMiddleware(adminKey)).Put("/admin/log-access", admin.logAccessHandler)

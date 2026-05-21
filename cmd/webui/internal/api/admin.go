@@ -1,9 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync/atomic"
 )
 
@@ -41,14 +44,27 @@ func (a *adminResource) getLogAccess(w http.ResponseWriter) {
 }
 
 func (a *adminResource) putLogAccess(w http.ResponseWriter, r *http.Request) {
+	ct := r.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "application/json") {
+		Error(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		Error(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+
 	var req logAccessRequest
-	dec := json.NewDecoder(r.Body)
+	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
 		Error(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
-	if dec.More() {
+	// Drain remaining data; any non-EOF token or error means trailing junk.
+	if _, err := dec.Token(); err != io.EOF {
 		Error(w, http.StatusBadRequest, "invalid request body: extra data after JSON object")
 		return
 	}

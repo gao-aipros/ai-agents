@@ -20,19 +20,12 @@ const apiKeyCookieName = "webui_api_key"
 // ── auth ──────────────────────────────────────────────────────────────────
 
 var apiKey string
-var adminKey string
 
 func init() {
 	apiKey = os.Getenv("WEBUI_API_KEY")
 	if apiKey == "" {
 		slog.Warn(fmt.Sprintf("[webui] WARNING: WEBUI_API_KEY is not set — all /api/ endpoints are open (no auth)"))
 	}
-}
-
-// SetAdminKey sets the admin API key used by authMiddleware (as an additional
-// valid key) and adminAuthMiddleware. Falls back to WEBUI_API_KEY when empty.
-func SetAdminKey(key string) {
-	adminKey = key
 }
 
 type contextKey string
@@ -65,10 +58,12 @@ func sanitizeQueryMiddleware(next http.Handler) http.Handler {
 // parameter, or webui_api_key cookie when WEBUI_API_KEY is configured. When the
 // API key is provided via query string or header, it is persisted as a session
 // cookie so subsequent navigation (links, HTMX requests) stays authenticated.
+// Admin endpoints (/api/admin/*) are skipped — they have their own auth via
+// adminAuthMiddleware.
 func authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Static assets don't require authentication
-		if strings.HasPrefix(r.URL.Path, "/static/") {
+		// Static assets and admin endpoints don't use this auth middleware
+		if strings.HasPrefix(r.URL.Path, "/static/") || strings.HasPrefix(r.URL.Path, "/api/admin/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -94,7 +89,7 @@ func authMiddleware(next http.Handler) http.Handler {
 			Error(w, http.StatusUnauthorized, "missing API key (provide Authorization: Bearer header, ?api_key= query parameter, or webui_api_key cookie)")
 			return
 		}
-		if token != apiKey && token != adminKey {
+		if token != apiKey {
 			Error(w, http.StatusUnauthorized, "invalid API key")
 			return
 		}
@@ -306,8 +301,9 @@ func accessLogMiddleware(accessLog *atomic.Pointer[slog.Logger]) func(http.Handl
 // ── admin auth ────────────────────────────────────────────────────────────
 
 // adminAuthMiddleware validates the Authorization: Bearer header against the
-// admin API key. Returns 401 on mismatch. The key defaults to WEBUI_API_KEY
-// when ADMIN_API_KEY is not set.
+// admin API key. Admin endpoints accept only Bearer tokens (not query params
+// or cookies) because they toggle server-wide state. The key defaults to an
+// empty check (all requests pass) when adminKey is "".
 func adminAuthMiddleware(adminKey string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -315,15 +311,13 @@ func adminAuthMiddleware(adminKey string) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			token := ""
-			if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
-				token = strings.TrimPrefix(auth, "Bearer ")
-			} else if q := r.URL.Query().Get("api_key"); q != "" {
-				token = q
-			} else if ck, err := r.Cookie(apiKeyCookieName); err == nil && ck.Value != "" {
-				token = ck.Value
+			auth := r.Header.Get("Authorization")
+			if !strings.HasPrefix(auth, "Bearer ") {
+				Error(w, http.StatusUnauthorized, "missing admin API key (provide Authorization: Bearer header)")
+				return
 			}
-			if token == "" || token != adminKey {
+			token := strings.TrimPrefix(auth, "Bearer ")
+			if token != adminKey {
 				Error(w, http.StatusUnauthorized, "invalid admin API key")
 				return
 			}
