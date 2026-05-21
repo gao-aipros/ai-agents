@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-ARG CLAUDE_VERSION=stable
+ARG CLAUDE_VERSION=latest
 RUN curl -sL https://claude.ai/install.sh | bash -s -- "$CLAUDE_VERSION"
 
 # Build stage: download skills
