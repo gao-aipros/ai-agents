@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -60,14 +61,22 @@ func main() {
 	slog.SetDefault(log)
 
 	accessEnabled := *logAccessFlag || strings.ToLower(os.Getenv("LOG_ACCESS")) == "true"
-	var accessLogger *slog.Logger
-	if accessEnabled {
-		accessHandler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+
+	newAccessLogger := func() *slog.Logger {
+		handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
 			Level:       slog.LevelInfo,
 			ReplaceAttr: replaceAttr,
 		})
-		accessLogger = slog.New(accessHandler)
+		return slog.New(handler)
 	}
+
+	var accessLog atomic.Pointer[slog.Logger]
+	if accessEnabled {
+		accessLog.Store(newAccessLogger())
+	}
+
+	adminAPIKey := env.String("ADMIN_API_KEY", os.Getenv("WEBUI_API_KEY"))
+	api.SetAdminKey(adminAPIKey)
 
 	cfg := request.DefaultConfig()
 	port := env.String("WEBUI_PORT", "8000")
@@ -107,7 +116,7 @@ func main() {
 	}
 
 	// Build chi router with page routes, API endpoints, and static files
-	router := api.NewRouter(client, reqHandler, renderer, bgCtx, accessLogger)
+	router := api.NewRouter(client, reqHandler, renderer, bgCtx, &accessLog, adminAPIKey, newAccessLogger)
 
 	srv := &http.Server{
 		Addr:    ":" + port,

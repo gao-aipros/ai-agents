@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	chimw "github.com/go-chi/chi/v5/middleware"
@@ -19,12 +20,19 @@ const apiKeyCookieName = "webui_api_key"
 // ── auth ──────────────────────────────────────────────────────────────────
 
 var apiKey string
+var adminKey string
 
 func init() {
 	apiKey = os.Getenv("WEBUI_API_KEY")
 	if apiKey == "" {
 		slog.Warn(fmt.Sprintf("[webui] WARNING: WEBUI_API_KEY is not set — all /api/ endpoints are open (no auth)"))
 	}
+}
+
+// SetAdminKey sets the admin API key used by authMiddleware (as an additional
+// valid key) and adminAuthMiddleware. Falls back to WEBUI_API_KEY when empty.
+func SetAdminKey(key string) {
+	adminKey = key
 }
 
 type contextKey string
@@ -86,7 +94,7 @@ func authMiddleware(next http.Handler) http.Handler {
 			Error(w, http.StatusUnauthorized, "missing API key (provide Authorization: Bearer header, ?api_key= query parameter, or webui_api_key cookie)")
 			return
 		}
-		if token != apiKey {
+		if token != apiKey && token != adminKey {
 			Error(w, http.StatusUnauthorized, "invalid API key")
 			return
 		}
@@ -269,11 +277,13 @@ func rateLimitMiddleware(rl *rateLimiter) func(http.Handler) http.Handler {
 
 // ── access log ────────────────────────────────────────────────────────────
 
-// accessLogMiddleware logs HTTP requests via the provided slog.Logger.
-// When logger is nil, it's a no-op (access logging disabled).
-func accessLogMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
+// accessLogMiddleware logs HTTP requests via the shared access logger.
+// The logger is stored in an atomic.Pointer for runtime toggling.
+// When the pointer is nil, it's a no-op (access logging disabled).
+func accessLogMiddleware(accessLog *atomic.Pointer[slog.Logger]) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			logger := accessLog.Load()
 			if logger == nil {
 				next.ServeHTTP(w, r)
 				return
@@ -289,6 +299,35 @@ func accessLogMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 				"bytes", ww.BytesWritten(),
 				"duration_ms", time.Since(start).Milliseconds(),
 			)
+		})
+	}
+}
+
+// ── admin auth ────────────────────────────────────────────────────────────
+
+// adminAuthMiddleware validates the Authorization: Bearer header against the
+// admin API key. Returns 401 on mismatch. The key defaults to WEBUI_API_KEY
+// when ADMIN_API_KEY is not set.
+func adminAuthMiddleware(adminKey string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if adminKey == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			token := ""
+			if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+				token = strings.TrimPrefix(auth, "Bearer ")
+			} else if q := r.URL.Query().Get("api_key"); q != "" {
+				token = q
+			} else if ck, err := r.Cookie(apiKeyCookieName); err == nil && ck.Value != "" {
+				token = ck.Value
+			}
+			if token == "" || token != adminKey {
+				Error(w, http.StatusUnauthorized, "invalid admin API key")
+				return
+			}
+			next.ServeHTTP(w, r)
 		})
 	}
 }

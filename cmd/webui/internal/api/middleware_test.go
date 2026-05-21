@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -541,7 +542,9 @@ func TestAPIKeyInitWarning(t *testing.T) {
 // ── access log middleware tests ────────────────────────────────────────────
 
 func TestAccessLogMiddleware_NilLogger_NoOp(t *testing.T) {
-	handler := accessLogMiddleware(nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var accessLog atomic.Pointer[slog.Logger]
+	// accessLog starts as nil (not stored) — same as disabled
+	handler := accessLogMiddleware(&accessLog)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -559,7 +562,10 @@ func TestAccessLogMiddleware_Enabled_LogsRequest(t *testing.T) {
 	h := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
 	logger := slog.New(h)
 
-	handler := accessLogMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var accessLog atomic.Pointer[slog.Logger]
+	accessLog.Store(logger)
+
+	handler := accessLogMiddleware(&accessLog)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("hello"))
 	}))
@@ -595,7 +601,10 @@ func TestAccessLogMiddleware_Enabled_ErrorStatus(t *testing.T) {
 	h := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
 	logger := slog.New(h)
 
-	handler := accessLogMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var accessLog atomic.Pointer[slog.Logger]
+	accessLog.Store(logger)
+
+	handler := accessLogMiddleware(&accessLog)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 
@@ -619,7 +628,10 @@ func TestAccessLogMiddleware_Enabled_Implicit200(t *testing.T) {
 	h := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})
 	logger := slog.New(h)
 
-	handler := accessLogMiddleware(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var accessLog atomic.Pointer[slog.Logger]
+	accessLog.Store(logger)
+
+	handler := accessLogMiddleware(&accessLog)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))
 	}))
 
