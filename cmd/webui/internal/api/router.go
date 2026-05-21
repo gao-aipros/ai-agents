@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
@@ -17,12 +18,12 @@ import (
 )
 
 // NewRouter creates a chi router with all /api/ endpoints and page routes.
-func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templates.Renderer, shutdownCtx context.Context, accessLogger *slog.Logger) chi.Router {
+func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templates.Renderer, shutdownCtx context.Context, accessLog *atomic.Pointer[slog.Logger], adminKey string, newAccessLogger func() *slog.Logger) chi.Router {
 	r := chi.NewRouter()
 
-	// Middleware stack
+	// Middleware stack (all middleware must be registered before any routes in chi)
 	r.Use(sanitizeQueryMiddleware)
-	r.Use(accessLogMiddleware(accessLogger))
+	r.Use(accessLogMiddleware(accessLog))
 	r.Use(chimw.RealIP)
 	r.Use(recoverMiddleware)
 	r.Use(authMiddleware)
@@ -92,6 +93,11 @@ func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templ
 		r.Get("/tasks", tsk.list)
 		r.Get("/tasks/{task_id}", tsk.get)
 		r.Get("/tasks/{task_id}/result", tsk.result)
+
+		// Admin (gated by adminAuthMiddleware; authMiddleware skips /api/admin/ paths)
+		admin := &adminResource{accessLog: accessLog, newAccessLogger: newAccessLogger}
+		r.With(adminAuthMiddleware(adminKey)).Get("/admin/log-access", admin.logAccessHandler)
+		r.With(adminAuthMiddleware(adminKey)).Put("/admin/log-access", admin.logAccessHandler)
 	})
 
 	// Start rate limiter cleanup goroutines

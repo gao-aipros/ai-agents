@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	chimw "github.com/go-chi/chi/v5/middleware"
@@ -57,10 +58,12 @@ func sanitizeQueryMiddleware(next http.Handler) http.Handler {
 // parameter, or webui_api_key cookie when WEBUI_API_KEY is configured. When the
 // API key is provided via query string or header, it is persisted as a session
 // cookie so subsequent navigation (links, HTMX requests) stays authenticated.
+// Admin endpoints (/api/admin/*) are skipped — they have their own auth via
+// adminAuthMiddleware.
 func authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Static assets don't require authentication
-		if strings.HasPrefix(r.URL.Path, "/static/") {
+		// Static assets and admin endpoints don't use this auth middleware
+		if strings.HasPrefix(r.URL.Path, "/static/") || strings.HasPrefix(r.URL.Path, "/api/admin/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -277,11 +280,13 @@ func rateLimitMiddleware(rl *rateLimiter) func(http.Handler) http.Handler {
 
 // ── access log ────────────────────────────────────────────────────────────
 
-// accessLogMiddleware logs HTTP requests via the provided slog.Logger.
-// When logger is nil, it's a no-op (access logging disabled).
-func accessLogMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
+// accessLogMiddleware logs HTTP requests via the shared access logger.
+// The logger is stored in an atomic.Pointer for runtime toggling.
+// When the pointer is nil, it's a no-op (access logging disabled).
+func accessLogMiddleware(accessLog *atomic.Pointer[slog.Logger]) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			logger := accessLog.Load()
 			if logger == nil {
 				next.ServeHTTP(w, r)
 				return
@@ -297,6 +302,34 @@ func accessLogMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
 				"bytes", ww.BytesWritten(),
 				"duration_ms", time.Since(start).Milliseconds(),
 			)
+		})
+	}
+}
+
+// ── admin auth ────────────────────────────────────────────────────────────
+
+// adminAuthMiddleware validates the Authorization: Bearer header against the
+// admin API key. Admin endpoints accept only Bearer tokens (not query params
+// or cookies) because they toggle server-wide state. The key defaults to an
+// empty check (all requests pass) when adminKey is "".
+func adminAuthMiddleware(adminKey string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if adminKey == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			auth := r.Header.Get("Authorization")
+			if !strings.HasPrefix(auth, "Bearer ") {
+				Error(w, http.StatusUnauthorized, "missing admin API key (provide Authorization: Bearer header)")
+				return
+			}
+			token := strings.TrimPrefix(auth, "Bearer ")
+			if token != adminKey {
+				Error(w, http.StatusUnauthorized, "invalid admin API key")
+				return
+			}
+			next.ServeHTTP(w, r)
 		})
 	}
 }

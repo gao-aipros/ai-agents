@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -74,7 +76,9 @@ func newTestRouter(t *testing.T) *testHarness {
 	if err != nil {
 		t.Fatalf("templates.New: %v", err)
 	}
-	router := NewRouter(client, handler, renderer, bgCtx, nil)
+	var accessLog atomic.Pointer[slog.Logger]
+	newAccessLogger := func() *slog.Logger { return nil }
+	router := NewRouter(client, handler, renderer, bgCtx, &accessLog, "", newAccessLogger)
 
 	return &testHarness{
 		Router:       router,
