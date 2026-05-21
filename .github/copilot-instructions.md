@@ -206,3 +206,91 @@ TTL constants: tasks 24h, threads 7 days, locks 35 minutes (timeout + margin).
 ### Service environment
 
 Rename `.env.example` to `.env` and fill in per-agent `*_GH_TOKEN` values and `DEEPSEEK_API_KEY`. Run with `docker compose up -d`. The web UI is at `http://localhost:8000`.
+
+## Debugging
+
+### Quick reference
+
+| Need | Command |
+|------|---------|
+| Thread diagnosis | `task why --thread <id>` |
+| Task lifecycle | `task status --id <task-id>` |
+| Thread events | `task thread-state --id <thread-id>` |
+| System events | `task events --limit 50` |
+| Worker instances | `curl -H "Authorization: Bearer $WEBUI_API_KEY" http://localhost:8000/api/workers/<type>/instances` |
+| Health check | `curl -H "Authorization: Bearer $WEBUI_API_KEY" http://localhost:8000/api/diagnostics` |
+| Access log state | `curl -H "Authorization: Bearer $ADMIN_API_KEY" http://localhost:8000/api/admin/log-access` |
+| Toggle access log on | `curl -X PUT -H "Authorization: Bearer $ADMIN_API_KEY" -H "Content-Type: application/json" -d '{"enabled":true}' http://localhost:8000/api/admin/log-access` |
+| Toggle access log off | `curl -X PUT -H "Authorization: Bearer $ADMIN_API_KEY" -H "Content-Type: application/json" -d '{"enabled":false}' http://localhost:8000/api/admin/log-access` |
+
+### Common workflows
+
+**"Why is this thread stuck?"**
+```bash
+task why --thread <id>
+# Look at: lock_state, stuck_tasks, recent_events
+```
+
+**"Did the task actually start?"**
+```bash
+task status --id <task-id>
+# Check: enqueued_at, started_at, last_started_at, retry_count
+```
+
+**"Which worker ran this and where?"**
+```bash
+task status --id <task-id>
+# Check: worker_hostname
+```
+
+**"Why was this task cancelled?"**
+```bash
+task status --id <task-id>
+# Check: cancelled_by, cancelled_at, cancelled_previous_status
+```
+
+**"What happened in this thread?"**
+```bash
+task thread-state --id <thread-id>
+# Check: task summary by status, recent events tail (last 20)
+```
+
+**"What happened across the system?"**
+```bash
+task events --limit 100
+# Or: curl -H "Authorization: Bearer $WEBUI_API_KEY" "http://localhost:8000/api/events?limit=100"
+```
+
+**"Is anything broken right now?"**
+```bash
+curl -H "Authorization: Bearer $WEBUI_API_KEY" http://localhost:8000/api/diagnostics
+# Check: stale_tasks, locks, queue_depths, redis_memory
+```
+
+**"Which instances of a worker type are running?"**
+```bash
+curl -H "Authorization: Bearer $WEBUI_API_KEY" http://localhost:8000/api/workers/claude/instances
+# Returns per-hostname data: uptime, tasks_processed, current_task_id, queue_depth
+```
+
+**"How do I toggle access logging at runtime?"**
+```bash
+# Check current state
+curl -H "Authorization: Bearer $ADMIN_API_KEY" http://localhost:8000/api/admin/log-access
+# → {"enabled":false}
+
+# Enable (all subsequent HTTP requests logged to stderr as JSON)
+curl -X PUT \
+  -H "Authorization: Bearer $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":true}' \
+  http://localhost:8000/api/admin/log-access
+
+# Disable
+curl -X PUT \
+  -H "Authorization: Bearer $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":false}' \
+  http://localhost:8000/api/admin/log-access
+```
+Admin endpoints use Bearer auth with `ADMIN_API_KEY` (falls back to `WEBUI_API_KEY` if not set). The toggle is in-memory only — restart reverts to the startup flag (`--log-access` / `LOG_ACCESS`). Toggling does not interrupt in-flight master agent work.

@@ -227,6 +227,9 @@ See `.env.example` for all variables. Key ones:
 | System events | `task events --limit 50` |
 | Worker instances | `curl -H "Authorization: Bearer $WEBUI_API_KEY" http://localhost:8000/api/workers/<type>/instances` |
 | Health check | `curl -H "Authorization: Bearer $WEBUI_API_KEY" http://localhost:8000/api/diagnostics` |
+| Access log state | `curl -H "Authorization: Bearer $ADMIN_API_KEY" http://localhost:8000/api/admin/log-access` |
+| Toggle access log on | `curl -X PUT -H "Authorization: Bearer $ADMIN_API_KEY" -H "Content-Type: application/json" -d '{"enabled":true}' http://localhost:8000/api/admin/log-access` |
+| Toggle access log off | `curl -X PUT -H "Authorization: Bearer $ADMIN_API_KEY" -H "Content-Type: application/json" -d '{"enabled":false}' http://localhost:8000/api/admin/log-access` |
 
 ### Common workflows
 
@@ -277,3 +280,25 @@ curl -H "Authorization: Bearer $WEBUI_API_KEY" http://localhost:8000/api/diagnos
 curl -H "Authorization: Bearer $WEBUI_API_KEY" http://localhost:8000/api/workers/claude/instances
 # Returns per-hostname data: uptime, tasks_processed, current_task_id, queue_depth
 ```
+
+**"How do I toggle access logging at runtime?"**
+```bash
+# Check current state
+curl -H "Authorization: Bearer $ADMIN_API_KEY" http://localhost:8000/api/admin/log-access
+# → {"enabled":false}
+
+# Enable (all subsequent HTTP requests logged to stderr as JSON)
+curl -X PUT \
+  -H "Authorization: Bearer $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":true}' \
+  http://localhost:8000/api/admin/log-access
+
+# Disable
+curl -X PUT \
+  -H "Authorization: Bearer $ADMIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":false}' \
+  http://localhost:8000/api/admin/log-access
+```
+Admin endpoints use Bearer auth with `ADMIN_API_KEY` (falls back to `WEBUI_API_KEY` if not set). The toggle is in-memory only — restart reverts to the startup flag (`--log-access` / `LOG_ACCESS`). Toggling does not interrupt in-flight master agent work.
