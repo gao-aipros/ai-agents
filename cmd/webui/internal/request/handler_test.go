@@ -510,6 +510,45 @@ func TestSubmit_EmptyOutput(t *testing.T) {
 	}
 }
 
+func TestSubmit_EmptyOutputWithStderr(t *testing.T) {
+	handler, _, notify := newTestHandler(t)
+
+	// Exit 0 with no stdout + non-empty stderr → error includes stderr detail
+	handler.cfg.ClaudePath = writeFakeClaudeWithStderr(
+		handler.cfg.WorkspaceDir,
+		nil,
+		[]string{"some stderr output"},
+		0,
+	)
+
+	ctx := context.Background()
+	_, err := handler.Submit(ctx, "empty-stderr-thread", "Do something", "")
+	if err != nil {
+		t.Fatalf("Submit failed: %v", err)
+	}
+
+	_, ok := waitForNotification(notify, 5*time.Second)
+	if !ok {
+		t.Fatal("timeout waiting for subprocess")
+	}
+
+	msgs, err := handler.client.GetThreadHistory(ctx, "empty-stderr-thread", 0, 0)
+	if err != nil {
+		t.Fatalf("GetThreadHistory: %v", err)
+	}
+
+	last := msgs[len(msgs)-1]
+	if last.Type != "error" {
+		t.Errorf("last message type = %q, want error (empty output)", last.Type)
+	}
+	if !strings.Contains(last.Content, "exited without producing output") {
+		t.Errorf("error should mention no output, got: %q", last.Content)
+	}
+	if !strings.Contains(last.Content, "some stderr output") {
+		t.Errorf("error should contain stderr detail, got: %q", last.Content)
+	}
+}
+
 func TestStderrCapturedOnError(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
