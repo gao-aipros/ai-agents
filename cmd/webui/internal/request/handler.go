@@ -432,7 +432,15 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		} else {
 			result := strings.TrimSpace(fullStdout.String())
 			if result == "" {
-				h.writeErrorMessage(ctx, threadID, "claude exited without producing output")
+				stderrMu.Lock()
+				errDetail := strings.TrimSpace(lastStderr.String())
+				stderrMu.Unlock()
+				errMsg := "claude exited without producing output"
+				if errDetail != "" {
+					errMsg = fmt.Sprintf("claude exited without producing output (stderr: %s)", errDetail)
+					h.logger.Info(fmt.Sprintf("thread=%s claude stderr: %s", threadID, errDetail))
+				}
+				h.writeErrorMessage(ctx, threadID, errMsg)
 			} else {
 				h.writeResponseMessage(ctx, threadID, result)
 			}
