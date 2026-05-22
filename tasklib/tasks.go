@@ -485,6 +485,9 @@ func (c *Client) ListTasks(ctx context.Context, worker, status, threadID string,
 		}
 		if task.CompletedAt == "" {
 			task.CompletedAt, _ = c.rdb.Get(ctx, TaskKey(task.TaskID, "completed_at")).Result()
+			if task.CompletedAt == "" {
+				task.CompletedAt = "-"
+			}
 		}
 
 		// Apply filters

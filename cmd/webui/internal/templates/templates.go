@@ -204,14 +204,16 @@ func dict(values ...interface{}) map[string]interface{} {
 // For in-progress statuses (running, pending, initiated), end is ignored and now is used.
 // For terminal statuses, end is used directly.
 func runtimeForStatus(startRaw, endRaw, status string) string {
-	if status == "running" || status == "pending" || status == "initiated" {
+	if status == "running" || status == "pending" || status == "initiated" || status == "reviewing" {
 		return formatRuntime(startRaw, "")
 	}
 	return formatRuntime(startRaw, endRaw)
 }
 
 // formatRuntime computes and formats a duration between two RFC 3339 timestamps.
-// If end is empty, uses the current time. Returns "-" for invalid or negative durations.
+// If end is empty, uses the current time (for in-progress items).
+// If end is "-", start is empty/"-", or either parse fails, returns "-".
+// Returns "-" for negative durations.
 func formatRuntime(startRaw, endRaw string) string {
 	if startRaw == "" || startRaw == "-" {
 		return "-"
@@ -221,12 +223,14 @@ func formatRuntime(startRaw, endRaw string) string {
 		return "-"
 	}
 	var end time.Time
-	if endRaw == "" || endRaw == "-" {
+	if endRaw == "" {
 		end = time.Now().UTC()
+	} else if endRaw == "-" {
+		return "-"
 	} else {
 		end, err = time.Parse(time.RFC3339, endRaw)
 		if err != nil {
-			end = time.Now().UTC()
+			return "-"
 		}
 	}
 	d := end.Sub(start)

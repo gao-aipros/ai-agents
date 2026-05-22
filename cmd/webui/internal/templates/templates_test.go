@@ -752,3 +752,227 @@ func TestTimeElement_BasePage_IncludesLocalizeTimestamps(t *testing.T) {
 		t.Error("base page should hook htmx:afterSwap for localizeTimestamps")
 	}
 }
+
+// ── formatRuntime ──────────────────────────────────────────────────────────
+
+func TestFormatRuntime_EmptyStart(t *testing.T) {
+	if got := formatRuntime("", "2026-05-19T14:35:00Z"); got != "-" {
+		t.Errorf("formatRuntime(empty, end) = %q, want \"-\"", got)
+	}
+}
+
+func TestFormatRuntime_DashStart(t *testing.T) {
+	if got := formatRuntime("-", "2026-05-19T14:35:00Z"); got != "-" {
+		t.Errorf("formatRuntime(\"-\", end) = %q, want \"-\"", got)
+	}
+}
+
+func TestFormatRuntime_StartParseFailure(t *testing.T) {
+	if got := formatRuntime("not-a-timestamp", "2026-05-19T14:35:00Z"); got != "-" {
+		t.Errorf("formatRuntime(bad start, end) = %q, want \"-\"", got)
+	}
+}
+
+func TestFormatRuntime_EndDashSentinel(t *testing.T) {
+	if got := formatRuntime("2026-05-19T14:30:00Z", "-"); got != "-" {
+		t.Errorf("formatRuntime(start, \"-\") = %q, want \"-\"", got)
+	}
+}
+
+func TestFormatRuntime_EndParseFailure(t *testing.T) {
+	if got := formatRuntime("2026-05-19T14:30:00Z", "garbage"); got != "-" {
+		t.Errorf("formatRuntime(start, bad end) = %q, want \"-\"", got)
+	}
+}
+
+func TestFormatRuntime_EndEmptyUsesNow(t *testing.T) {
+	// With a past start and empty end, should produce a positive duration (not "-").
+	got := formatRuntime("2026-05-19T14:30:00Z", "")
+	if got == "-" {
+		t.Error("formatRuntime(start, \"\") = \"-\", want a non-negative duration using now")
+	}
+	// Should contain at least a number and unit suffix.
+	if len(got) < 2 {
+		t.Errorf("formatRuntime(start, \"\") = %q, too short for a duration", got)
+	}
+}
+
+func TestFormatRuntime_NegativeDuration(t *testing.T) {
+	if got := formatRuntime("2026-05-19T14:35:00Z", "2026-05-19T14:30:00Z"); got != "-" {
+		t.Errorf("formatRuntime(later, earlier) = %q, want \"-\"", got)
+	}
+}
+
+func TestFormatRuntime_ZeroDuration(t *testing.T) {
+	got := formatRuntime("2026-05-19T14:30:00Z", "2026-05-19T14:30:00Z")
+	if got != "0s" {
+		t.Errorf("formatRuntime(same, same) = %q, want \"0s\"", got)
+	}
+}
+
+func TestFormatRuntime_SubMinute(t *testing.T) {
+	got := formatRuntime("2026-05-19T14:30:00Z", "2026-05-19T14:30:30Z")
+	if got != "30s" {
+		t.Errorf("formatRuntime(30s) = %q, want \"30s\"", got)
+	}
+}
+
+func TestFormatRuntime_MinuteBoundary(t *testing.T) {
+	// 59s should still be in seconds.
+	got := formatRuntime("2026-05-19T14:30:00Z", "2026-05-19T14:30:59Z")
+	if got != "59s" {
+		t.Errorf("formatRuntime(59s) = %q, want \"59s\"", got)
+	}
+	// 60s should transition to minutes.
+	got = formatRuntime("2026-05-19T14:30:00Z", "2026-05-19T14:31:00Z")
+	if got != "1m 0s" {
+		t.Errorf("formatRuntime(60s) = %q, want \"1m 0s\"", got)
+	}
+}
+
+func TestFormatRuntime_MinutesAndSeconds(t *testing.T) {
+	got := formatRuntime("2026-05-19T14:30:00Z", "2026-05-19T14:35:30Z")
+	if got != "5m 30s" {
+		t.Errorf("formatRuntime(5m 30s) = %q, want \"5m 30s\"", got)
+	}
+}
+
+func TestFormatRuntime_HourBoundary(t *testing.T) {
+	// 59m 59s should stay in minutes.
+	got := formatRuntime("2026-05-19T14:30:00Z", "2026-05-19T15:29:59Z")
+	if got != "59m 59s" {
+		t.Errorf("formatRuntime(59m 59s) = %q, want \"59m 59s\"", got)
+	}
+	// 60m should transition to hours.
+	got = formatRuntime("2026-05-19T14:30:00Z", "2026-05-19T15:30:00Z")
+	if got != "1h 0m" {
+		t.Errorf("formatRuntime(60m) = %q, want \"1h 0m\"", got)
+	}
+}
+
+func TestFormatRuntime_HoursAndMinutes(t *testing.T) {
+	got := formatRuntime("2026-05-19T14:30:00Z", "2026-05-19T17:45:00Z")
+	if got != "3h 15m" {
+		t.Errorf("formatRuntime(3h 15m) = %q, want \"3h 15m\"", got)
+	}
+}
+
+func TestFormatRuntime_DayBoundary(t *testing.T) {
+	// 23h 59m should stay in hours.
+	got := formatRuntime("2026-05-19T14:30:00Z", "2026-05-20T14:29:00Z")
+	if got != "23h 59m" {
+		t.Errorf("formatRuntime(23h 59m) = %q, want \"23h 59m\"", got)
+	}
+	// 24h should transition to days.
+	got = formatRuntime("2026-05-19T14:30:00Z", "2026-05-20T14:30:00Z")
+	if got != "1d 0h" {
+		t.Errorf("formatRuntime(24h) = %q, want \"1d 0h\"", got)
+	}
+}
+
+func TestFormatRuntime_MultiDay(t *testing.T) {
+	got := formatRuntime("2026-05-19T14:30:00Z", "2026-05-21T18:45:00Z")
+	if got != "2d 4h" {
+		t.Errorf("formatRuntime(2d 4h) = %q, want \"2d 4h\"", got)
+	}
+}
+
+// ── runtimeForStatus ───────────────────────────────────────────────────────
+
+func TestRuntimeForStatus_InProgressRunning(t *testing.T) {
+	// For running status, end should be ignored and now used.
+	got := runtimeForStatus("2026-05-19T14:30:00Z", "2026-05-19T14:35:00Z", "running")
+	if got == "5m 0s" {
+		t.Error("runtimeForStatus(running) should ignore end and use now, got fixed 5m duration")
+	}
+	if got == "-" {
+		t.Error("runtimeForStatus(running) should produce a positive duration, not \"-\"")
+	}
+}
+
+func TestRuntimeForStatus_InProgressPending(t *testing.T) {
+	got := runtimeForStatus("2026-05-19T14:30:00Z", "2026-05-19T14:35:00Z", "pending")
+	if got == "5m 0s" {
+		t.Error("runtimeForStatus(pending) should ignore end and use now")
+	}
+	if got == "-" {
+		t.Error("runtimeForStatus(pending) should produce a positive duration")
+	}
+}
+
+func TestRuntimeForStatus_InProgressInitiated(t *testing.T) {
+	got := runtimeForStatus("2026-05-19T14:30:00Z", "2026-05-19T14:35:00Z", "initiated")
+	if got == "5m 0s" {
+		t.Error("runtimeForStatus(initiated) should ignore end and use now")
+	}
+	if got == "-" {
+		t.Error("runtimeForStatus(initiated) should produce a positive duration")
+	}
+}
+
+func TestRuntimeForStatus_InProgressReviewing(t *testing.T) {
+	got := runtimeForStatus("2026-05-19T14:30:00Z", "2026-05-19T14:35:00Z", "reviewing")
+	if got == "5m 0s" {
+		t.Error("runtimeForStatus(reviewing) should ignore end and use now, got fixed 5m duration")
+	}
+	if got == "-" {
+		t.Error("runtimeForStatus(reviewing) should produce a positive duration")
+	}
+}
+
+func TestRuntimeForStatus_TerminalDone(t *testing.T) {
+	got := runtimeForStatus("2026-05-19T14:30:00Z", "2026-05-19T14:35:00Z", "done")
+	if got != "5m 0s" {
+		t.Errorf("runtimeForStatus(done, 14:30→14:35) = %q, want \"5m 0s\"", got)
+	}
+}
+
+func TestRuntimeForStatus_TerminalFailed(t *testing.T) {
+	got := runtimeForStatus("2026-05-19T14:30:00Z", "2026-05-19T14:31:00Z", "failed")
+	if got != "1m 0s" {
+		t.Errorf("runtimeForStatus(failed, 14:30→14:31) = %q, want \"1m 0s\"", got)
+	}
+}
+
+func TestRuntimeForStatus_TerminalCancelled(t *testing.T) {
+	got := runtimeForStatus("2026-05-19T14:30:00Z", "2026-05-19T14:45:00Z", "cancelled")
+	if got != "15m 0s" {
+		t.Errorf("runtimeForStatus(cancelled, 14:30→14:45) = %q, want \"15m 0s\"", got)
+	}
+}
+
+func TestRuntimeForStatus_TerminalComplete(t *testing.T) {
+	got := runtimeForStatus("2026-05-19T14:30:00Z", "2026-05-19T15:00:00Z", "complete")
+	if got != "30m 0s" {
+		t.Errorf("runtimeForStatus(complete, 14:30→15:00) = %q, want \"30m 0s\"", got)
+	}
+}
+
+func TestRuntimeForStatus_TerminalError(t *testing.T) {
+	got := runtimeForStatus("2026-05-19T14:30:00Z", "2026-05-19T14:32:00Z", "error")
+	if got != "2m 0s" {
+		t.Errorf("runtimeForStatus(error, 14:30→14:32) = %q, want \"2m 0s\"", got)
+	}
+}
+
+func TestRuntimeForStatus_TerminalMissingEnd(t *testing.T) {
+	// Terminal status with "-" sentinel end (no completed_at in Redis) → "-".
+	got := runtimeForStatus("2026-05-19T14:30:00Z", "-", "done")
+	if got != "-" {
+		t.Errorf("runtimeForStatus(done, sentinel \"-\") = %q, want \"-\"", got)
+	}
+}
+
+func TestRuntimeForStatus_EmptyStart(t *testing.T) {
+	got := runtimeForStatus("", "2026-05-19T14:35:00Z", "running")
+	if got != "-" {
+		t.Errorf("runtimeForStatus(empty start) = %q, want \"-\"", got)
+	}
+}
+
+func TestRuntimeForStatus_Negative(t *testing.T) {
+	got := runtimeForStatus("2026-05-19T14:35:00Z", "2026-05-19T14:30:00Z", "done")
+	if got != "-" {
+		t.Errorf("runtimeForStatus(negative duration) = %q, want \"-\"", got)
+	}
+}
