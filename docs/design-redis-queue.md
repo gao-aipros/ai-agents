@@ -164,7 +164,7 @@ task.py list [--worker X] [--status X] [--thread X] [--limit N]
     Scans active_tasks and task:* keys, prints summary table. Uses SCAN (not KEYS)
     to avoid blocking Redis if the task count grows beyond trivial scale.
 
-task.py wait --id <task_id> [--timeout 300]
+task.py wait --id <task_id> [--timeout 1200]
     Blocks until done or failed. Polls every 2s. On completion, deletes
     thread:{thread_id}:lock so another task can be enqueued for the same thread.
 
@@ -351,7 +351,7 @@ while running:
     try:
         proc = subprocess.run(
             cmd, cwd=workspace, capture_output=True, text=True,
-            timeout=int(os.environ.get("TASK_TIMEOUT", 1800)),
+            timeout=int(os.environ.get("TASK_TIMEOUT", 900)),
         )
         exit_code = proc.returncode
         # Combine stdout+stderr regardless of exit code — agents often
@@ -364,7 +364,7 @@ while running:
         status = "done" if proc.returncode == 0 else "failed"
     except subprocess.TimeoutExpired:
         exit_code = -1
-        result = f"Task timed out after {os.environ.get('TASK_TIMEOUT', 1800)}s"
+        result = f"Task timed out after {os.environ.get('TASK_TIMEOUT', 900)}s"
         status = "failed"
 
     # Store result (with TTLs so keys don't accumulate forever)
@@ -422,7 +422,7 @@ Worker dequeues task {task_id, thread_id, instruction}
   container is killed and the in-flight task is left in `tasks:processing:*`
   for `requeue-stale` to recover. No data loss, but the task must be re-queued.
 - Result content is capped at 10k chars when appended to thread history (avoids bloating the list with huge diffs; full result is still in `task:{id}:result`).
-- **Thread serialization:** `enqueue` acquires `SETNX thread:{id}:lock` (with TTL = TASK_TIMEOUT + 300s to avoid expiry races near task completion). If the lock exists, enqueue refuses. `task.py wait` deletes the lock on completion, allowing the next task for that thread. This prevents concurrent tasks on the same thread from racing on state updates. Stale locks (e.g. master crashed) are cleared by `task.py unlock --thread <id>`.
+- **Thread serialization:** `enqueue` acquires `SETNX thread:{id}:lock` (with TTL = TASK_TIMEOUT + 300s (default 1200s) to avoid expiry races near task completion). If the lock exists, enqueue refuses. `task.py wait` deletes the lock on completion, allowing the next task for that thread. This prevents concurrent tasks on the same thread from racing on state updates. Stale locks (e.g. master crashed) are cleared by `task.py unlock --thread <id>`.
 - **Task cancellation:** The master may call `task.py cancel --id <task_id>`, which sets `task:{id}:cancel`. The worker checks this key before starting the subprocess; if set, it marks the task `cancelled` and skips execution. Mid-execution cancellation is not supported in v1 — `subprocess.run()` blocks until the task finishes or times out.
 - **Healthcheck interaction:** If a worker fails 3 healthchecks (90s) during a long subprocess run, Docker restarts the container. The task is left in `tasks:processing:*` and recovered by `requeue-stale`. Docker waits up to 100s (30s × 3 retries + 10s start_period) before restarting an unhealthy container.
 - **Logging:** The worker emits JSON-lines logs with `task_id` and `thread_id` fields to stdout. Docker's `json-file` logging driver captures these natively, enabling correlation across services.
@@ -450,7 +450,7 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      TASK_TIMEOUT: "1800"
+      TASK_TIMEOUT: "900"
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
       GH_TOKEN: ${GH_TOKEN}
       GITHUB_TOKEN: ${GITHUB_TOKEN}
@@ -467,7 +467,7 @@ services:
       REDIS_HOST: redis
       WORKER_TYPE: claude
       AGENT_CMD: "claude -p"
-      TASK_TIMEOUT: "1800"
+      TASK_TIMEOUT: "900"
       HISTORY_WINDOW: "10"
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
       GH_TOKEN: ${GH_TOKEN}
@@ -490,7 +490,7 @@ services:
       REDIS_HOST: redis
       WORKER_TYPE: copilot
       AGENT_CMD: "copilot -p --allow-all"
-      TASK_TIMEOUT: "1800"
+      TASK_TIMEOUT: "900"
       HISTORY_WINDOW: "10"
       COPILOT_PROVIDER_API_KEY: ${DEEPSEEK_API_KEY}
       GH_TOKEN: ${GH_TOKEN}
@@ -513,7 +513,7 @@ services:
       REDIS_HOST: redis
       WORKER_TYPE: opencode
       AGENT_CMD: "opencode run --dangerously-skip-permissions"
-      TASK_TIMEOUT: "1800"
+      TASK_TIMEOUT: "900"
       HISTORY_WINDOW: "10"
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       GH_TOKEN: ${GH_TOKEN}
@@ -610,7 +610,7 @@ portable, cross-agent context store.
 
 ## Open Questions
 
-1. **Task timeout?** **Decision:** 30 min default is reasonable for clone + implement + test
+1. **Task timeout?** **Decision:** 15 min default is reasonable for clone + implement + test
    workloads. Make it per-task overridable via a `timeout` field in the task payload so
    lightweight tasks don't needlessly wait and heavy ones get headroom. Default stays 1800s.
 

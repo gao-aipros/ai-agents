@@ -17,7 +17,7 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      TASK_TIMEOUT: "2700"
+      TASK_TIMEOUT: "900"
       WEBUI_PORT: "8000"
       WEBUI_API_KEY: ${WEBUI_API_KEY:-}
       WEBUI_POLL_DASHBOARD: "5"
@@ -49,7 +49,7 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      TASK_TIMEOUT: "2700"
+      TASK_TIMEOUT: "900"
       HISTORY_WINDOW: "10"
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
       GH_TOKEN: ${WORKER_CLAUDE_GH_TOKEN}
@@ -70,7 +70,7 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      TASK_TIMEOUT: "2700"
+      TASK_TIMEOUT: "900"
       HISTORY_WINDOW: "10"
       COPILOT_PROVIDER_API_KEY: ${DEEPSEEK_API_KEY}
       GH_TOKEN: ${WORKER_COPILOT_GH_TOKEN}
@@ -91,7 +91,7 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      TASK_TIMEOUT: "2700"
+      TASK_TIMEOUT: "900"
       HISTORY_WINDOW: "10"
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       GH_TOKEN: ${WORKER_OPENCODE_GH_TOKEN}
@@ -132,7 +132,7 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      TASK_TIMEOUT: "2700"
+      TASK_TIMEOUT: "900"
       HISTORY_WINDOW: "10"
       GH_TOKEN: ${WORKER_CODEX_GH_TOKEN:-}
     depends_on:

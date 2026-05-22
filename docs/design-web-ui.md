@@ -86,7 +86,7 @@ When a user submits a request via the web UI:
 1. Web UI receives `POST /api/requests` with `{thread_id?, repo?, request}`.
 2. If `thread_id` is omitted, auto-generate one: `web_<unix_seconds>_<random 10-char base36 [0-9a-z]>`. The 10 base36 characters provide ~3.6×10¹⁵ combinations — collision probability is negligible even under heavy concurrent use.
 3. The handler writes the thread shell (repo, initial state) and the user request as a `role: "user"`, `type: "request"` message to Redis via `tasklib`. A separate `POST /api/threads` endpoint exists for bootstrap-only thread creation (shell without a request). The session UUID is NOT generated at thread creation — it is generated on the first request (step 5).
-4. The handler acquires a per-thread lock (`SET NX thread:<id>:running <request_id>` with TTL `REQUEST_TIMEOUT + 5 minutes` (35 min — Redis TTL is longer than the Go context timeout to prevent lock expiry before subprocess kill)). If the lock is already held, the handler returns `409 Conflict` — only one `claude -p` invocation per thread at a time.
+4. The handler acquires a per-thread lock (`SET NX thread:<id>:running <request_id>` with TTL `REQUEST_TIMEOUT + 5 minutes` (125 min — Redis TTL is longer than the Go context timeout to prevent lock expiry before subprocess kill)). If the lock is already held, the handler returns `409 Conflict` — only one `claude -p` invocation per thread at a time.
 5. The handler checks `thread:<id>:session_id`. If absent (first request for this thread), it generates a new session UUID (`uuid.NewV4()`) and stores it. If present (follow-up request), it reads the existing UUID. It then spawns `claude -p` as a subprocess in a **background goroutine**:
    ```
    claude --dangerously-skip-permissions --bare -p \
@@ -123,9 +123,9 @@ Response completion is detected by the web UI handler, which parses the `claude 
 2. The handler reads stdout line by line, JSON-decoding each. It watches for the **result message**: `type: "result"` with `subtype: "success"` (and `is_error: false`) or `subtype: "error_during_execution"` (and `is_error: true`). The handler primarily checks `is_error` for success/failure and falls back to `subtype` for Claude-level errors. The `stop_reason` field (`"end_turn"`, `"max_turns"`, etc.) is logged for observability but not used for handler decisions.
 3. On `subtype: "success"`, the handler extracts the `result` field (the final response text) and writes it to `thread:<id>:messages` as a `role: "master"`, `type: "response"` message. The assistant messages (`type: "assistant"`) contain the intermediate output (thinking, tool calls, text) and are written to thread history by default for live progress display (planning, delegating, tool call steps appear in real time in the message timeline). The frontend appends them to the thread detail page as they arrive via polling.
 4. If the claude subprocess exits non-zero before the result message is seen, the handler writes an error message with the captured stderr (exit code + last 4KB of stderr).
-5. If the subprocess doesn't complete within `REQUEST_TIMEOUT` (default 30 minutes), the handler sends SIGTERM, waits 10s, then SIGKILL. It writes an error message:
+5. If the subprocess doesn't complete within `REQUEST_TIMEOUT` (default 2 hours), the handler sends SIGTERM, waits 10s, then SIGKILL. It writes an error message:
    ```json
-   {"role": "master", "type": "error", "content": "Master agent timed out after 30m", "timestamp": "<iso8601>"}
+   {"role": "master", "type": "error", "content": "Master agent timed out after 2h", "timestamp": "<iso8601>"}
    ```
 
 The web UI's thread detail page polls for messages with `type: "response"` or `type: "error"` and displays them in a styled banner (green for response, red for error). Threads with a pending `thread:<id>:running` lock and no response message yet show a "Waiting for master..." indicator with an elapsed timer.
@@ -268,7 +268,7 @@ task enqueue --worker claude --thread my-thread --instruction "fix the bug"
 task status --id <task_id>
 task result --id <task_id> --tail 100
 task list --worker claude --status done --limit 50
-task wait --id <task_id> --timeout 300
+task wait --id <task_id> --timeout 1200
 task cancel --id <task_id>
 task requeue-stale --worker claude --older-than 600
 task unlock --thread <thread_id>
@@ -291,7 +291,7 @@ Estimated ~350 lines of CLI glue (cobra dispatcher + output formatting + the one
 Long-running process that:
 
 1. Connects to Redis via `tasklib`
-2. Starts a background **heartbeat goroutine** that runs `SETEX worker:<type>:<hostname>:heartbeat 30 1` every 10 seconds (30s TTL, 20s margin). The goroutine also monitors the active subprocess: if `exec(AGENT_CMD)` exceeds `TASK_TIMEOUT` without producing output, the heartbeat stops (deliberately allowing the worker to appear offline, signaling a stuck task to operators)., independently of task processing. This keeps the heartbeat fresh even during long task executions (up to `TASK_TIMEOUT`, default 30 minutes).
+2. Starts a background **heartbeat goroutine** that runs `SETEX worker:<type>:<hostname>:heartbeat 30 1` every 10 seconds (30s TTL, 20s margin). The goroutine also monitors the active subprocess: if `exec(AGENT_CMD)` exceeds `TASK_TIMEOUT` without producing output, the heartbeat stops (deliberately allowing the worker to appear offline, signaling a stuck task to operators)., independently of task processing. This keeps the heartbeat fresh even during long task executions (up to `TASK_TIMEOUT`, default 15 minutes).
 3. Main loop:
    - `BLMOVE tasks:queue:<worker> tasks:processing:<worker> RIGHT LEFT` with 5s timeout (direction matches `worker.py`: `src="RIGHT"`, `dest="LEFT"`)
    - If no task, continue
@@ -427,7 +427,7 @@ POST /api/requests {thread_id?, repo?, request}
        ├─ 1. Create thread if new (tasklib.CreateThread)
        ├─ 2. Write user request to thread:<id>:messages
        ├─ 3. Acquire request lock: SET NX thread:<id>:running <request_id>
-       │      (TTL = REQUEST_TIMEOUT + 5 min, i.e. 35 min — provides a 5-min margin
+       │      (TTL = REQUEST_TIMEOUT + 5 min, i.e. 125 min — provides a 5-min margin
        │       over the Go context timeout to prevent lock expiry before process kill)
        │      → 409 Conflict if already locked
        ├─ 4. Generate/store session UUID (thread:<id>:session_id)
@@ -482,7 +482,7 @@ POST /api/requests {thread_id?, repo?, request}
 
 **Timeout and cleanup:**
 
-- `REQUEST_TIMEOUT` (default 30 minutes) — handler kills the subprocess (SIGTERM, 10s grace, SIGKILL) and writes an error message. Complex orchestrator workflows (plan → delegate → `task wait` → delegate → aggregate) can legitimately approach this limit. Tune per-deployment via the env var. As a future enhancement, the timeout could be refreshed when `claude -p` produces intermediate output (e.g., `type: "assistant"` messages).
+- `REQUEST_TIMEOUT` (default 2 hours) — handler kills the subprocess (SIGTERM, 10s grace, SIGKILL) and writes an error message. Complex orchestrator workflows (plan → delegate → `task wait` → delegate → aggregate) can legitimately approach this limit. Tune per-deployment via the env var. As a future enhancement, the timeout could be refreshed when `claude -p` produces intermediate output (e.g., `type: "assistant"` messages).
 - `REQUEST_SHUTDOWN_GRACE` (default 60s) — on server shutdown, in-flight subprocesses are given this grace period before being killed.
 
 **Shell safety:** The user request (up to 32KB) is passed to `claude -p` as a CLI argument. Go's `exec.Command` uses `execve` directly — no shell is involved, so shell metacharacters in the request text are harmless. Do NOT use `sh -c` or any shell-based invocation.
@@ -491,7 +491,7 @@ POST /api/requests {thread_id?, repo?, request}
 
 | Env var | Default | Purpose |
 |---------|---------|---------|
-| `REQUEST_TIMEOUT` | `1800` | Seconds before killing a stuck `claude -p` (30 min) |
+| `REQUEST_TIMEOUT` | `7200` | Seconds before killing a stuck `claude -p` (2h) |
 | `MAX_CONCURRENT_REQUESTS` | `5` | Max concurrent `claude -p` subprocesses |
 | `REQUEST_SHUTDOWN_GRACE` | `60` | Seconds to wait for in-flight requests on shutdown |
 | `CLAUDE_PATH` | `/usr/local/bin/claude` | Path to claude binary |
@@ -541,7 +541,7 @@ master:
     - WORKSPACE_DIR=/workspace
     - CLAUDE_PATH=/usr/local/bin/claude
     - CLAUDE_SESSIONS_DIR=/home/agent/.claude
-    - REQUEST_TIMEOUT=1800
+    - REQUEST_TIMEOUT=7200
     - MAX_CONCURRENT_REQUESTS=5
     - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN}
     - GH_TOKEN=${GH_TOKEN}
@@ -638,7 +638,7 @@ Keys used by tasklib (all pre-existing except those marked NEW):
 | Key | Type | Purpose |
 |-----|------|---------|
 | `active_tasks` | Hash | **Existing.** Currently executing tasks. Keyed by `task_id`, value is JSON task info. Written by `cmd/worker` (HSET on start, HDEL on completion). Read by `task list` and web UI. |
-| `thread:<id>:running` | String (NEW, SET NX) | Per-thread lock preventing concurrent `claude -p` invocations. Value is the request ID. TTL = `REQUEST_TIMEOUT + 5min` (default 2100s — exceeds Go context timeout to prevent lock expiry before subprocess kill). Released by handler on completion/error/timeout. Web UI checks this key to show "Waiting for master..." indicator. |
+| `thread:<id>:running` | String (NEW, SET NX) | Per-thread lock preventing concurrent `claude -p` invocations. Value is the request ID. TTL = `REQUEST_TIMEOUT + 5min` (default 7500s — exceeds Go context timeout to prevent lock expiry before subprocess kill). Released by handler on completion/error/timeout. Web UI checks this key to show "Waiting for master..." indicator. |
 | `thread:<id>:complete` | String (NEW, 7-day TTL) | Set by web UI handler when `type: "result"` is received. Provides a fast check for the dashboard ("Ready for review" indicator) without parsing full message history. TTL aligns with the thread lifecycle — expires alongside thread keys. |
 | `thread:<id>:session_id` | String (NEW, 7-day TTL) | Claude session UUID for `--session-id` / `--resume`. Generated on first request, reused for follow-ups. TTL aligns with thread lifecycle. |
 | `thread:<id>:last_activity` | String (NEW, 7-day TTL) | Unix timestamp updated on every request. Used by the session cleanup goroutine to find threads inactive > 24h. TTL aligns with thread lifecycle. |
