@@ -129,7 +129,8 @@ class TestEdgeCases(unittest.TestCase):
 
     def test_partial_match_not_blocked(self):
         """Words containing forbidden patterns should not be blocked."""
-        # 'enqueue' contains 'enqueue' but 'enqueue' is a substring of 'enqueue'
+        # 'task_enqueue' contains 'enqueue' as a substring but
+        # '\btask\s+enqueue\b' requires whitespace between task and enqueue
         guard.check_bash("echo 'task_enqueue is a function name'")
 
     def test_command_with_newlines(self):

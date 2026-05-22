@@ -3,20 +3,16 @@
 
 Reads CLAUDE_TOOL_NAME and CLAUDE_TOOL_INPUT from the environment.
 Exits 0 to allow the tool call, 1 to block it.
+
+Note: regex-based enforcement does not block quoted subcommands
+(e.g., git 'checkout'). The HARD CONSTRAINT section in CLAUDE.md
+is the primary enforcement mechanism; this guard is a safety net.
 """
 
 import json
 import os
 import re
 import sys
-
-tool_name = os.environ.get("CLAUDE_TOOL_NAME", "")
-tool_input_str = os.environ.get("CLAUDE_TOOL_INPUT", "{}")
-
-try:
-    tool_input = json.loads(tool_input_str)
-except json.JSONDecodeError:
-    tool_input = {}
 
 # Only allow writing .md files within these directories
 ALLOWED_MD_DIRS = [
@@ -77,9 +73,9 @@ FORBIDDEN_BASH_PATTERNS = [
     r"\bcp\s+",
     r"\bmv\s+",
     # Shell redirects — only flag when target looks like a filesystem path.
-    # Boundary check prevents false positives on > inside jq
-    # filters, string literals, and comparison operators.
-    r"(?:^|[\s;&|])\s*\d?>>?\s*(?:/dev/|/tmp/|/workspace/|/home/\S|[./]\S|\S+\.\w{1,6})",
+    # /dev/null is excluded (safe discard). Boundary check prevents
+    # false positives on > inside jq filters, string literals, comparisons.
+    r"(?:^|[\s;&|])\s*\d?>>?\s*(?!/dev/null)(?:/dev/|/tmp/|/workspace/|/home/\S|[./]\S|\S+\.\w{1,6})",
     r"\btee\b",
     r"\bdd\b",
 ]
@@ -129,6 +125,14 @@ def check_bash(command: str) -> None:
 
 
 def main() -> None:
+    tool_name = os.environ.get("CLAUDE_TOOL_NAME", "")
+    tool_input_str = os.environ.get("CLAUDE_TOOL_INPUT", "{}")
+
+    try:
+        tool_input = json.loads(tool_input_str)
+    except json.JSONDecodeError:
+        tool_input = {}
+
     if tool_name in ("Write", "Edit", "NotebookEdit", "Create"):
         file_path = tool_input.get("file_path", "")
         if not file_path:

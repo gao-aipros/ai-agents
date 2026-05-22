@@ -10,14 +10,6 @@ import os
 import re
 import sys
 
-tool_name = os.environ.get("CLAUDE_TOOL_NAME", "")
-tool_input_str = os.environ.get("CLAUDE_TOOL_INPUT", "{}")
-
-try:
-    tool_input = json.loads(tool_input_str)
-except json.JSONDecodeError:
-    tool_input = {}
-
 # Workers must never run master-only task management commands
 FORBIDDEN_BASH_PATTERNS = [
     r"\btask\s+enqueue\b",
@@ -54,6 +46,14 @@ def check_bash(command: str) -> None:
 
 
 def main() -> None:
+    tool_name = os.environ.get("CLAUDE_TOOL_NAME", "")
+    tool_input_str = os.environ.get("CLAUDE_TOOL_INPUT", "{}")
+
+    try:
+        tool_input = json.loads(tool_input_str)
+    except json.JSONDecodeError:
+        tool_input = {}
+
     if tool_name == "Bash":
         command = tool_input.get("command", "")
         if not command:

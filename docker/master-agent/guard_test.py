@@ -3,7 +3,6 @@
 
 import os
 import sys
-import tempfile
 import unittest
 
 # Add guard.py to path for import
@@ -334,6 +333,132 @@ class TestCheckBashTask(unittest.TestCase):
 
     def test_allows_task_requeue_stale(self):
         guard.check_bash("task requeue-stale --worker claude --older-than 600")
+
+
+class TestCheckBashAdditionalForbidden(unittest.TestCase):
+    """Tests for forbidden patterns not covered in other test classes."""
+
+    def test_blocks_gh_pr_reopen(self):
+        with self.assertRaises(SystemExit):
+            guard.check_bash("gh pr reopen 115")
+
+    def test_blocks_gh_pr_edit(self):
+        with self.assertRaises(SystemExit):
+            guard.check_bash("gh pr edit 115 --title 'new title'")
+
+    def test_blocks_gh_issue_edit(self):
+        with self.assertRaises(SystemExit):
+            guard.check_bash("gh issue edit 42 --title 'updated'")
+
+    def test_blocks_gh_repo_create(self):
+        with self.assertRaises(SystemExit):
+            guard.check_bash("gh repo create my-repo --public")
+
+    def test_blocks_go_install(self):
+        with self.assertRaises(SystemExit):
+            guard.check_bash("go install ./cmd/task")
+
+    def test_blocks_pip_install(self):
+        with self.assertRaises(SystemExit):
+            guard.check_bash("pip install requests")
+
+    def test_blocks_docker_push(self):
+        with self.assertRaises(SystemExit):
+            guard.check_bash("docker push ghcr.io/owner/image:latest")
+
+
+class TestCheckBashRedirectEdgeCases(unittest.TestCase):
+    """Additional redirect edge cases from review feedback."""
+
+    def test_allows_dev_null_redirect(self):
+        """Redirect to /dev/null is safe — no filesystem write."""
+        guard.check_bash("gh pr view 115 > /dev/null")
+
+    def test_allows_dev_null_append(self):
+        guard.check_bash("task status --id x >> /dev/null 2>&1")
+
+    def test_allows_jq_regex_literal(self):
+        """jq regex literals with /paths/ must not false-positive on redirect pattern."""
+        guard.check_bash("jq 'select(test(\"/foo/\"))'")
+        guard.check_bash("jq 'match(\"/pattern/\")'")
+
+    def test_allows_redirect_to_allowed_md(self):
+        """Redirect to .md file in docs/ IS blocked by redirect pattern —
+        master should use Write/Edit tools for .md files, not shell redirects."""
+        with self.assertRaises(SystemExit):
+            guard.check_bash("task status > docs/summary.md")
+
+
+class TestMainIntegration(unittest.TestCase):
+    """Integration tests for main() with environment variables."""
+
+    def setUp(self):
+        self._saved_env = {}
+        for key in ("CLAUDE_TOOL_NAME", "CLAUDE_TOOL_INPUT"):
+            self._saved_env[key] = os.environ.pop(key, None)
+
+    def tearDown(self):
+        for key, val in self._saved_env.items():
+            if val is not None:
+                os.environ[key] = val
+            elif key in os.environ:
+                del os.environ[key]
+
+    def test_main_blocks_write_to_non_md(self):
+        os.environ["CLAUDE_TOOL_NAME"] = "Write"
+        os.environ["CLAUDE_TOOL_INPUT"] = '{"file_path": "src/main.go"}'
+        with self.assertRaises(SystemExit) as cm:
+            guard.main()
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_main_allows_write_to_md(self):
+        os.environ["CLAUDE_TOOL_NAME"] = "Write"
+        os.environ["CLAUDE_TOOL_INPUT"] = '{"file_path": "docs/design.md"}'
+        # main() calls allow() which calls sys.exit(0) — allowed
+        with self.assertRaises(SystemExit) as cm:
+            guard.main()
+        self.assertEqual(cm.exception.code, 0)
+
+    def test_main_blocks_forbidden_bash(self):
+        os.environ["CLAUDE_TOOL_NAME"] = "Bash"
+        os.environ["CLAUDE_TOOL_INPUT"] = '{"command": "gh pr create --title test"}'
+        with self.assertRaises(SystemExit) as cm:
+            guard.main()
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_main_allows_safe_bash(self):
+        os.environ["CLAUDE_TOOL_NAME"] = "Bash"
+        os.environ["CLAUDE_TOOL_INPUT"] = '{"command": "gh pr view 115"}'
+        with self.assertRaises(SystemExit) as cm:
+            guard.main()
+        self.assertEqual(cm.exception.code, 0)
+
+    def test_main_allows_read_tool(self):
+        os.environ["CLAUDE_TOOL_NAME"] = "Read"
+        os.environ["CLAUDE_TOOL_INPUT"] = '{"file_path": "src/main.go"}'
+        with self.assertRaises(SystemExit) as cm:
+            guard.main()
+        self.assertEqual(cm.exception.code, 0)
+
+    def test_main_blocks_write_without_file_path(self):
+        os.environ["CLAUDE_TOOL_NAME"] = "Write"
+        os.environ["CLAUDE_TOOL_INPUT"] = '{}'
+        with self.assertRaises(SystemExit) as cm:
+            guard.main()
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_main_handles_malformed_json(self):
+        os.environ["CLAUDE_TOOL_NAME"] = "Write"
+        os.environ["CLAUDE_TOOL_INPUT"] = "{invalid json"
+        with self.assertRaises(SystemExit) as cm:
+            guard.main()
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_main_handles_missing_env_vars(self):
+        # No env vars set — should default to empty tool name and empty input
+        with self.assertRaises(SystemExit) as cm:
+            guard.main()
+        self.assertEqual(cm.exception.code, 0)
 
 
 if __name__ == "__main__":

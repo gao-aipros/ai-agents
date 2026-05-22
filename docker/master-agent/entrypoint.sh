@@ -38,7 +38,7 @@ HOOK_GUARD='
   }
 }'
 
-if ! jq -e '.hooks.PreToolUse' "$CONFIG_FILE" >/dev/null 2>&1; then
+if ! jq -e '.hooks.PreToolUse[]?.hooks[]?.command == "python3 /home/agent/guard.py"' "$CONFIG_FILE" >/dev/null 2>&1; then
     echo "Installing master-enforcement hook in claude.json"
     printf '%s\n' "$HOOK_GUARD" | jq -s '.[0] * .[1]' "$CONFIG_FILE" - > "${CONFIG_FILE}.tmp" \
         && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
