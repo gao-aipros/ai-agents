@@ -146,7 +146,26 @@ services:
       retries: 3
       start_period: 10s
 
+  dev-time-db:
+    image: timescale/timescaledb:latest-pg18
+    restart: unless-stopped
+    shm_size: 128mb
+    volumes:
+      - dev_db_data:/var/lib/postgresql
+    environment:
+      POSTGRES_USER: devadmin
+      POSTGRES_PASSWORD: "www4321"
+      POSTGRES_DB: "autost"
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
 volumes:
   workspace:
   redis_data:
   claude_sessions:
+  dev_db_data:
