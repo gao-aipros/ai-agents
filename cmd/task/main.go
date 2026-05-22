@@ -135,7 +135,7 @@ func main() {
 		RunE: cmdWait,
 	}
 	waitCmd.Flags().StringVar(&waitID, "id", "", "")
-	waitCmd.Flags().IntVar(&waitTimeout, "timeout", 300, "")
+	waitCmd.Flags().IntVar(&waitTimeout, "timeout", 1200, "")
 	waitCmd.MarkFlagRequired("id")
 	root.AddCommand(waitCmd)
 
@@ -231,7 +231,7 @@ func main() {
 	}
 	groupWaitCmd.Flags().StringVar(&gwThread, "thread", "", "")
 	groupWaitCmd.Flags().StringVar(&gwGroup, "group", "", "")
-	groupWaitCmd.Flags().IntVar(&gwTimeout, "timeout", 600, "")
+	groupWaitCmd.Flags().IntVar(&gwTimeout, "timeout", 1200, "")
 	groupWaitCmd.MarkFlagRequired("thread")
 	groupWaitCmd.MarkFlagRequired("group")
 	root.AddCommand(groupWaitCmd)
