@@ -100,7 +100,7 @@ fi
 
 **Recovery**: If a worker crashes during a parallel task, the task remains in the group SET as `pending`. `GroupWait` will timeout, reporting the stuck task. Use `task requeue-stale` or `task cancel` + re-enqueue. `task requeue-stale` works identically for group tasks. After a retry group completes, `group-wait` updates thread status based on the retry outcome.
 
-**Lock gate-check**: `EnqueueGroup` uses `SET NX` → immediate `DEL` (with 10s TTL fallback) to gate on the sequential phase being complete. The gate-check lock is released immediately so subsequent group enqueues succeed. If the process crashes between `SET NX` and `DEL`, the 10s TTL prevents blocking sequential enqueues for the full `LockTTL` (7500s). Recovery: `task unlock --thread <id>`.
+**Lock gate-check**: `EnqueueGroup` uses `SET NX` → immediate `DEL` (with 10s TTL fallback) to gate on the sequential phase being complete. The gate-check lock is released immediately so subsequent group enqueues succeed. If the process crashes between `SET NX` and `DEL`, the 10s TTL prevents blocking sequential enqueues for the full `LockTTL` (9300s). Recovery: `task unlock --thread <id>`.
 
 ## Commands
 

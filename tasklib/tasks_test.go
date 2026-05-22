@@ -973,3 +973,93 @@ func TestWaitTaskUpdatesThreadStatus(t *testing.T) {
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────
+
+// ── computeLockTTL ─────────────────────────────────────────────────────────
+
+func TestComputeLockTTL(t *testing.T) {
+	tests := []struct {
+		name            string
+		requestTimeout  string // env value for REQUEST_TIMEOUT, "" = unset
+		lockTTL         string // env value for LOCK_TTL, "" = unset
+		want            time.Duration
+	}{
+		{
+			name:           "default (neither env set)",
+			requestTimeout: "",
+			lockTTL:        "",
+			want:           9300 * time.Second, // DefaultRequestTimeout(9000) + 300
+		},
+		{
+			name:           "LOCK_TTL overrides everything",
+			requestTimeout: "7200",
+			lockTTL:        "5000",
+			want:           5000 * time.Second,
+		},
+		{
+			name:           "REQUEST_TIMEOUT fallback when LOCK_TTL unset",
+			requestTimeout: "7200",
+			lockTTL:        "",
+			want:           7500 * time.Second, // 7200 + 300
+		},
+		{
+			name:           "both set, LOCK_TTL wins",
+			requestTimeout: "9000",
+			lockTTL:        "6000",
+			want:           6000 * time.Second,
+		},
+		{
+			name:           "non-numeric LOCK_TTL ignored",
+			requestTimeout: "",
+			lockTTL:        "abc",
+			want:           9300 * time.Second, // fallback to default
+		},
+		{
+			name:           "zero LOCK_TTL ignored",
+			requestTimeout: "",
+			lockTTL:        "0",
+			want:           9300 * time.Second,
+		},
+		{
+			name:           "negative LOCK_TTL ignored",
+			requestTimeout: "",
+			lockTTL:        "-100",
+			want:           9300 * time.Second,
+		},
+		{
+			name:           "non-numeric REQUEST_TIMEOUT → uses DefaultRequestTimeout",
+			requestTimeout: "bad",
+			lockTTL:        "",
+			want:           9300 * time.Second,
+		},
+		{
+			name:           "custom REQUEST_TIMEOUT, no LOCK_TTL",
+			requestTimeout: "10000",
+			lockTTL:        "",
+			want:           10300 * time.Second, // 10000 + 300
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lookup := func(key string) (string, bool) {
+				switch key {
+				case "REQUEST_TIMEOUT":
+					if tt.requestTimeout == "" {
+						return "", false
+					}
+					return tt.requestTimeout, true
+				case "LOCK_TTL":
+					if tt.lockTTL == "" {
+						return "", false
+					}
+					return tt.lockTTL, true
+				}
+				return "", false
+			}
+			got := computeLockTTL(lookup)
+			if got != tt.want {
+				t.Errorf("computeLockTTL() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

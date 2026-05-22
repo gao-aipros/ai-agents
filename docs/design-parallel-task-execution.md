@@ -323,6 +323,6 @@ During parallel phases, worker outputs are appended to the same thread history l
 - **Lock gate-check**: `EnqueueGroup` does `SET NX` → `DEL` as a gate, preventing group creation while a sequential task holds the lock. Once the gate passes, the lock is immediately released so subsequent group enqueues succeed.
 - **No worker changes**: Workers process tasks identically — they don't know about groups. Group logic is entirely in `EnqueueGroup`, `WaitTask` (suppress status update), and `GroupWait`.
 - **`task requeue-stale`**: Works identically. Tasks in a group that are requeued remain in the group SET until they complete.
-- **Lock TTL (7500s)**: Unchanged for sequential tasks. During parallel phases, the lock is not held — the gate-check releases it immediately.
+- **Lock TTL (9300s)**: Unchanged for sequential tasks. During parallel phases, the lock is not held — the gate-check releases it immediately.
 - **Crash recovery**: If a worker crashes during a parallel task, the task remains in the group SET as `pending`. `GroupWait` will timeout, reporting the stuck task. The master can requeue-stale or cancel and re-enqueue.
 - **Thread status correctness**: `WaitTask` suppresses `updateThreadStatus` for group tasks. Thread status is set exactly once by `GroupWait` after all tasks are terminal, based on aggregate outcome. No race condition.
