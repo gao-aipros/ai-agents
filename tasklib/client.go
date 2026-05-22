@@ -2,6 +2,8 @@ package tasklib
 
 import (
 	"context"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -12,8 +14,28 @@ const (
 	TTLTask   = 86400 * time.Second  // 24 hours
 	TTLThread = 604800 * time.Second // 7 days
 	TTLStats  = 604800 * time.Second // 7 days — global counters survive quiet periods
-	LockTTL   = 7500 * time.Second   // REQUEST_TIMEOUT(7200) + 300s margin
 )
+
+func init() {
+	rt := 9000 // default REQUEST_TIMEOUT seconds, used to compute fallback LockTTL
+	if v := os.Getenv("REQUEST_TIMEOUT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			rt = n
+		}
+	}
+	ttl := rt + 300 // REQUEST_TIMEOUT + 5 min margin
+	if v := os.Getenv("LOCK_TTL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			ttl = n
+		}
+	}
+	LockTTL = time.Duration(ttl) * time.Second
+}
+
+// LockTTL is the thread-lock TTL. Default 9300s (155 min).
+// Configurable via LOCK_TTL env var (in seconds), e.g. LOCK_TTL=9300.
+var LockTTL time.Duration
+
 
 // Valid worker types.
 var WorkerTypes = []string{"claude", "copilot", "opencode", "codex"}

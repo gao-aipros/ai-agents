@@ -136,7 +136,7 @@ New Redis key: `thread:<id>:last_activity` (Unix timestamp, updated on every req
 3. **Session-splitting example flags** — Added `--dangerously-skip-permissions --bare --output-format stream-json --verbose` to both examples.
 4. **hx-retarget does NOT handle 503** — Replaced with correct `htmx:responseError` event listener approach (exponential backoff).
 5. **Cancel race** — Background goroutine now checks `thread:<id>:current_state` status at startup and aborts if "cancelled".
-6. **Lock TTL vs context timeout mismatch** — Redis lock TTL is now `REQUEST_TIMEOUT + 5 min` (125 min default) to prevent lock expiry before subprocess kill.
+6. **Lock TTL vs context timeout mismatch** — Redis lock TTL is now `REQUEST_TIMEOUT + 5 min` (155 min default) to prevent lock expiry before subprocess kill.
 7. **Stream-json → thread message mapping** — Added mapping table: text-only assistant → "plan", tool_use → "tool_call", result → "response"/"error".
 8. **Interactive CLI elimination** — Documented as intentional breaking change in Docker Integration table.
 9. **Step consistency** — Already resolved (previous round).
@@ -146,7 +146,7 @@ New Redis key: `thread:<id>:last_activity` (Unix timestamp, updated on every req
 
 Both reviews: LGTM, non-blocking suggestions.
 
-1. **TTL inconsistency** — Already fixed in round 3; Redis table already says `REQUEST_TIMEOUT + 5min (7500s)`.
+1. **TTL inconsistency** — Already fixed in round 3; Redis table already says `REQUEST_TIMEOUT + 5min (9300s)`.
 2. **Orphaned empty directories** — `cmd/supervisor/` and `cmd/inbox-reader/` flagged for follow-up cleanup PR.
 3. **`tasklib/inbox.go` + `lua/`** — Acknowledged as temporarily inconsistent; Step 1 post-revision work will replace them.
 4. **`thread:<id>:last_activity` not in flow chart** — Added as step 13 in Section 6 flow chart.

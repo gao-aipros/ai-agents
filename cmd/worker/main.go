@@ -89,7 +89,7 @@ func main() {
 	if agentCmd == "" {
 		die("AGENT_CMD not set")
 	}
-	taskTimeout := envIntDefault("TASK_TIMEOUT", 900)
+	taskTimeout := envIntDefault("TASK_TIMEOUT", 1800)
 	historyWindow := envIntDefault("HISTORY_WINDOW", 10)
 	workspaceDir := envDefault("WORKSPACE_DIR", "/workspace")
 

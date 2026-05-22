@@ -75,8 +75,8 @@ task enqueue --worker codex    --thread $THREAD --group "design-review" --instru
 task enqueue --worker claude   --thread $THREAD --group "design-review" --instruction "..."
 
 # Wait for group to finish; capture aggregate result
-# --timeout defaults to 1200s (20 min); individual tasks can have per-task timeouts via task enqueue --timeout N
-RESULT=$(task group-wait --thread $THREAD --group "design-review" --timeout 1200)
+# --timeout defaults to 2100s (35 min); individual tasks can have per-task timeouts via task enqueue --timeout N
+RESULT=$(task group-wait --thread $THREAD --group "design-review" --timeout 2100)
 STATUS=$(echo "$RESULT" | jq -r .status)
 
 # Handle failures if needed
@@ -86,7 +86,7 @@ if [ "$STATUS" = "error" ]; then
     WORKER=$(task status --id "$TID" | jq -r .worker)
     task enqueue --worker "$WORKER" --thread $THREAD --group "design-review-retry" --instruction "..."
   done
-  task group-wait --thread $THREAD --group "design-review-retry" --timeout 1200
+  task group-wait --thread $THREAD --group "design-review-retry" --timeout 2100
 fi
 ```
 

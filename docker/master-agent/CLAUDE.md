@@ -118,7 +118,7 @@ for tid in "$T1" "$T2" ...; do
 done
 
 # 4. Wait for group
-RESULT=$(task group-wait --thread $THREAD --group $GROUP --timeout 1200)
+RESULT=$(task group-wait --thread $THREAD --group $GROUP --timeout 2100)
 STATUS=$(echo "$RESULT" | jq -r .status)
 
 # 5. On error, requeue failed tasks under $GROUP-retry (verify IDs just like step 3)
@@ -139,7 +139,7 @@ if [ "$STATUS" = "error" ]; then
     task thread-update --id $THREAD --status error
     exit 1
   fi
-  task group-wait --thread $THREAD --group $GROUP-retry --timeout 1200
+  task group-wait --thread $THREAD --group $GROUP-retry --timeout 2100
 fi
 ```
 

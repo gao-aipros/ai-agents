@@ -57,8 +57,8 @@ The system relies on ad-hoc Redis inspection and stdout logs scattered across co
 | `tasks:processing:{worker}` | LIST | — | Worker (BLMOVE) |
 | `thread:{id}:current_state` | HASH | 7d | CreateThread |
 | `thread:{id}:messages` | LIST | 7d | Enqueue + Worker |
-| `thread:{id}:lock` | STRING | 7500s | Enqueue |
-| `thread:{id}:running` | STRING | 7500s | Request handler |
+| `thread:{id}:lock` | STRING | 9300s | Enqueue |
+| `thread:{id}:running` | STRING | 9300s | Request handler |
 | `thread:{id}:complete` | STRING | 7d | — |
 | `thread:{id}:session_id` | STRING | 7d | — |
 | `thread:{id}:last_activity` | STRING | 7d | — |

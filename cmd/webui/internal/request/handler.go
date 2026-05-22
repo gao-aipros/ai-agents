@@ -41,7 +41,7 @@ func DefaultConfig() Config {
 	return Config{
 		ClaudePath:        env.String("CLAUDE_PATH", "/usr/local/bin/claude"),
 		ClaudeSessionsDir: env.String("CLAUDE_SESSIONS_DIR", "/home/agent/.claude"),
-		RequestTimeout:    time.Duration(env.Int("REQUEST_TIMEOUT", 7200)) * time.Second,
+		RequestTimeout:    time.Duration(env.Int("REQUEST_TIMEOUT", 9000)) * time.Second,
 		MaxConcurrent:     env.Int("MAX_CONCURRENT_REQUESTS", 5),
 		ShutdownGrace:     time.Duration(env.Int("REQUEST_SHUTDOWN_GRACE", 60)) * time.Second,
 		WorkspaceDir:      env.String("WORKSPACE_DIR", "/workspace"),

@@ -79,6 +79,8 @@ func init() {
 	redisPort = envIntDefault("REDIS_PORT", 6379)
 	redisDB = envIntDefault("COMPAT_TEST_DB", 0)
 	workspaceDir = envDefault("WORKSPACE_DIR", "/workspace")
+	waitTimeout = envIntDefault("TASK_WAIT_TIMEOUT", 2100)
+	gwTimeout = envIntDefault("TASK_WAIT_TIMEOUT", 2100)
 }
 
 func main() {
@@ -135,7 +137,7 @@ func main() {
 		RunE: cmdWait,
 	}
 	waitCmd.Flags().StringVar(&waitID, "id", "", "")
-	waitCmd.Flags().IntVar(&waitTimeout, "timeout", 1200, "")
+	waitCmd.Flags().IntVar(&waitTimeout, "timeout", waitTimeout, "Timeout in seconds (env: TASK_WAIT_TIMEOUT)")
 	waitCmd.MarkFlagRequired("id")
 	root.AddCommand(waitCmd)
 
@@ -231,7 +233,7 @@ func main() {
 	}
 	groupWaitCmd.Flags().StringVar(&gwThread, "thread", "", "")
 	groupWaitCmd.Flags().StringVar(&gwGroup, "group", "", "")
-	groupWaitCmd.Flags().IntVar(&gwTimeout, "timeout", 1200, "")
+	groupWaitCmd.Flags().IntVar(&gwTimeout, "timeout", gwTimeout, "Timeout in seconds (env: TASK_WAIT_TIMEOUT)")
 	groupWaitCmd.MarkFlagRequired("thread")
 	groupWaitCmd.MarkFlagRequired("group")
 	root.AddCommand(groupWaitCmd)
