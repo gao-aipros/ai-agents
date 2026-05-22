@@ -12,7 +12,7 @@ const (
 	TTLTask   = 86400 * time.Second  // 24 hours
 	TTLThread = 604800 * time.Second // 7 days
 	TTLStats  = 604800 * time.Second // 7 days — global counters survive quiet periods
-	LockTTL   = 2100 * time.Second   // REQUEST_TIMEOUT(1800) + 300s margin
+	LockTTL   = 7500 * time.Second   // REQUEST_TIMEOUT(7200) + 300s margin
 )
 
 // Valid worker types.
