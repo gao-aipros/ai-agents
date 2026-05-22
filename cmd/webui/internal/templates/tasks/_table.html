@@ -7,6 +7,7 @@
       <th>Worker</th>
       <th>Thread</th>
       <th>Status</th>
+      <th>Runtime</th>
       <th>Created</th>
       <th></th>
     </tr>
@@ -22,6 +23,7 @@
         {{else}}-{{end}}
       </td>
       <td>{{statusBadge .Status}}</td>
+      <td class="text-muted">{{runtime .EnqueuedAt (or .CompletedAt "") .Status}}</td>
       <td class="text-muted">{{if .EnqueuedAt}}<time datetime="{{.EnqueuedAt}}">{{.EnqueuedAt}}</time>{{else}}-{{end}}</td>
       <td><a href="/tasks/{{.TaskID}}" class="btn btn-sm">View</a></td>
     </tr>

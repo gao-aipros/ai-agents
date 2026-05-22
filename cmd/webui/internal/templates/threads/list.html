@@ -19,6 +19,7 @@
       <th>Status</th>
       <th>Repo</th>
       <th>PR</th>
+      <th>Runtime</th>
       <th>Updated</th>
       <th></th>
     </tr>
@@ -30,6 +31,7 @@
       <td>{{statusBadge .Status}}</td>
       <td class="text-muted">{{or .GHRepo "-"}}</td>
       <td class="text-muted">{{or .GHPRNumber "-"}}</td>
+      <td class="text-muted">{{runtime .CreatedAt (or .UpdatedAt "") .Status}}</td>
       <td class="text-muted">{{if .UpdatedAt}}<time datetime="{{.UpdatedAt}}">{{.UpdatedAt}}</time>{{else}}-{{end}}</td>
       <td>
         <a href="/threads/{{.ThreadID}}" class="btn btn-sm">View</a>

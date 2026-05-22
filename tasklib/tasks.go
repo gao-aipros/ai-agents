@@ -349,6 +349,9 @@ func (c *Client) GetTask(ctx context.Context, taskID string) (*Task, error) {
 			t.LastStartedAt = val
 		case "completed_at":
 			t.CompletedAt = val
+			if t.CompletedAt == "" {
+				t.CompletedAt = "-"
+			}
 		case "created_at": // TODO: remove after 2026-06-01 (TTLTask 24h migration window from deploy)
 			if t.EnqueuedAt == "" {
 				t.EnqueuedAt = val
@@ -481,6 +484,12 @@ func (c *Client) ListTasks(ctx context.Context, worker, status, threadID string,
 				if task.EnqueuedAt == "" {
 					task.EnqueuedAt = "-"
 				}
+			}
+		}
+		if task.CompletedAt == "" {
+			task.CompletedAt, _ = c.rdb.Get(ctx, TaskKey(task.TaskID, "completed_at")).Result()
+			if task.CompletedAt == "" {
+				task.CompletedAt = "-"
 			}
 		}
 
