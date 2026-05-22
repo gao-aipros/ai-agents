@@ -68,8 +68,14 @@ RUN mkdir -p /home/agent/.claude \
     && chown -R agent:agent /home/agent/.claude
 COPY --chown=agent:agent docker/worker-claude/CLAUDE.md /home/agent/.claude/CLAUDE.md
 COPY --chown=agent:agent docker/worker-claude/settings.json /home/agent/.claude/settings.json
+COPY --chown=agent:agent --chmod=755 docker/worker-claude/guard.py /home/agent/guard.py
+COPY --chown=agent:agent --chmod=755 docker/worker-claude/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY --from=skills-download --chown=agent:agent /tmp/skills-out /home/agent/.claude/skills/
 COPY --chown=agent:agent docs/agents/ /home/agent/.claude/agents-config/
 
+# Symlink .claude.json into .claude/ so config survives restarts
+RUN ln -sf /home/agent/.claude/claude.json /home/agent/.claude.json \
+    && chown -h agent:agent /home/agent/.claude.json
+
 USER agent
-ENTRYPOINT ["/usr/local/bin/worker-go", "claude"]
+ENTRYPOINT ["entrypoint.sh", "claude"]

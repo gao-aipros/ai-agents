@@ -19,14 +19,19 @@ if [ ! -f "$CONFIG_FILE" ] || [ ! -s "$CONFIG_FILE" ]; then
     fi
 fi
 
-# Ensure master-enforcement hook is installed in claude.json
-# This blocks Edit/Write to non-.md files and forbidden gh/git commands
+# Ensure claude.json exists
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo '{}' > "$CONFIG_FILE"
+fi
+
+# Ensure worker-enforcement hook is installed in claude.json
+# This blocks master-only task commands (task enqueue, task group-wait, etc.)
 HOOK_GUARD='
 {
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Write|Edit|Bash|NotebookEdit|Create",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
@@ -39,9 +44,9 @@ HOOK_GUARD='
 }'
 
 if ! jq -e '.hooks.PreToolUse[]?.hooks[]?.command == "python3 /home/agent/guard.py"' "$CONFIG_FILE" >/dev/null 2>&1; then
-    echo "Installing master-enforcement hook in claude.json"
+    echo "Installing worker-enforcement hook in claude.json"
     printf '%s\n' "$HOOK_GUARD" | jq -s '.[0] * .[1]' "$CONFIG_FILE" - > "${CONFIG_FILE}.tmp" \
         && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
 fi
 
-exec webui "$@"
+exec /usr/local/bin/worker-go "$@"

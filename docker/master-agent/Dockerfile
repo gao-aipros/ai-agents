@@ -70,6 +70,7 @@ COPY out/${TARGETARCH}/webui /usr/local/bin/webui
 RUN mkdir -p /home/agent/.claude && chown agent:agent /home/agent/.claude
 VOLUME /home/agent/.claude
 COPY --chown=agent:agent docker/master-agent/CLAUDE.md /home/agent/.claude/CLAUDE.md
+COPY --chown=agent:agent --chmod=755 docker/master-agent/guard.py /home/agent/guard.py
 COPY --from=skills-download --chown=agent:agent /tmp/skills-out /home/agent/.claude/skills/
 COPY --chown=agent:agent docs/agents/ /home/agent/.claude/agents-config/
 
