@@ -566,10 +566,11 @@ func TestTimeElement_TaskTable(t *testing.T) {
 	}
 
 	task := map[string]interface{}{
-		"TaskID":    "task-1",
-		"Worker":    "claude",
-		"Status":    "done",
+		"TaskID":     "task-1",
+		"Worker":     "claude",
+		"Status":     "done",
 		"EnqueuedAt": "2026-05-19T14:30:00Z",
+		"CompletedAt": "2026-05-19T14:35:00Z",
 	}
 	data := map[string]interface{}{"Tasks": []interface{}{task}}
 
@@ -590,7 +591,7 @@ func TestTimeElement_TaskTable_Empty(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	task := map[string]interface{}{"TaskID": "task-1", "Worker": "claude", "Status": "done"}
+	task := map[string]interface{}{"TaskID": "task-1", "Worker": "claude", "Status": "done", "EnqueuedAt": "", "CompletedAt": ""}
 	data := map[string]interface{}{"Tasks": []interface{}{task}}
 
 	var buf mockWriter
@@ -648,6 +649,7 @@ func TestTimeElement_ThreadState(t *testing.T) {
 		"ThreadID":  "th-1",
 		"Status":    "complete",
 		"GHRepo":    "owner/repo",
+		"CreatedAt": "2026-05-19T14:20:00Z",
 		"UpdatedAt": "2026-05-19T14:30:00Z",
 		"GHPRNumber": "-",
 		"LastDesign": "-",
@@ -676,6 +678,7 @@ func TestTimeElement_ThreadList(t *testing.T) {
 		"Status":    "complete",
 		"GHRepo":    "owner/repo",
 		"GHPRNumber": "-",
+		"CreatedAt": "2026-05-19T14:20:00Z",
 		"UpdatedAt": "2026-05-19T14:30:00Z",
 	}
 	data := map[string]interface{}{"Threads": []interface{}{thread}}

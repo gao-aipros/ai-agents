@@ -13,6 +13,7 @@ import (
 type Thread struct {
 	ThreadID      string `json:"thread_id"`
 	Status        string `json:"status,omitempty"`
+	CreatedAt     string `json:"created_at,omitempty"`
 	UpdatedAt     string `json:"updated_at,omitempty"`
 	GHRepo        string `json:"gh_repo,omitempty"`
 	GHPRNumber    string `json:"gh_pr_number,omitempty"`
@@ -37,9 +38,11 @@ func (c *Client) CreateThread(ctx context.Context, threadID, repo string) (*Thre
 		return nil, fmt.Errorf("generate correlation_id: %w", err)
 	}
 
+	now := ts()
 	mapping := map[string]interface{}{
 		"status":         "initiated",
-		"updated_at":     ts(),
+		"created_at":     now,
+		"updated_at":     now,
 		"correlation_id": correlationID,
 	}
 	if repo != "" {
@@ -55,6 +58,7 @@ func (c *Client) CreateThread(ctx context.Context, threadID, repo string) (*Thre
 	return &Thread{
 		ThreadID:      threadID,
 		Status:        "initiated",
+		CreatedAt:     now,
 		GHRepo:        repo,
 		CorrelationID: correlationID,
 	}, nil
@@ -73,6 +77,7 @@ func (c *Client) GetThread(ctx context.Context, threadID string) (*Thread, error
 	return &Thread{
 		ThreadID:      threadID,
 		Status:        state["status"],
+		CreatedAt:     state["created_at"],
 		UpdatedAt:     state["updated_at"],
 		GHRepo:        state["gh_repo"],
 		GHPRNumber:    state["gh_pr_number"],
@@ -102,6 +107,7 @@ func (c *Client) ListThreads(ctx context.Context) ([]*Thread, error) {
 			threads = append(threads, &Thread{
 				ThreadID:      threadID,
 				Status:        stateVal(state, "status", "unknown"),
+				CreatedAt:     stateVal(state, "created_at", "-"),
 				UpdatedAt:     stateVal(state, "updated_at", "-"),
 				GHRepo:        stateVal(state, "gh_repo", "-"),
 				GHPRNumber:    stateVal(state, "gh_pr_number", "-"),

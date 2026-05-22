@@ -18,6 +18,10 @@
     <div class="value mono" style="font-size:12px">{{or .Thread.LastDesign "-"}}</div>
   </div>
   <div class="state-item">
+    <div class="label">Runtime</div>
+    <div class="value mono">{{runtime .Thread.CreatedAt (or .Thread.UpdatedAt "") .Thread.Status}}</div>
+  </div>
+  <div class="state-item">
     <div class="label">Updated</div>
     <div class="value mono" style="font-size:12px">{{if .Thread.UpdatedAt}}<time datetime="{{.Thread.UpdatedAt}}">{{.Thread.UpdatedAt}}</time>{{else}}-{{end}}</div>
   </div>
@@ -81,6 +85,10 @@
   <div class="state-item">
     <div class="label">Last Design</div>
     <div class="value mono" style="font-size:12px">{{or .Thread.LastDesign "-"}}</div>
+  </div>
+  <div class="state-item">
+    <div class="label">Runtime</div>
+    <div class="value mono">{{runtime .Thread.CreatedAt (or .Thread.UpdatedAt "") .Thread.Status}}</div>
   </div>
   <div class="state-item">
     <div class="label">Updated</div>

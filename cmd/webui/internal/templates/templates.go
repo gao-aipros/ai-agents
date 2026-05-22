@@ -54,6 +54,8 @@ func New() (*Renderer, error) {
 		"or":             orDefault,
 		"startCollapsed": startCollapsed,
 		"dict":           dict,
+		"formatRuntime":   formatRuntime,
+		"runtime":         runtimeForStatus,
 	})
 
 	err := fs.WalkDir(templateFS, ".", func(path string, d fs.DirEntry, err error) error {
@@ -196,4 +198,55 @@ func dict(values ...interface{}) map[string]interface{} {
 		m[key] = values[i+1]
 	}
 	return m
+}
+
+// runtimeForStatus formats a duration based on task/thread status.
+// For in-progress statuses (running, pending, initiated), end is ignored and now is used.
+// For terminal statuses, end is used directly.
+func runtimeForStatus(startRaw, endRaw, status string) string {
+	if status == "running" || status == "pending" || status == "initiated" {
+		return formatRuntime(startRaw, "")
+	}
+	return formatRuntime(startRaw, endRaw)
+}
+
+// formatRuntime computes and formats a duration between two RFC 3339 timestamps.
+// If end is empty, uses the current time. Returns "-" for invalid or negative durations.
+func formatRuntime(startRaw, endRaw string) string {
+	if startRaw == "" || startRaw == "-" {
+		return "-"
+	}
+	start, err := time.Parse(time.RFC3339, startRaw)
+	if err != nil {
+		return "-"
+	}
+	var end time.Time
+	if endRaw == "" || endRaw == "-" {
+		end = time.Now().UTC()
+	} else {
+		end, err = time.Parse(time.RFC3339, endRaw)
+		if err != nil {
+			end = time.Now().UTC()
+		}
+	}
+	d := end.Sub(start)
+	if d < 0 {
+		return "-"
+	}
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		m := int(d.Minutes())
+		s := int(d.Seconds()) % 60
+		return fmt.Sprintf("%dm %ds", m, s)
+	case d < 24*time.Hour:
+		h := int(d.Hours())
+		m := int(d.Minutes()) % 60
+		return fmt.Sprintf("%dh %dm", h, m)
+	default:
+		days := int(d.Hours() / 24)
+		h := int(d.Hours()) % 24
+		return fmt.Sprintf("%dd %dh", days, h)
+	}
 }
