@@ -26,7 +26,7 @@ HOOK_GUARD='
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Write|Edit|Bash|NotebookEdit",
+        "matcher": "Write|Edit|Bash|NotebookEdit|Create",
         "hooks": [
           {
             "type": "command",
@@ -40,7 +40,7 @@ HOOK_GUARD='
 
 if ! jq -e '.hooks.PreToolUse' "$CONFIG_FILE" >/dev/null 2>&1; then
     echo "Installing master-enforcement hook in claude.json"
-    echo "$HOOK_GUARD" | jq -s '.[0] * .[1]' "$CONFIG_FILE" - > "${CONFIG_FILE}.tmp" \
+    printf '%s\n' "$HOOK_GUARD" | jq -s '.[0] * .[1]' "$CONFIG_FILE" - > "${CONFIG_FILE}.tmp" \
         && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
 fi
 

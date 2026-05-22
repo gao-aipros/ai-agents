@@ -27,6 +27,10 @@ FORBIDDEN_BASH_PATTERNS = [
     r"\btask\s+group-wait\b",
     r"\btask\s+unlock\b",
     r"\btask\s+requeue-stale\b",
+    r"\btask\s+cancel\b",
+    r"\btask\s+events\b",
+    r"\btask\s+list\b",
+    r"\btask\s+thread-list\b",
 ]
 
 
