@@ -64,7 +64,7 @@ A new method patterned closely on `Enqueue` (same payload structure, same queue 
 
 2. **Lock gate-check instead of hold**: `SET NX` → check result → `DEL` immediately. This gates on the sequential phase being complete (lock must not be held by a running sequential task) while allowing subsequent group enqueues to pass the same gate.
 
-   Use a **short TTL** (10s) on the gate-check lock, not `LockTTL` (7500s). The lock is held for ~1ms; if `DEL` fails due to a transient network error, a 10s TTL prevents blocking all sequential enqueues for 125 minutes. Recovery path: `task unlock --thread <id>` for the rare case where the process crashes between `SET NX` and `DEL`.
+   Use a **short TTL** (10s) on the gate-check lock, not `LockTTL` (9300s). The lock is held for ~1ms; if `DEL` fails due to a transient network error, a 10s TTL prevents blocking all sequential enqueues for 155 minutes. Recovery path: `task unlock --thread <id>` for the rare case where the process crashes between `SET NX` and `DEL`.
 
 3. **Lock gate race**: The master transitions the thread status to `"reviewing"` **before** fanning out group tasks (see Phase 8b). Between `EnqueueGroup` releasing the lock (immediate `DEL`) and the next `EnqueueGroup` call, a sequential `Enqueue` could theoretically acquire the lock. This can't happen in practice because the master is the sole enqueuer and runs commands sequentially. Document this assumption in `CLAUDE.md`.
 
@@ -161,7 +161,7 @@ New cobra subcommand:
 task group-wait --thread <id> --group <label> --timeout <seconds>
 ```
 
-Flags: `--thread` (required), `--group` (required), `--timeout` (default 1200).
+Flags: `--thread` (required), `--group` (required), `--timeout` (default 2100).
 
 Handler calls `c.GroupWait(ctx, threadID, groupLabel, timeout)` and prints JSON result to stdout. Exit codes based on `result.Status`:
 
@@ -223,7 +223,7 @@ T1=$(task enqueue --worker copilot  --thread "$THREAD-review-copilot"  --instruc
 
 # Wait for all
 for tid in "$T1" "$T2" "$T3" "$T4"; do
-  task wait --id "$tid" --timeout 1200
+  task wait --id "$tid" --timeout 2100
 done
 ```
 
@@ -243,7 +243,7 @@ task enqueue --worker codex    --thread $THREAD --group "design-review" --instru
 task enqueue --worker claude   --thread $THREAD --group "design-review" --instruction "..."
 
 # Wait for group to finish
-RESULT=$(task group-wait --thread $THREAD --group "design-review" --timeout 1200)
+RESULT=$(task group-wait --thread $THREAD --group "design-review" --timeout 2100)
 STATUS=$(echo "$RESULT" | jq -r .status)
 
 # Inspect .tasks to distinguish all-succeeded from some-cancelled when status is "complete"

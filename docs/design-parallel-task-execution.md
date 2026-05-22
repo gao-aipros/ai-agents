@@ -164,7 +164,7 @@ task enqueue --worker codex     --thread my-thread --group "design-review" --ins
 task enqueue --worker claude    --thread my-thread --group "design-review" --instruction "..."
 
 # Wait for group to complete
-task group-wait --thread my-thread --group "design-review" --timeout 1200
+task group-wait --thread my-thread --group "design-review" --timeout 2100
 ```
 
 When `--group` is set, the CLI calls `EnqueueGroup` instead of `Enqueue`. The JSON output is identical (`{"task_id": "..."}`) — downstream scripts that parse the output need no changes.
@@ -187,7 +187,7 @@ When `--group` is set, the CLI calls `EnqueueGroup` instead of `Enqueue`. The JS
 - `0` — all tasks done (`status: "complete"`)
 - `1` — any task failed, cancelled, or timeout (`status: "error"` / `"cancelled"` / `"timeout"`)
 
-**Timeout behavior**: The `--timeout` on `group-wait` is a _group-level_ deadline — the maximum wall-clock time to wait for all tasks in the group. Individual tasks have their own per-task timeout (passed via `task enqueue --timeout N`). A per-task timeout of 900s (15 min) with a group timeout of 1200s (20 min) means all tasks get 900s each; the group waits up to 1200s for the slowest. This is independent of `LockTTL` (7500s) since the lock is not held during parallel phases.
+**Timeout behavior**: The `--timeout` on `group-wait` is a _group-level_ deadline — the maximum wall-clock time to wait for all tasks in the group. Individual tasks have their own per-task timeout (passed via `task enqueue --timeout N`). A per-task timeout of 1800s (30 min) with a group timeout of 2100s (35 min) means all tasks get 1800s each; the group waits up to 2100s for the slowest. This is independent of `LockTTL` (9300s) since the lock is not held during parallel phases.
 
 ### 4. Thread status aggregation
 
@@ -231,7 +231,7 @@ task enqueue --worker codex    --thread $THREAD --group "design-review" --instru
 task enqueue --worker claude   --thread $THREAD --group "design-review" --instruction "..."
 
 # Wait for group to finish; capture aggregate result
-RESULT=$(task group-wait --thread $THREAD --group "design-review" --timeout 1200)
+RESULT=$(task group-wait --thread $THREAD --group "design-review" --timeout 2100)
 if echo "$RESULT" | jq -e '.status == "error"' > /dev/null; then
   # Handle failure: inspect .tasks for which ones failed
   FAILED=$(echo "$RESULT" | jq -r '.tasks | to_entries | map(select(.value != "done")) | .[].key')
@@ -239,7 +239,7 @@ if echo "$RESULT" | jq -e '.status == "error"' > /dev/null; then
     WORKER=$(task status --id "$TID" | jq -r .worker)
     task enqueue --worker "$WORKER" --thread $THREAD --group "design-review-retry" --instruction "..."
   done
-  task group-wait --thread $THREAD --group "design-review-retry" --timeout 1200
+  task group-wait --thread $THREAD --group "design-review-retry" --timeout 2100
 fi
 ```
 
@@ -247,7 +247,7 @@ For sequential phases (implement, revise, merge), continue using default locked 
 
 ```bash
 task enqueue --worker claude --thread $THREAD --instruction "implement..."
-task wait --id $TASK_ID --timeout 1200
+task wait --id $TASK_ID --timeout 2100
 ```
 
 ### 6. V1 Interim: Sub-Threads (Zero Code Changes)
@@ -271,7 +271,7 @@ T4=$(task enqueue --worker claude   --thread "$THREAD-review-claude"   --instruc
 
 # Wait for all
 for tid in "$T1" "$T2" "$T3" "$T4"; do
-  task wait --id "$tid" --timeout 1200
+  task wait --id "$tid" --timeout 2100
 done
 ```
 
@@ -323,6 +323,6 @@ During parallel phases, worker outputs are appended to the same thread history l
 - **Lock gate-check**: `EnqueueGroup` does `SET NX` → `DEL` as a gate, preventing group creation while a sequential task holds the lock. Once the gate passes, the lock is immediately released so subsequent group enqueues succeed.
 - **No worker changes**: Workers process tasks identically — they don't know about groups. Group logic is entirely in `EnqueueGroup`, `WaitTask` (suppress status update), and `GroupWait`.
 - **`task requeue-stale`**: Works identically. Tasks in a group that are requeued remain in the group SET until they complete.
-- **Lock TTL (7500s)**: Unchanged for sequential tasks. During parallel phases, the lock is not held — the gate-check releases it immediately.
+- **Lock TTL (9300s)**: Unchanged for sequential tasks. During parallel phases, the lock is not held — the gate-check releases it immediately.
 - **Crash recovery**: If a worker crashes during a parallel task, the task remains in the group SET as `pending`. `GroupWait` will timeout, reporting the stuck task. The master can requeue-stale or cancel and re-enqueue.
 - **Thread status correctness**: `WaitTask` suppresses `updateThreadStatus` for group tasks. Thread status is set exactly once by `GroupWait` after all tasks are terminal, based on aggregate outcome. No race condition.

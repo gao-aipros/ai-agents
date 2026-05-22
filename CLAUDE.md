@@ -75,8 +75,8 @@ task enqueue --worker codex    --thread $THREAD --group "design-review" --instru
 task enqueue --worker claude   --thread $THREAD --group "design-review" --instruction "..."
 
 # Wait for group to finish; capture aggregate result
-# --timeout defaults to 1200s (20 min); individual tasks can have per-task timeouts via task enqueue --timeout N
-RESULT=$(task group-wait --thread $THREAD --group "design-review" --timeout 1200)
+# --timeout defaults to 2100s (35 min); individual tasks can have per-task timeouts via task enqueue --timeout N
+RESULT=$(task group-wait --thread $THREAD --group "design-review" --timeout 2100)
 STATUS=$(echo "$RESULT" | jq -r .status)
 
 # Handle failures if needed
@@ -86,7 +86,7 @@ if [ "$STATUS" = "error" ]; then
     WORKER=$(task status --id "$TID" | jq -r .worker)
     task enqueue --worker "$WORKER" --thread $THREAD --group "design-review-retry" --instruction "..."
   done
-  task group-wait --thread $THREAD --group "design-review-retry" --timeout 1200
+  task group-wait --thread $THREAD --group "design-review-retry" --timeout 2100
 fi
 ```
 
@@ -100,7 +100,7 @@ fi
 
 **Recovery**: If a worker crashes during a parallel task, the task remains in the group SET as `pending`. `GroupWait` will timeout, reporting the stuck task. Use `task requeue-stale` or `task cancel` + re-enqueue. `task requeue-stale` works identically for group tasks. After a retry group completes, `group-wait` updates thread status based on the retry outcome.
 
-**Lock gate-check**: `EnqueueGroup` uses `SET NX` → immediate `DEL` (with 10s TTL fallback) to gate on the sequential phase being complete. The gate-check lock is released immediately so subsequent group enqueues succeed. If the process crashes between `SET NX` and `DEL`, the 10s TTL prevents blocking sequential enqueues for the full `LockTTL` (7500s). Recovery: `task unlock --thread <id>`.
+**Lock gate-check**: `EnqueueGroup` uses `SET NX` → immediate `DEL` (with 10s TTL fallback) to gate on the sequential phase being complete. The gate-check lock is released immediately so subsequent group enqueues succeed. If the process crashes between `SET NX` and `DEL`, the 10s TTL prevents blocking sequential enqueues for the full `LockTTL` (9300s). Recovery: `task unlock --thread <id>`.
 
 ## Commands
 

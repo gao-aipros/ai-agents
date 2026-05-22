@@ -2,6 +2,8 @@ package tasklib
 
 import (
 	"context"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -12,8 +14,38 @@ const (
 	TTLTask   = 86400 * time.Second  // 24 hours
 	TTLThread = 604800 * time.Second // 7 days
 	TTLStats  = 604800 * time.Second // 7 days — global counters survive quiet periods
-	LockTTL   = 7500 * time.Second   // REQUEST_TIMEOUT(7200) + 300s margin
+
+	// DefaultRequestTimeout is the fallback for REQUEST_TIMEOUT env var (2.5 h).
+	// Referenced by cmd/webui/internal/request/handler.go as the REQUEST_TIMEOUT fallback.
+	DefaultRequestTimeout = 9000
 )
+
+func init() {
+	LockTTL = computeLockTTL(os.LookupEnv)
+}
+
+// computeLockTTL resolves LockTTL from env vars. Exported for testing.
+// Returns REQUEST_TIMEOUT+300 by default, or LOCK_TTL if set.
+func computeLockTTL(lookup func(string) (string, bool)) time.Duration {
+	rt := DefaultRequestTimeout
+	if v, ok := lookup("REQUEST_TIMEOUT"); ok && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			rt = n
+		}
+	}
+	ttl := rt + 300 // REQUEST_TIMEOUT + 5 min margin
+	if v, ok := lookup("LOCK_TTL"); ok && v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			ttl = n
+		}
+	}
+	return time.Duration(ttl) * time.Second
+}
+
+// LockTTL is the thread-lock TTL (default 9300s = 155 min).
+// When LOCK_TTL is unset, falls back to REQUEST_TIMEOUT + 300s margin.
+// Configurable via LOCK_TTL env var (in seconds), e.g. LOCK_TTL=9300.
+var LockTTL time.Duration
 
 // Valid worker types.
 var WorkerTypes = []string{"claude", "copilot", "opencode", "codex"}

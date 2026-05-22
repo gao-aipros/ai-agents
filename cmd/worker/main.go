@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -89,7 +90,7 @@ func main() {
 	if agentCmd == "" {
 		die("AGENT_CMD not set")
 	}
-	taskTimeout := envIntDefault("TASK_TIMEOUT", 900)
+	taskTimeout := envIntDefault("TASK_TIMEOUT", 1800)
 	historyWindow := envIntDefault("HISTORY_WINDOW", 10)
 	workspaceDir := envDefault("WORKSPACE_DIR", "/workspace")
 
@@ -521,9 +522,9 @@ func envDefault(key, def string) string {
 
 func envIntDefault(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
-		var n int
-		fmt.Sscanf(v, "%d", &n)
-		return n
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return def
 }
