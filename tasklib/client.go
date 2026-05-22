@@ -16,7 +16,7 @@ const (
 	TTLStats  = 604800 * time.Second // 7 days — global counters survive quiet periods
 
 	// DefaultRequestTimeout is the fallback for REQUEST_TIMEOUT env var (2.5 h).
-	// Must match the default in cmd/webui/internal/request/handler.go DefaultConfig().
+	// Referenced by cmd/webui/internal/request/handler.go as the REQUEST_TIMEOUT fallback.
 	DefaultRequestTimeout = 9000
 )
 

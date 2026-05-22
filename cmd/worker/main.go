@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -521,9 +522,9 @@ func envDefault(key, def string) string {
 
 func envIntDefault(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
-		var n int
-		fmt.Sscanf(v, "%d", &n)
-		return n
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return def
 }

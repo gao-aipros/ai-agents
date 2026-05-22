@@ -138,7 +138,7 @@ TTL: 24h for task result keys. Thread history is the long-term record.
 | `task:{id}:result` | STRING | Agent stdout/stderr | 24h |
 | `task:{id}:cancel` | STRING | Cancellation flag (set by master, checked by worker) | TTL_TASK if set by master |
 | `task:{id}:*` | STRING | Other per-task metadata | 24h |
-| `thread:{id}:lock` | STRING | Serialization guard (SETNX) | TASK_TIMEOUT + 5 min |
+| `thread:{id}:lock` | STRING | Serialization guard (SETNX) | REQUEST_TIMEOUT + 5 min |
 
 ## Master: Python CLI tool
 
@@ -422,7 +422,7 @@ Worker dequeues task {task_id, thread_id, instruction}
   container is killed and the in-flight task is left in `tasks:processing:*`
   for `requeue-stale` to recover. No data loss, but the task must be re-queued.
 - Result content is capped at 10k chars when appended to thread history (avoids bloating the list with huge diffs; full result is still in `task:{id}:result`).
-- **Thread serialization:** `enqueue` acquires `SETNX thread:{id}:lock` (with TTL = TASK_TIMEOUT + 300s (default 2100s) to avoid expiry races near task completion). If the lock exists, enqueue refuses. `task.py wait` deletes the lock on completion, allowing the next task for that thread. This prevents concurrent tasks on the same thread from racing on state updates. Stale locks (e.g. master crashed) are cleared by `task.py unlock --thread <id>`.
+- **Thread serialization:** `enqueue` acquires `SETNX thread:{id}:lock` (with TTL = REQUEST_TIMEOUT + 300s (default 9300s) to avoid expiry races near task completion). If the lock exists, enqueue refuses. `task.py wait` deletes the lock on completion, allowing the next task for that thread. This prevents concurrent tasks on the same thread from racing on state updates. Stale locks (e.g. master crashed) are cleared by `task.py unlock --thread <id>`.
 - **Task cancellation:** The master may call `task.py cancel --id <task_id>`, which sets `task:{id}:cancel`. The worker checks this key before starting the subprocess; if set, it marks the task `cancelled` and skips execution. Mid-execution cancellation is not supported in v1 — `subprocess.run()` blocks until the task finishes or times out.
 - **Healthcheck interaction:** If a worker fails 3 healthchecks (90s) during a long subprocess run, Docker restarts the container. The task is left in `tasks:processing:*` and recovered by `requeue-stale`. Docker waits up to 100s (30s × 3 retries + 10s start_period) before restarting an unhealthy container.
 - **Logging:** The worker emits JSON-lines logs with `task_id` and `thread_id` fields to stdout. Docker's `json-file` logging driver captures these natively, enabling correlation across services.
