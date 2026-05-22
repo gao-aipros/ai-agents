@@ -19,4 +19,29 @@ if [ ! -f "$CONFIG_FILE" ] || [ ! -s "$CONFIG_FILE" ]; then
     fi
 fi
 
+# Ensure master-enforcement hook is installed in claude.json
+# This blocks Edit/Write to non-.md files and forbidden gh/git commands
+HOOK_GUARD='
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|Bash|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/agent/guard.py"
+          }
+        ]
+      }
+    ]
+  }
+}'
+
+if ! jq -e '.hooks.PreToolUse' "$CONFIG_FILE" >/dev/null 2>&1; then
+    echo "Installing master-enforcement hook in claude.json"
+    echo "$HOOK_GUARD" | jq -s '.[0] * .[1]' "$CONFIG_FILE" - > "${CONFIG_FILE}.tmp" \
+        && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+fi
+
 exec webui "$@"

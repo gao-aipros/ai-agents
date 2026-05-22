@@ -1,3 +1,16 @@
 {
-  "permissionMode": "bypassPermissions"
+  "permissionMode": "bypassPermissions",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/agent/guard.py"
+          }
+        ]
+      }
+    ]
+  }
 }
