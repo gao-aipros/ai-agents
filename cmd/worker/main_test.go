@@ -52,12 +52,16 @@ func makeTaskPayload(taskID, threadID, instruction string, extra map[string]inte
 	return string(data)
 }
 
-func makeMsg(role, content, ts string, taskID string) string {
+func makeMsg(role, content, ts, taskID, worker string) string {
+	meta := map[string]string{"task_id": taskID}
+	if worker != "" {
+		meta["worker"] = worker
+	}
 	msg := map[string]interface{}{
 		"role":      role,
 		"content":   content,
 		"timestamp": ts,
-		"metadata":  map[string]string{"task_id": taskID},
+		"metadata":  meta,
 	}
 	data, _ := json.Marshal(msg)
 	return string(data)
@@ -186,9 +190,9 @@ func TestIncludesThreadHistoryInPrompt(t *testing.T) {
 
 	// Pre-populate thread history
 	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread),
-		makeMsg("master", "Initial instruction", "2026-05-10T00:00:00Z", "prev-001"))
+		makeMsg("master", "Initial instruction", "2026-05-10T00:00:00Z", "prev-001", ""))
 	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread),
-		makeMsg("claude", "Design v1: OAuth2 with PKCE", "2026-05-10T00:00:01Z", "prev-002"))
+		makeMsg("claude", "Design v1: OAuth2 with PKCE", "2026-05-10T00:00:01Z", "prev-002", ""))
 
 	var capturedPrompt string
 	orig := execCommand
@@ -230,7 +234,7 @@ func TestRespectsHistoryWindowFromPayload(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread),
 			makeMsg("master", fmt.Sprintf("Message %d", i),
-				"2026-05-10T00:00:00Z", "prev"))
+				"2026-05-10T00:00:00Z", "prev", ""))
 	}
 
 	var capturedPrompt string
@@ -398,6 +402,186 @@ func TestCurrentStateMissingFieldsDefaults(t *testing.T) {
 	}
 	if strings.Contains(capturedPrompt, "PR:") {
 		t.Error("prompt should not have PR field")
+	}
+}
+
+// ── Worker-Filtered Thread History Tests ──────────────────────────────────────
+
+func TestGroupTaskFiltersHistoryByWorker(t *testing.T) {
+	client, _ := newTestClient(t)
+	rdb := client.RDB()
+	log := newLogger()
+
+	// Simulate a group fan-out: messages for 4 different workers
+	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread),
+		makeMsg("master", "Instruction for copilot", "2026-05-10T00:00:00Z", "task-copilot", "copilot"))
+	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread),
+		makeMsg("master", "Instruction for opencode", "2026-05-10T00:00:01Z", "task-opencode", "opencode"))
+	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread),
+		makeMsg("master", "Instruction for claude", "2026-05-10T00:00:02Z", "task-claude", "claude"))
+	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread),
+		makeMsg("master", "Instruction for codex", "2026-05-10T00:00:03Z", "task-codex", "codex"))
+
+	// Mark task as group task
+	rdb.Set(context.Background(), tasklib.TaskKey(testTaskID, "group"), "design-review", 0)
+
+	var capturedPrompt string
+	orig := execCommand
+	execCommand = func(ctx context.Context, args []string, dir string) (string, string, int, error) {
+		capturedPrompt = args[len(args)-1]
+		return "ok", "", 0, nil
+	}
+	defer func() { execCommand = orig }()
+
+	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
+	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
+	workspace := t.TempDir()
+	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
+
+	// Should see its own instruction
+	if !strings.Contains(capturedPrompt, "Instruction for claude") {
+		t.Error("group task should see its own worker's messages")
+	}
+	// Should NOT see other workers' instructions
+	if strings.Contains(capturedPrompt, "Instruction for copilot") {
+		t.Error("group task should NOT see copilot's messages")
+	}
+	if strings.Contains(capturedPrompt, "Instruction for opencode") {
+		t.Error("group task should NOT see opencode's messages")
+	}
+	if strings.Contains(capturedPrompt, "Instruction for codex") {
+		t.Error("group task should NOT see codex's messages")
+	}
+}
+
+func TestSequentialTaskSeesFullHistory(t *testing.T) {
+	client, _ := newTestClient(t)
+	rdb := client.RDB()
+	log := newLogger()
+
+	// Pre-populate with messages for multiple workers (simulating sequential workflow)
+	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread),
+		makeMsg("master", "Instruction for claude", "2026-05-10T00:00:00Z", "task-001", "claude"))
+	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread),
+		makeMsg("claude", "Implementation done", "2026-05-10T00:00:01Z", "task-001", "claude"))
+	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread),
+		makeMsg("master", "Review this PR copilot", "2026-05-10T00:00:02Z", "task-002", "copilot"))
+
+	var capturedPrompt string
+	orig := execCommand
+	execCommand = func(ctx context.Context, args []string, dir string) (string, string, int, error) {
+		capturedPrompt = args[len(args)-1]
+		return "ok", "", 0, nil
+	}
+	defer func() { execCommand = orig }()
+
+	// Sequential task: no group key set
+	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
+	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
+	workspace := t.TempDir()
+	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
+
+	// Should see ALL messages regardless of worker
+	if !strings.Contains(capturedPrompt, "Instruction for claude") {
+		t.Error("sequential task should see claude messages")
+	}
+	if !strings.Contains(capturedPrompt, "Implementation done") {
+		t.Error("sequential task should see worker response messages")
+	}
+	if !strings.Contains(capturedPrompt, "Review this PR copilot") {
+		t.Error("sequential task should see messages for other workers")
+	}
+}
+
+func TestGroupTaskBackwardCompatNoWorkerMetadata(t *testing.T) {
+	client, _ := newTestClient(t)
+	rdb := client.RDB()
+	log := newLogger()
+
+	// Messages WITHOUT worker metadata (old format) should pass through the filter
+	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread),
+		makeMsg("master", "Legacy message without worker", "2026-05-10T00:00:00Z", "prev-001", ""))
+	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread),
+		makeMsg("master", "Message for claude", "2026-05-10T00:00:01Z", "task-claude", "claude"))
+	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread),
+		makeMsg("master", "Message for copilot", "2026-05-10T00:00:02Z", "task-copilot", "copilot"))
+
+	// Mark task as group task
+	rdb.Set(context.Background(), tasklib.TaskKey(testTaskID, "group"), "design-review", 0)
+
+	var capturedPrompt string
+	orig := execCommand
+	execCommand = func(ctx context.Context, args []string, dir string) (string, string, int, error) {
+		capturedPrompt = args[len(args)-1]
+		return "ok", "", 0, nil
+	}
+	defer func() { execCommand = orig }()
+
+	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
+	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
+	workspace := t.TempDir()
+	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
+
+	// Should see legacy message (no worker filter = pass through)
+	if !strings.Contains(capturedPrompt, "Legacy message without worker") {
+		t.Error("group task should see messages without worker metadata (backward compat)")
+	}
+	// Should see its own message
+	if !strings.Contains(capturedPrompt, "Message for claude") {
+		t.Error("group task should see its own worker's messages")
+	}
+	// Should NOT see other worker's message
+	if strings.Contains(capturedPrompt, "Message for copilot") {
+		t.Error("group task should NOT see copilot's messages")
+	}
+}
+
+func TestGroupTaskAllMessagesForOtherWorkers(t *testing.T) {
+	client, _ := newTestClient(t)
+	rdb := client.RDB()
+	log := newLogger()
+
+	// All thread messages are for other workers
+	for i := 0; i < 5; i++ {
+		rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread),
+			makeMsg("master", fmt.Sprintf("Copilot instruction %d", i),
+				"2026-05-10T00:00:00Z", "task-copilot", "copilot"))
+	}
+
+	// Mark task as group task
+	rdb.Set(context.Background(), tasklib.TaskKey(testTaskID, "group"), "design-review", 0)
+
+	var capturedPrompt string
+	orig := execCommand
+	execCommand = func(ctx context.Context, args []string, dir string) (string, string, int, error) {
+		capturedPrompt = args[len(args)-1]
+		return "ok", "", 0, nil
+	}
+	defer func() { execCommand = orig }()
+
+	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
+	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
+	workspace := t.TempDir()
+	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
+
+	// Should still produce a valid prompt without thread history section
+	if strings.Contains(capturedPrompt, "## Thread History") {
+		t.Error("prompt should not have thread history section when no matching messages")
+	}
+	if !strings.Contains(capturedPrompt, "## Task") {
+		t.Error("prompt should still have task section")
+	}
+	if !strings.Contains(capturedPrompt, testInstruction) {
+		t.Error("prompt missing instruction")
+	}
+	// Task should complete successfully
+	status, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "status")).Result()
+	if status != "done" {
+		t.Errorf("expected status=done, got %s", status)
 	}
 }
 
@@ -732,7 +916,7 @@ func TestThreadHistoryTTLRefreshed(t *testing.T) {
 	defer restore()
 
 	// Pre-populate thread history with TTL
-	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread), makeMsg("master", "prior msg", "2026-05-10T00:00:00Z", "prev"))
+	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread), makeMsg("master", "prior msg", "2026-05-10T00:00:00Z", "prev", ""))
 	rdb.Expire(context.Background(), tasklib.ThreadMessagesKey(testThread), tasklib.TTLThread)
 	initialTTL := mr.TTL(tasklib.ThreadMessagesKey(testThread))
 
@@ -1203,7 +1387,7 @@ func TestMalformedThreadMessageSkipped(t *testing.T) {
 	// Add a corrupt message + valid message
 	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread), "not valid json")
 	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread),
-		makeMsg("master", "valid message", "2026-05-10T00:00:00Z", "prev"))
+		makeMsg("master", "valid message", "2026-05-10T00:00:00Z", "prev", ""))
 
 	restore := mockExecCmd("ok", "", 0, nil)
 	defer restore()

@@ -114,7 +114,7 @@ func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction stri
 		"role":    "master",
 		"content": instruction,
 		"timestamp": now,
-		"metadata": map[string]string{"task_id": taskID},
+		"metadata":  map[string]string{"task_id": taskID, "worker": worker},
 	})
 	if err != nil {
 		c.rdb.Del(ctx, lockKey, ThreadLockedAtKey(threadID))
@@ -231,7 +231,7 @@ func (c *Client) EnqueueGroup(ctx context.Context, worker, threadID, groupLabel,
 		"role":      "master",
 		"content":   instruction,
 		"timestamp": now,
-		"metadata":  map[string]string{"task_id": taskID},
+		"metadata":  map[string]string{"task_id": taskID, "worker": worker},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal message: %w", err)

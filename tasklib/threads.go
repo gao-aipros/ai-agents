@@ -165,15 +165,78 @@ func (c *Client) GetThreadHistoryTail(ctx context.Context, threadID string, tail
 	if err != nil {
 		return nil, err
 	}
-	result := make([]Message, 0, len(msgs))
-	for _, raw := range msgs {
+	return parseMessages(msgs), nil
+}
+
+// GetThreadHistoryTailForWorker retrieves the last N messages from thread
+// history that are addressed to a specific worker. Messages without a
+// "worker" metadata field pass through for backward compatibility.
+// Scans backwards through the list in batches so the worker always sees
+// its own messages regardless of how many other-worker messages are
+// interleaved.
+func (c *Client) GetThreadHistoryTailForWorker(ctx context.Context, threadID string, tail int, worker string) ([]Message, error) {
+	if tail <= 0 {
+		return nil, nil
+	}
+	key := ThreadMessagesKey(threadID)
+
+	totalLen, err := c.rdb.LLen(ctx, key).Result()
+	if err != nil {
+		return nil, err
+	}
+	if totalLen == 0 {
+		return nil, nil
+	}
+
+	const batchSize = int64(100)
+	var collected []Message
+
+	// Scan backwards in batches from the end of the list.
+	for end := totalLen - 1; end >= 0; end -= batchSize {
+		start := end - batchSize + 1
+		if start < 0 {
+			start = 0
+		}
+		batch, err := c.rdb.LRange(ctx, key, start, end).Result()
+		if err != nil {
+			return nil, err
+		}
+
+		var filtered []Message
+		for _, m := range parseMessages(batch) {
+			msgWorker := m.Metadata["worker"]
+			if msgWorker == "" || msgWorker == worker {
+				filtered = append(filtered, m)
+			}
+		}
+
+		// Prepend: older batch before newer (already collected)
+		collected = append(filtered, collected...)
+
+		if len(collected) >= tail {
+			break
+		}
+	}
+
+	// Return only the last `tail` matching messages
+	if len(collected) > tail {
+		collected = collected[len(collected)-tail:]
+	}
+	return collected, nil
+}
+
+// parseMessages unmarshals raw JSON strings into Message structs.
+// Corrupt entries are replaced with an "unknown"-role placeholder.
+func parseMessages(raw []string) []Message {
+	result := make([]Message, 0, len(raw))
+	for _, s := range raw {
 		var m Message
-		if err := json.Unmarshal([]byte(raw), &m); err != nil {
-			m = Message{Content: raw, Role: "unknown"}
+		if err := json.Unmarshal([]byte(s), &m); err != nil {
+			m = Message{Content: s, Role: "unknown"}
 		}
 		result = append(result, m)
 	}
-	return result, nil
+	return result
 }
 
 // AppendMessage appends a message to thread history and refreshes TTL.
