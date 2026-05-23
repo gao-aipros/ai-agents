@@ -734,7 +734,7 @@ func TestTimeoutResultMessage(t *testing.T) {
 	}
 }
 
-func TestStderrAppendedToResult(t *testing.T) {
+func TestStderrNotAppendedOnSuccess(t *testing.T) {
 	client, _ := newTestClient(t)
 	rdb := client.RDB()
 	log := newLogger()
@@ -748,11 +748,36 @@ func TestStderrAppendedToResult(t *testing.T) {
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	result, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "result")).Result()
-	if !strings.Contains(result, "[stderr]") {
-		t.Errorf("expected [stderr] delimiter, got: %s", result)
+	if strings.Contains(result, "[stderr]") {
+		t.Errorf("expected no [stderr] delimiter on exit 0, got: %s", result)
 	}
-	if !strings.Contains(result, "stderr here") {
-		t.Errorf("expected stderr content, got: %s", result)
+	if strings.Contains(result, "stderr here") {
+		t.Errorf("expected no stderr content on exit 0, got: %s", result)
+	}
+	if result != "stdout here" {
+		t.Errorf("expected result='stdout here', got: %s", result)
+	}
+}
+
+func TestStderrAppendedOnFailure(t *testing.T) {
+	client, _ := newTestClient(t)
+	rdb := client.RDB()
+	log := newLogger()
+	restore := mockExecCmd("stdout here", "stderr text", 1, nil)
+	defer restore()
+
+	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
+	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
+	workspace := t.TempDir()
+	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
+
+	result, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "result")).Result()
+	if !strings.Contains(result, "[stderr]") {
+		t.Errorf("expected [stderr] delimiter on non-zero exit, got: %s", result)
+	}
+	if !strings.Contains(result, "stderr text") {
+		t.Errorf("expected stderr content on non-zero exit, got: %s", result)
 	}
 }
 
