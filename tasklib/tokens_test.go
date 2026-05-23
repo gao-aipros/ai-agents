@@ -444,7 +444,7 @@ func TestHasAnyTaskTokens(t *testing.T) {
 
 func TestCodexStatsProvider_Process_ContentExtraction(t *testing.T) {
 	// Codex with --json outputs ItemStarted events with inlined AgentMessage details
-	stdout := `{"type":"ItemStarted","id":"msg_1","details":{"AgentMessage":{"text":"This is the agent response"}}}}
+	stdout := `{"type":"ItemStarted","id":"msg_1","details":{"AgentMessage":{"text":"This is the agent response"}}}
 `
 	p := &CodexStatsProvider{}
 	content, stats, err := p.Process("/tmp", stdout)
@@ -461,9 +461,9 @@ func TestCodexStatsProvider_Process_ContentExtraction(t *testing.T) {
 }
 
 func TestCodexStatsProvider_Process_MultipleTurnsAccumulate(t *testing.T) {
-	stdout := `{"type":"ItemStarted","id":"m1","details":{"AgentMessage":{"text":"First"}}}}
+	stdout := `{"type":"ItemStarted","id":"m1","details":{"AgentMessage":{"text":"First"}}}
 {"type":"TurnCompleted","usage":{"input_tokens":10,"output_tokens":5}}
-{"type":"ItemStarted","id":"m2","details":{"AgentMessage":{"text":"Second"}}}}
+{"type":"ItemStarted","id":"m2","details":{"AgentMessage":{"text":"Second"}}}
 {"type":"TurnCompleted","usage":{"input_tokens":20,"output_tokens":8}}
 `
 	p := &CodexStatsProvider{}
@@ -483,7 +483,7 @@ func TestCodexStatsProvider_Process_MultipleTurnsAccumulate(t *testing.T) {
 }
 
 func TestCodexStatsProvider_Process_MixedValidAndInvalid(t *testing.T) {
-	stdout := `{"type":"ItemStarted","id":"m1","details":{"AgentMessage":{"text":"Good"}}}}
+	stdout := `{"type":"ItemStarted","id":"m1","details":{"AgentMessage":{"text":"Good"}}}
 plain text line
 `
 	p := &CodexStatsProvider{}
@@ -499,6 +499,41 @@ plain text line
 	}
 	if stats.HasAny() {
 		t.Error("no TurnCompleted event, stats should be zero")
+	}
+}
+
+func TestCodexStatsProvider_Process_SkipsItemUpdatedAndItemCompleted(t *testing.T) {
+	// Only ItemStarted events should contribute text — ItemUpdated and
+	// ItemCompleted may carry incremental or duplicate text.
+	stdout := `{"type":"ItemStarted","id":"m1","details":{"AgentMessage":{"text":"Final text"}}}
+{"type":"ItemUpdated","id":"m1","details":{"AgentMessage":{"text":"Duplicate"}}}
+{"type":"ItemCompleted","id":"m1","details":{"AgentMessage":{"text":"Duplicate 2"}}}
+`
+	p := &CodexStatsProvider{}
+	content, _, err := p.Process("/tmp", stdout)
+	if err != nil {
+		t.Fatalf("Process error: %v", err)
+	}
+	if !strings.Contains(content, "Final text") {
+		t.Errorf("content should contain ItemStarted text: %q", content)
+	}
+	if strings.Contains(content, "Duplicate") {
+		t.Error("content should NOT contain ItemUpdated/ItemCompleted text")
+	}
+}
+
+func TestCodexStatsProvider_Process_IgnoresUsageOnNonTurnCompleted(t *testing.T) {
+	stdout := `{"type":"ItemStarted","id":"m1","details":{"AgentMessage":{"text":"Hello"}}}
+{"type":"ItemCompleted","usage":{"input_tokens":999,"output_tokens":999}}
+{"type":"TurnCompleted","usage":{"input_tokens":100,"output_tokens":50}}
+`
+	p := &CodexStatsProvider{}
+	_, stats, err := p.Process("/tmp", stdout)
+	if err != nil {
+		t.Fatalf("Process error: %v", err)
+	}
+	if stats.InputTokens != 100 || stats.OutputTokens != 50 {
+		t.Errorf("stats = %+v, want Input=100 Output=50 (ItemCompleted usage ignored)", stats)
 	}
 }
 
@@ -536,6 +571,15 @@ func TestOpenCodeStatsProvider_Process_TextFromStepFinish(t *testing.T) {
 	if stats.InputTokens != 10 {
 		t.Errorf("InputTokens = %d, want 10", stats.InputTokens)
 	}
+	if stats.OutputTokens != 5 {
+		t.Errorf("OutputTokens = %d, want 5", stats.OutputTokens)
+	}
+	if stats.CacheReadTokens != 1 {
+		t.Errorf("CacheReadTokens = %d, want 1", stats.CacheReadTokens)
+	}
+	if stats.CacheWriteTokens != 2 {
+		t.Errorf("CacheWriteTokens = %d, want 2", stats.CacheWriteTokens)
+	}
 }
 
 func TestOpenCodeStatsProvider_Process_MultipleStepsAccumulate(t *testing.T) {
@@ -552,6 +596,15 @@ func TestOpenCodeStatsProvider_Process_MultipleStepsAccumulate(t *testing.T) {
 	}
 	if stats.InputTokens != 30 {
 		t.Errorf("InputTokens accumulated = %d, want 30", stats.InputTokens)
+	}
+	if stats.OutputTokens != 13 {
+		t.Errorf("OutputTokens accumulated = %d, want 13", stats.OutputTokens)
+	}
+	if stats.CacheReadTokens != 4 {
+		t.Errorf("CacheReadTokens accumulated = %d, want 4", stats.CacheReadTokens)
+	}
+	if stats.CacheWriteTokens != 6 {
+		t.Errorf("CacheWriteTokens accumulated = %d, want 6", stats.CacheWriteTokens)
 	}
 }
 

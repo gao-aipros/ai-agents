@@ -387,12 +387,12 @@ func extractClaudeTokens(stdout string) (string, TokenStats, error) {
 
 type codexUsage struct {
 	InputTokens           int64 `json:"input_tokens"`
-	CachedInputTokens     int64 `json:"cached_input_tokens"`
+	CacheReadInputTokens  int64 `json:"cached_input_tokens"`
 	OutputTokens          int64 `json:"output_tokens"`
 	ReasoningOutputTokens int64 `json:"reasoning_output_tokens"`
 }
 
-type codexItemDetails struct {
+type codexAgentMessage struct {
 	AgentMessage *struct {
 		Text string `json:"text"`
 	} `json:"AgentMessage,omitempty"`
@@ -403,10 +403,10 @@ type codexItemDetails struct {
 // so variant fields (id, details from ItemStarted/ItemUpdated/ItemCompleted;
 // usage from TurnCompleted) are inlined into the top-level object.
 type codexStreamEvent struct {
-	Type    string            `json:"type"`
-	ID      string            `json:"id,omitempty"`
-	Details *codexItemDetails `json:"details,omitempty"`
-	Usage   *codexUsage       `json:"usage,omitempty"`
+	Type    string              `json:"type"`
+	ID      string              `json:"id,omitempty"`
+	Details *codexAgentMessage  `json:"details,omitempty"`
+	Usage   *codexUsage         `json:"usage,omitempty"`
 }
 
 func extractCodexTokens(stdout string) (string, TokenStats, error) {
@@ -420,9 +420,9 @@ func extractCodexTokens(stdout string) (string, TokenStats, error) {
 			contentLines = append(contentLines, line)
 			continue
 		}
-		// Extract text from AgentMessage items (ItemStarted/ItemUpdated/ItemCompleted).
-		// With internally-tagged serde, id/details are inlined into the event object.
-		if ev.Details != nil && ev.Details.AgentMessage != nil {
+		// Extract text only from ItemStarted events — ItemUpdated/ItemCompleted
+		// may carry incremental or duplicate text for the same message.
+		if ev.Type == "ItemStarted" && ev.Details != nil && ev.Details.AgentMessage != nil {
 			if ev.Details.AgentMessage.Text != "" {
 				contentLines = append(contentLines, ev.Details.AgentMessage.Text)
 			}
@@ -432,7 +432,7 @@ func extractCodexTokens(stdout string) (string, TokenStats, error) {
 			u := ev.Usage
 			stats.InputTokens += u.InputTokens
 			stats.OutputTokens += u.OutputTokens
-			stats.CacheReadTokens += u.CachedInputTokens
+			stats.CacheReadTokens += u.CacheReadInputTokens
 			stats.ReasoningTokens += u.ReasoningOutputTokens
 		}
 	}
@@ -484,21 +484,29 @@ func extractOpenCodeTokens(stdout string) (string, TokenStats, error) {
 			contentLines = append(contentLines, line)
 			continue
 		}
-		// Extract text from "text" events (primary) and step_finish events (fallback)
-		if ev.Type == "text" && ev.Part != nil && ev.Part.Text != "" {
-			contentLines = append(contentLines, ev.Part.Text)
-		} else if ev.StepFinish != nil && ev.StepFinish.Part != nil && ev.StepFinish.Part.Text != "" {
-			contentLines = append(contentLines, ev.StepFinish.Part.Text)
-		}
-		// Accumulate token stats across multiple steps
-		if ev.StepFinish != nil && ev.StepFinish.Part != nil &&
-			ev.StepFinish.Part.Tokens != nil {
-			t := ev.StepFinish.Part.Tokens
-			stats.InputTokens += t.Input
-			stats.OutputTokens += t.Output
-			stats.ReasoningTokens += t.Reasoning
-			stats.CacheReadTokens += t.Cache.Read
-			stats.CacheWriteTokens += t.Cache.Write
+		switch ev.Type {
+		case "text":
+			if ev.Part != nil && ev.Part.Text != "" {
+				contentLines = append(contentLines, ev.Part.Text)
+			}
+		case "step_finish":
+			// In the actual opencode format, step_finish events carry
+			// tokens and a reason string — NOT text content (which
+			// arrives in separate "text" events). The text extraction
+			// below is a defensive fallback that never fires in practice.
+			if ev.StepFinish != nil && ev.StepFinish.Part != nil {
+				if ev.StepFinish.Part.Text != "" {
+					contentLines = append(contentLines, ev.StepFinish.Part.Text)
+				}
+				if ev.StepFinish.Part.Tokens != nil {
+					t := ev.StepFinish.Part.Tokens
+					stats.InputTokens += t.Input
+					stats.OutputTokens += t.Output
+					stats.ReasoningTokens += t.Reasoning
+					stats.CacheReadTokens += t.Cache.Read
+					stats.CacheWriteTokens += t.Cache.Write
+				}
+			}
 		}
 	}
 
