@@ -517,10 +517,10 @@ func (h *Handler) processStreamJSON(ctx context.Context, threadID string, stdout
 
 		case "usage":
 			if msg.Usage != nil {
-				masterStats.InputTokens = msg.Usage.InputTokens
-				masterStats.OutputTokens = msg.Usage.OutputTokens
-				masterStats.CacheReadTokens = msg.Usage.CacheReadTokens
-				masterStats.CacheWriteTokens = msg.Usage.CacheCreationTokens
+				masterStats.InputTokens += msg.Usage.InputTokens
+				masterStats.OutputTokens += msg.Usage.OutputTokens
+				masterStats.CacheReadTokens += msg.Usage.CacheReadTokens
+				masterStats.CacheWriteTokens += msg.Usage.CacheCreationTokens
 			}
 			continue
 		}
@@ -667,7 +667,7 @@ type streamMessage struct {
 	IsError bool             `json:"is_error"`
 	Result  string           `json:"result"`
 	Message *streamAssistant `json:"message"`
-	Usage   *claudeUsageMsg      `json:"usage,omitempty"`
+	Usage   *tasklib.ClaudeUsage      `json:"usage,omitempty"`
 }
 
 type streamAssistant struct {
@@ -679,12 +679,6 @@ type streamContentBlock struct {
 	Text string `json:"text"`
 }
 
-type claudeUsageMsg struct {
-	InputTokens         int64 `json:"input_tokens"`
-	OutputTokens        int64 `json:"output_tokens"`
-	CacheCreationTokens int64 `json:"cache_creation_input_tokens"`
-	CacheReadTokens     int64 `json:"cache_read_input_tokens"`
-}
 
 // hasToolUse returns true if any content block is a tool_use.
 func hasToolUse(blocks []streamContentBlock) bool {

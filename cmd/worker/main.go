@@ -406,7 +406,7 @@ func processOneTask(
 
 	// Process agent output: separate content from metadata, extract token stats
 	var tokenStats tasklib.TokenStats
-	if stdout != "" && runErr == nil {
+	if stdout != "" {
 		cleanContent, extractedStats, procErr := provider.Process(workspace, stdout)
 		if procErr != nil {
 			log.Warn("token extraction failed", "error", procErr.Error())
@@ -469,9 +469,11 @@ func processOneTask(
 		pipe.Expire(context.Background(), "stats:task_done", tasklib.TTLStats)
 	}
 	pipe.Expire(context.Background(), "stats:task_total", tasklib.TTLStats)
-	pipe.Exec(context.Background())
+
 	// Persist token stats to global counters and per-task keys
 	tasklib.PersistTokenStats(context.Background(), pipe, taskID, workerType, tokenStats)
+
+	pipe.Exec(context.Background())
 
 	// Best-effort event: task_completed or task_failed
 	durationMs := int(time.Since(startTime).Milliseconds())

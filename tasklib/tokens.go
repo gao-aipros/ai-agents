@@ -4,7 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
+	"strings"
+	"strconv"
 	"os"
 	"path/filepath"
 
@@ -320,7 +321,7 @@ func HasAnyTaskTokens(tasks []*Task) bool {
 
 // ── agent-specific parsers ─────────────────────────────────────────────────
 
-type claudeUsage struct {
+type ClaudeUsage struct {
 	InputTokens         int64 `json:"input_tokens"`
 	OutputTokens        int64 `json:"output_tokens"`
 	CacheCreationTokens int64 `json:"cache_creation_input_tokens"`
@@ -329,7 +330,7 @@ type claudeUsage struct {
 
 type claudeStreamEvent struct {
 	Type  string       `json:"type"`
-	Usage *claudeUsage `json:"usage"`
+	Usage *ClaudeUsage `json:"usage"`
 }
 
 func extractClaudeTokens(stdout string) (string, TokenStats, error) {
@@ -392,7 +393,8 @@ type codexUsageEvent struct {
 }
 
 type codexTurnCompleted struct {
-	Usage *codexUsageEvent `json:"usage,omitempty"`
+	Usage  *codexUsageEvent `json:"usage,omitempty"`
+	Result string           `json:"result,omitempty"`
 }
 
 type codexTurnEvent struct {
@@ -415,12 +417,19 @@ func extractCodexTokens(stdout string) (string, TokenStats, error) {
 			contentLines = append(contentLines, line)
 			continue
 		}
+		// Extract text content from completed turns
+		if ev.Turn != nil && ev.Turn.Completed != nil {
+			if ev.Turn.Completed.Result != "" {
+				contentLines = append(contentLines, ev.Turn.Completed.Result)
+			}
+		}
+		// Accumulate token stats across multiple turns
 		if ev.Turn != nil && ev.Turn.Completed != nil && ev.Turn.Completed.Usage != nil {
 			u := ev.Turn.Completed.Usage
-			stats.InputTokens = u.InputTokens
-			stats.OutputTokens = u.OutputTokens
-			stats.CacheReadTokens = u.CachedInputTokens
-			stats.ReasoningTokens = u.ReasoningOutputTokens
+			stats.InputTokens += u.InputTokens
+			stats.OutputTokens += u.OutputTokens
+			stats.CacheReadTokens += u.CachedInputTokens
+			stats.ReasoningTokens += u.ReasoningOutputTokens
 		}
 	}
 
@@ -439,6 +448,7 @@ type opencodeTokens struct {
 
 type opencodeStepPart struct {
 	Tokens *opencodeTokens `json:"tokens,omitempty"`
+	Text   string          `json:"text,omitempty"`
 }
 
 type opencodeStepFinish struct {
@@ -461,14 +471,19 @@ func extractOpenCodeTokens(stdout string) (string, TokenStats, error) {
 			contentLines = append(contentLines, line)
 			continue
 		}
+		// Extract text content from step finish events
+		if ev.StepFinish != nil && ev.StepFinish.Part != nil && ev.StepFinish.Part.Text != "" {
+			contentLines = append(contentLines, ev.StepFinish.Part.Text)
+		}
+		// Accumulate token stats across multiple steps
 		if ev.StepFinish != nil && ev.StepFinish.Part != nil &&
 			ev.StepFinish.Part.Tokens != nil {
 			t := ev.StepFinish.Part.Tokens
-			stats.InputTokens = t.Input
-			stats.OutputTokens = t.Output
-			stats.ReasoningTokens = t.Reasoning
-			stats.CacheReadTokens = t.CacheRead
-			stats.CacheWriteTokens = t.CacheWrite
+			stats.InputTokens += t.Input
+			stats.OutputTokens += t.Output
+			stats.ReasoningTokens += t.Reasoning
+			stats.CacheReadTokens += t.CacheRead
+			stats.CacheWriteTokens += t.CacheWrite
 		}
 	}
 
@@ -510,25 +525,10 @@ func parseCopilotSessionFile(fileContent string) TokenStats {
 // ── Shared helpers ────────────────────────────────────────────────────────
 
 func splitGenericLines(s string) []string {
-	var lines []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\n' {
-			line := s[start:i]
-			if len(line) > 0 && line[len(line)-1] == '\r' {
-				line = line[:len(line)-1]
-			}
-			if line != "" {
-				lines = append(lines, line)
-			}
-			start = i + 1
-		}
-	}
-	if start < len(s) {
-		line := s[start:]
-		if len(line) > 0 && line[len(line)-1] == '\r' {
-			line = line[:len(line)-1]
-		}
+	raw := strings.Split(s, "\n")
+	lines := make([]string, 0, len(raw))
+	for _, line := range raw {
+		line = strings.TrimRight(line, "\r")
 		if line != "" {
 			lines = append(lines, line)
 		}
@@ -563,9 +563,7 @@ func parseFieldInt(fields map[string]string, name string) int64 {
 }
 
 func parseInt64(s string) (int64, error) {
-	var n int64
-	_, err := fmt.Sscanf(s, "%d", &n)
-	return n, err
+	return strconv.ParseInt(s, 10, 64)
 }
 
 // FormatTokenCount formats a token count for human display.
@@ -602,5 +600,4 @@ func formatFloatStr(f float64) string {
 }
 
 // Ensure math package is used (clampInt64Val uses int64 conversion, not math)
-var _ = math.MaxInt64
 
