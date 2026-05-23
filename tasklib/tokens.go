@@ -123,7 +123,7 @@ func (p *CopilotStatsProvider) Setup(workspaceDir string) ([]string, func(), err
 		os.RemoveAll(dir)
 	}
 
-	return []string{"--session-id", id}, cleanup, nil
+	return []string{"--session-id=" + id}, cleanup, nil
 }
 
 func (p *CopilotStatsProvider) Process(workspaceDir, stdout string) (string, TokenStats, error) {
@@ -385,24 +385,28 @@ func extractClaudeTokens(stdout string) (string, TokenStats, error) {
 
 // ── Codex (JSONL) ─────────────────────────────────────────────────────────
 
-type codexUsageEvent struct {
+type codexUsage struct {
 	InputTokens           int64 `json:"input_tokens"`
-	CachedInputTokens     int64 `json:"cached_input_tokens"`
+	CacheReadInputTokens  int64 `json:"cached_input_tokens"`
 	OutputTokens          int64 `json:"output_tokens"`
 	ReasoningOutputTokens int64 `json:"reasoning_output_tokens"`
 }
 
-type codexTurnCompleted struct {
-	Usage  *codexUsageEvent `json:"usage,omitempty"`
-	Result string           `json:"result,omitempty"`
+type codexAgentMessage struct {
+	AgentMessage *struct {
+		Text string `json:"text"`
+	} `json:"AgentMessage,omitempty"`
 }
 
-type codexTurnEvent struct {
-	Completed *codexTurnCompleted `json:"completed,omitempty"`
-}
-
+// codexStreamEvent matches the JSONL output of codex exec --json.
+// codex uses #[serde(tag = "type")] internally-tagged enum representation,
+// so variant fields (id, details from ItemStarted/ItemUpdated/ItemCompleted;
+// usage from TurnCompleted) are inlined into the top-level object.
 type codexStreamEvent struct {
-	Turn *codexTurnEvent `json:"turn,omitempty"`
+	Type    string              `json:"type"`
+	ID      string              `json:"id,omitempty"`
+	Details *codexAgentMessage  `json:"details,omitempty"`
+	Usage   *codexUsage         `json:"usage,omitempty"`
 }
 
 func extractCodexTokens(stdout string) (string, TokenStats, error) {
@@ -416,18 +420,19 @@ func extractCodexTokens(stdout string) (string, TokenStats, error) {
 			contentLines = append(contentLines, line)
 			continue
 		}
-		// Extract text content from completed turns
-		if ev.Turn != nil && ev.Turn.Completed != nil {
-			if ev.Turn.Completed.Result != "" {
-				contentLines = append(contentLines, ev.Turn.Completed.Result)
+		// Extract text only from ItemStarted events — ItemUpdated/ItemCompleted
+		// may carry incremental or duplicate text for the same message.
+		if ev.Type == "ItemStarted" && ev.Details != nil && ev.Details.AgentMessage != nil {
+			if ev.Details.AgentMessage.Text != "" {
+				contentLines = append(contentLines, ev.Details.AgentMessage.Text)
 			}
 		}
-		// Accumulate token stats across multiple turns
-		if ev.Turn != nil && ev.Turn.Completed != nil && ev.Turn.Completed.Usage != nil {
-			u := ev.Turn.Completed.Usage
+		// Extract token usage from TurnCompleted events
+		if ev.Type == "TurnCompleted" && ev.Usage != nil {
+			u := ev.Usage
 			stats.InputTokens += u.InputTokens
 			stats.OutputTokens += u.OutputTokens
-			stats.CacheReadTokens += u.CachedInputTokens
+			stats.CacheReadTokens += u.CacheReadInputTokens
 			stats.ReasoningTokens += u.ReasoningOutputTokens
 		}
 	}
@@ -437,12 +442,16 @@ func extractCodexTokens(stdout string) (string, TokenStats, error) {
 
 // ── OpenCode (JSONL) ──────────────────────────────────────────────────────
 
+type opencodeCache struct {
+	Read  int64 `json:"read"`
+	Write int64 `json:"write"`
+}
+
 type opencodeTokens struct {
-	Input      int64 `json:"input"`
-	Output     int64 `json:"output"`
-	Reasoning  int64 `json:"reasoning"`
-	CacheRead  int64 `json:"cache.read"`
-	CacheWrite int64 `json:"cache.write"`
+	Input     int64         `json:"input"`
+	Output    int64         `json:"output"`
+	Reasoning int64         `json:"reasoning"`
+	Cache     opencodeCache `json:"cache"`
 }
 
 type opencodeStepPart struct {
@@ -454,8 +463,13 @@ type opencodeStepFinish struct {
 	Part *opencodeStepPart `json:"part,omitempty"`
 }
 
+type opencodeTextPart struct {
+	Text string `json:"text,omitempty"`
+}
+
 type opencodeStreamEvent struct {
 	Type       string              `json:"type"`
+	Part       *opencodeTextPart   `json:"part,omitempty"`
 	StepFinish *opencodeStepFinish `json:"step_finish,omitempty"`
 }
 
@@ -470,19 +484,29 @@ func extractOpenCodeTokens(stdout string) (string, TokenStats, error) {
 			contentLines = append(contentLines, line)
 			continue
 		}
-		// Extract text content from step finish events
-		if ev.StepFinish != nil && ev.StepFinish.Part != nil && ev.StepFinish.Part.Text != "" {
-			contentLines = append(contentLines, ev.StepFinish.Part.Text)
-		}
-		// Accumulate token stats across multiple steps
-		if ev.StepFinish != nil && ev.StepFinish.Part != nil &&
-			ev.StepFinish.Part.Tokens != nil {
-			t := ev.StepFinish.Part.Tokens
-			stats.InputTokens += t.Input
-			stats.OutputTokens += t.Output
-			stats.ReasoningTokens += t.Reasoning
-			stats.CacheReadTokens += t.CacheRead
-			stats.CacheWriteTokens += t.CacheWrite
+		switch ev.Type {
+		case "text":
+			if ev.Part != nil && ev.Part.Text != "" {
+				contentLines = append(contentLines, ev.Part.Text)
+			}
+		case "step_finish":
+			// In the actual opencode format, step_finish events carry
+			// tokens and a reason string — NOT text content (which
+			// arrives in separate "text" events). The text extraction
+			// below is a defensive fallback that never fires in practice.
+			if ev.StepFinish != nil && ev.StepFinish.Part != nil {
+				if ev.StepFinish.Part.Text != "" {
+					contentLines = append(contentLines, ev.StepFinish.Part.Text)
+				}
+				if ev.StepFinish.Part.Tokens != nil {
+					t := ev.StepFinish.Part.Tokens
+					stats.InputTokens += t.Input
+					stats.OutputTokens += t.Output
+					stats.ReasoningTokens += t.Reasoning
+					stats.CacheReadTokens += t.Cache.Read
+					stats.CacheWriteTokens += t.Cache.Write
+				}
+			}
 		}
 	}
 

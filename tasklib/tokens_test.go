@@ -151,7 +151,7 @@ func TestClaudeStatsProvider_Process_MalformedLines(t *testing.T) {
 // ── CodexStatsProvider ────────────────────────────────────────────────────
 
 func TestCodexStatsProvider_Process(t *testing.T) {
-	stdout := `{"type":"turn","turn":{"completed":{"usage":{"input_tokens":200,"cached_input_tokens":30,"output_tokens":80,"reasoning_output_tokens":5}}}}
+	stdout := `{"type":"TurnCompleted","usage":{"input_tokens":200,"cached_input_tokens":30,"output_tokens":80,"reasoning_output_tokens":5}}
 `
 	p := &CodexStatsProvider{}
 	_, stats, err := p.Process("/tmp", stdout)
@@ -165,7 +165,7 @@ func TestCodexStatsProvider_Process(t *testing.T) {
 }
 
 func TestCodexStatsProvider_Process_NoUsage(t *testing.T) {
-	stdout := `{"type":"turn","turn":{"completed":{}}}`
+	stdout := `{"type":"TurnCompleted"}`
 	p := &CodexStatsProvider{}
 	_, stats, err := p.Process("/tmp", stdout)
 	if err != nil || stats.HasAny() {
@@ -176,7 +176,7 @@ func TestCodexStatsProvider_Process_NoUsage(t *testing.T) {
 // ── OpenCodeStatsProvider ─────────────────────────────────────────────────
 
 func TestOpenCodeStatsProvider_Process(t *testing.T) {
-	stdout := `{"type":"step_finish","step_finish":{"part":{"tokens":{"input":300,"output":120,"reasoning":10,"cache.read":40,"cache.write":15}}}}
+	stdout := `{"type":"step_finish","step_finish":{"part":{"tokens":{"input":300,"output":120,"reasoning":10,"cache":{"read":40,"write":15}}}}}
 `
 	p := &OpenCodeStatsProvider{}
 	_, stats, err := p.Process("/tmp", stdout)
@@ -207,8 +207,8 @@ func TestCopilotStatsProvider_Setup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Setup error: %v", err)
 	}
-	if len(args) != 2 || args[0] != "--session-id" {
-		t.Errorf("args = %v, want [--session-id <uuid>]", args)
+	if len(args) != 1 || !strings.HasPrefix(args[0], "--session-id=") {
+		t.Errorf("args = %v, want [--session-id=<uuid>]", args)
 	}
 	if cleanup == nil {
 		t.Error("cleanup should not be nil")
@@ -443,8 +443,8 @@ func TestHasAnyTaskTokens(t *testing.T) {
 // ── Codex content extraction tests ─────────────────────────────────────
 
 func TestCodexStatsProvider_Process_ContentExtraction(t *testing.T) {
-	// Codex with --json outputs JSONL with turn.completed.result for content
-	stdout := `{"type":"turn","turn":{"completed":{"result":"This is the agent response","usage":{"input_tokens":100,"output_tokens":50}}}}
+	// Codex with --json outputs ItemStarted events with inlined AgentMessage details
+	stdout := `{"type":"ItemStarted","id":"msg_1","details":{"AgentMessage":{"text":"This is the agent response"}}}
 `
 	p := &CodexStatsProvider{}
 	content, stats, err := p.Process("/tmp", stdout)
@@ -454,14 +454,17 @@ func TestCodexStatsProvider_Process_ContentExtraction(t *testing.T) {
 	if !strings.Contains(content, "This is the agent response") {
 		t.Errorf("content should contain agent response, got: %q", content)
 	}
-	if stats.OutputTokens != 50 {
-		t.Errorf("OutputTokens = %d, want 50", stats.OutputTokens)
+	// AgentMessage events don't carry usage — stats come from TurnCompleted events
+	if stats.HasAny() {
+		t.Errorf("AgentMessage events should not carry tokens: got %+v", stats)
 	}
 }
 
 func TestCodexStatsProvider_Process_MultipleTurnsAccumulate(t *testing.T) {
-	stdout := `{"type":"turn","turn":{"completed":{"result":"First","usage":{"input_tokens":10,"output_tokens":5}}}}
-{"type":"turn","turn":{"completed":{"result":"Second","usage":{"input_tokens":20,"output_tokens":8}}}}
+	stdout := `{"type":"ItemStarted","id":"m1","details":{"AgentMessage":{"text":"First"}}}
+{"type":"TurnCompleted","usage":{"input_tokens":10,"output_tokens":5}}
+{"type":"ItemStarted","id":"m2","details":{"AgentMessage":{"text":"Second"}}}
+{"type":"TurnCompleted","usage":{"input_tokens":20,"output_tokens":8}}
 `
 	p := &CodexStatsProvider{}
 	content, stats, err := p.Process("/tmp", stdout)
@@ -480,7 +483,7 @@ func TestCodexStatsProvider_Process_MultipleTurnsAccumulate(t *testing.T) {
 }
 
 func TestCodexStatsProvider_Process_MixedValidAndInvalid(t *testing.T) {
-	stdout := `{"type":"turn","turn":{"completed":{"result":"Good"}}}
+	stdout := `{"type":"ItemStarted","id":"m1","details":{"AgentMessage":{"text":"Good"}}}
 plain text line
 `
 	p := &CodexStatsProvider{}
@@ -495,15 +498,50 @@ plain text line
 		t.Error("missing plain text content")
 	}
 	if stats.HasAny() {
-		t.Error("no usage event, stats should be zero")
+		t.Error("no TurnCompleted event, stats should be zero")
+	}
+}
+
+func TestCodexStatsProvider_Process_SkipsItemUpdatedAndItemCompleted(t *testing.T) {
+	// Only ItemStarted events should contribute text — ItemUpdated and
+	// ItemCompleted may carry incremental or duplicate text.
+	stdout := `{"type":"ItemStarted","id":"m1","details":{"AgentMessage":{"text":"Final text"}}}
+{"type":"ItemUpdated","id":"m1","details":{"AgentMessage":{"text":"Duplicate"}}}
+{"type":"ItemCompleted","id":"m1","details":{"AgentMessage":{"text":"Duplicate 2"}}}
+`
+	p := &CodexStatsProvider{}
+	content, _, err := p.Process("/tmp", stdout)
+	if err != nil {
+		t.Fatalf("Process error: %v", err)
+	}
+	if !strings.Contains(content, "Final text") {
+		t.Errorf("content should contain ItemStarted text: %q", content)
+	}
+	if strings.Contains(content, "Duplicate") {
+		t.Error("content should NOT contain ItemUpdated/ItemCompleted text")
+	}
+}
+
+func TestCodexStatsProvider_Process_IgnoresUsageOnNonTurnCompleted(t *testing.T) {
+	stdout := `{"type":"ItemStarted","id":"m1","details":{"AgentMessage":{"text":"Hello"}}}
+{"type":"ItemCompleted","usage":{"input_tokens":999,"output_tokens":999}}
+{"type":"TurnCompleted","usage":{"input_tokens":100,"output_tokens":50}}
+`
+	p := &CodexStatsProvider{}
+	_, stats, err := p.Process("/tmp", stdout)
+	if err != nil {
+		t.Fatalf("Process error: %v", err)
+	}
+	if stats.InputTokens != 100 || stats.OutputTokens != 50 {
+		t.Errorf("stats = %+v, want Input=100 Output=50 (ItemCompleted usage ignored)", stats)
 	}
 }
 
 // ── OpenCode content extraction tests ──────────────────────────────────
 
 func TestOpenCodeStatsProvider_Process_ContentExtraction(t *testing.T) {
-	// OpenCode with --format json outputs step_finish events with text
-	stdout := `{"type":"step_finish","step_finish":{"part":{"text":"Implementation complete","tokens":{"input":300,"output":120}}}}
+	// OpenCode with --format json outputs text events with text content
+	stdout := `{"type":"text","part":{"text":"Implementation complete"}}
 `
 	p := &OpenCodeStatsProvider{}
 	content, stats, err := p.Process("/tmp", stdout)
@@ -511,16 +549,42 @@ func TestOpenCodeStatsProvider_Process_ContentExtraction(t *testing.T) {
 		t.Fatalf("Process error: %v", err)
 	}
 	if !strings.Contains(content, "Implementation complete") {
-		t.Errorf("content should contain step text: %q", content)
+		t.Errorf("content should contain text event text: %q", content)
 	}
-	if stats.InputTokens != 300 {
-		t.Errorf("InputTokens = %d, want 300", stats.InputTokens)
+	if stats.HasAny() {
+		t.Errorf("text events should not carry tokens: got %+v", stats)
+	}
+}
+
+func TestOpenCodeStatsProvider_Process_TextFromStepFinish(t *testing.T) {
+	// step_finish.part.text is still extracted as a fallback
+	stdout := `{"type":"step_finish","step_finish":{"part":{"text":"from step finish","tokens":{"input":10,"output":5,"cache":{"read":1,"write":2}}}}}
+`
+	p := &OpenCodeStatsProvider{}
+	content, stats, err := p.Process("/tmp", stdout)
+	if err != nil {
+		t.Fatalf("Process error: %v", err)
+	}
+	if !strings.Contains(content, "from step finish") {
+		t.Errorf("content should contain step_finish text: %q", content)
+	}
+	if stats.InputTokens != 10 {
+		t.Errorf("InputTokens = %d, want 10", stats.InputTokens)
+	}
+	if stats.OutputTokens != 5 {
+		t.Errorf("OutputTokens = %d, want 5", stats.OutputTokens)
+	}
+	if stats.CacheReadTokens != 1 {
+		t.Errorf("CacheReadTokens = %d, want 1", stats.CacheReadTokens)
+	}
+	if stats.CacheWriteTokens != 2 {
+		t.Errorf("CacheWriteTokens = %d, want 2", stats.CacheWriteTokens)
 	}
 }
 
 func TestOpenCodeStatsProvider_Process_MultipleStepsAccumulate(t *testing.T) {
-	stdout := `{"type":"step_finish","step_finish":{"part":{"text":"Step 1","tokens":{"input":10,"output":5}}}}
-{"type":"step_finish","step_finish":{"part":{"text":"Step 2","tokens":{"input":20,"output":8}}}}
+	stdout := `{"type":"step_finish","step_finish":{"part":{"text":"Step 1","tokens":{"input":10,"output":5,"cache":{"read":1,"write":2}}}}}
+{"type":"step_finish","step_finish":{"part":{"text":"Step 2","tokens":{"input":20,"output":8,"cache":{"read":3,"write":4}}}}}
 `
 	p := &OpenCodeStatsProvider{}
 	content, stats, err := p.Process("/tmp", stdout)
@@ -532,6 +596,15 @@ func TestOpenCodeStatsProvider_Process_MultipleStepsAccumulate(t *testing.T) {
 	}
 	if stats.InputTokens != 30 {
 		t.Errorf("InputTokens accumulated = %d, want 30", stats.InputTokens)
+	}
+	if stats.OutputTokens != 13 {
+		t.Errorf("OutputTokens accumulated = %d, want 13", stats.OutputTokens)
+	}
+	if stats.CacheReadTokens != 4 {
+		t.Errorf("CacheReadTokens accumulated = %d, want 4", stats.CacheReadTokens)
+	}
+	if stats.CacheWriteTokens != 6 {
+		t.Errorf("CacheWriteTokens accumulated = %d, want 6", stats.CacheWriteTokens)
 	}
 }
 
