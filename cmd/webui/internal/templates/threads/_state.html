@@ -26,6 +26,35 @@
     <div class="value mono" style="font-size:12px">{{if .Thread.UpdatedAt}}<time datetime="{{.Thread.UpdatedAt}}">{{.Thread.UpdatedAt}}</time>{{else}}-{{end}}</div>
   </div>
 </div>
+
+{{if .TokenRows}}
+<div class="state-panel" style="margin-top:16px">
+  <div class="label" style="margin-bottom:8px;font-weight:600">Token Usage</div>
+  <table style="width:100%;font-size:12px">
+    <thead>
+      <tr>
+        <th>Agent</th>
+        <th class="right">Input</th>
+        <th class="right">Output</th>
+        <th class="right">Cache</th>
+        <th class="right">Reasoning</th>
+      </tr>
+    </thead>
+    <tbody>
+    {{range .TokenRows}}
+      <tr>
+        <td class="mono">{{.Agent}}</td>
+        <td class="right">{{.Input}}</td>
+        <td class="right">{{.Output}}</td>
+        <td class="right">{{.Cache}}</td>
+        <td class="right">{{.Reasoning}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
 {{else}}
 <div class="text-muted">Thread not found</div>
 {{end}}
@@ -95,6 +124,34 @@
     <div class="value mono" style="font-size:12px">{{if .Thread.UpdatedAt}}<time datetime="{{.Thread.UpdatedAt}}">{{.Thread.UpdatedAt}}</time>{{else}}-{{end}}</div>
   </div>
 </div>
+{{if .TokenRows}}
+<div class="state-panel" style="margin-top:16px">
+  <div class="label" style="margin-bottom:8px;font-weight:600">Token Usage</div>
+  <table style="width:100%;font-size:12px">
+    <thead>
+      <tr>
+        <th>Agent</th>
+        <th class="right">Input</th>
+        <th class="right">Output</th>
+        <th class="right">Cache</th>
+        <th class="right">Reasoning</th>
+      </tr>
+    </thead>
+    <tbody>
+    {{range .TokenRows}}
+      <tr>
+        <td class="mono">{{.Agent}}</td>
+        <td class="right">{{.Input}}</td>
+        <td class="right">{{.Output}}</td>
+        <td class="right">{{.Cache}}</td>
+        <td class="right">{{.Reasoning}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
 {{else}}
 <div class="text-muted">Thread not found</div>
 {{end}}

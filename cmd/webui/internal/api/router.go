@@ -118,7 +118,37 @@ type pageResource struct {
 
 // GET /
 func (pr *pageResource) dashboard(w http.ResponseWriter, r *http.Request) {
-	Page(w, pr.renderer, "page-dashboard", nil)
+	ctx := r.Context()
+	tokens, _ := pr.client.GetTokenStats(ctx, tasklib.StatsTotalKey())
+	taskCount, _ := pr.client.GetTokenStatsTaskCount(ctx, tasklib.StatsTotalKey())
+
+	data := map[string]interface{}{}
+	if tokens != nil && tokens.HasAny() {
+		type statsRow struct {
+			Agent  string
+			Input  string
+			Output string
+		}
+		var rows []statsRow
+		for _, wt := range []string{"master", "claude", "codex", "copilot", "opencode"} {
+			wtTokens, err := pr.client.GetTokenStats(ctx, tasklib.StatsWorkerKey(wt))
+			if err != nil || wtTokens == nil || !wtTokens.HasAny() {
+				continue
+			}
+			rows = append(rows, statsRow{
+				Agent:  wt,
+				Input:  tasklib.FormatTokenCount(wtTokens.InputTokens),
+				Output: tasklib.FormatTokenCount(wtTokens.OutputTokens),
+			})
+		}
+		data["TokenStats"] = map[string]interface{}{
+			"TotalIn":   tasklib.FormatTokenCount(tokens.InputTokens),
+			"TotalOut":  tasklib.FormatTokenCount(tokens.OutputTokens),
+			"TaskCount": taskCount,
+			"Rows":      rows,
+		}
+	}
+	Page(w, pr.renderer, "page-dashboard", data)
 }
 
 // GET /threads

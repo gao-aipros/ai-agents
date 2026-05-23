@@ -27,6 +27,11 @@ type Task struct {
 	StartedAt            string `json:"started_at,omitempty"`
 	LastStartedAt        string `json:"last_started_at,omitempty"`
 	WorkerHostname       string `json:"worker_hostname,omitempty"`
+	InputTokens          int64  `json:"input_tokens,omitempty"`
+	OutputTokens         int64  `json:"output_tokens,omitempty"`
+	CacheReadTokens      int64  `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens     int64  `json:"cache_write_tokens,omitempty"`
+	ReasoningTokens      int64  `json:"reasoning_tokens,omitempty"`
 	RetryCount           string `json:"retry_count,omitempty"`
 	ErrorMessage         string `json:"error_message,omitempty"`
 	CorrelationID        string `json:"correlation_id,omitempty"`
@@ -368,6 +373,26 @@ func (c *Client) GetTask(ctx context.Context, taskID string) (*Task, error) {
 			t.CancelledBy = val
 		case "cancelled_at":
 			t.CancelledAt = val
+		case "input_tokens":
+			if n, err := strconv.ParseInt(val, 10, 64); err == nil {
+				t.InputTokens = n
+			}
+		case "output_tokens":
+			if n, err := strconv.ParseInt(val, 10, 64); err == nil {
+				t.OutputTokens = n
+			}
+		case "cache_read_tokens":
+			if n, err := strconv.ParseInt(val, 10, 64); err == nil {
+				t.CacheReadTokens = n
+			}
+		case "cache_write_tokens":
+			if n, err := strconv.ParseInt(val, 10, 64); err == nil {
+				t.CacheWriteTokens = n
+			}
+		case "reasoning_tokens":
+			if n, err := strconv.ParseInt(val, 10, 64); err == nil {
+				t.ReasoningTokens = n
+			}
 		case "cancelled_previous_status":
 			t.CancelledPrevStatus = val
 		}

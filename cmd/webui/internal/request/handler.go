@@ -360,9 +360,17 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 	// line as a "plan" message. In "stream-json" mode we dispatch JSON messages
 	// (rollback path) and detect completion via the "result" message.
 	var fullStdout strings.Builder
-	streamCompleted := false
+	var streamCompleted bool
+	var masterStats tasklib.TokenStats
 	if h.cfg.OutputFormat == "stream-json" {
-		streamCompleted = h.processStreamJSON(ctx, threadID, stdout)
+		streamCompleted, masterStats = h.processStreamJSON(ctx, threadID, stdout)
+
+		// Persist master token stats to thread and global counters
+		persistCtx, persistCancel := cleanupCtx()
+		pipe := h.client.RDB().Pipeline()
+		tasklib.PersistMasterTokenStats(persistCtx, pipe, threadID, masterStats)
+		pipe.Exec(persistCtx)
+		persistCancel()
 	} else {
 		h.processPlainText(ctx, threadID, stdout, &fullStdout)
 	}
@@ -451,9 +459,10 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 // processStreamJSON reads and dispatches stream-json lines from stdout.
 // It writes plan/tool_call messages for assistant output and response/error
 // messages for the result. Returns true if a result message was processed.
-func (h *Handler) processStreamJSON(ctx context.Context, threadID string, stdout io.Reader) bool {
+func (h *Handler) processStreamJSON(ctx context.Context, threadID string, stdout io.Reader) (bool, tasklib.TokenStats) {
 	completed := false
 	lastWritten := ""
+	var masterStats tasklib.TokenStats
 	reader := bufio.NewReader(stdout)
 
 	for {
@@ -505,9 +514,18 @@ func (h *Handler) processStreamJSON(ctx context.Context, threadID string, stdout
 			} else {
 				h.writeResponseMessage(ctx, threadID, msg.Result)
 			}
+
+		case "usage":
+			if msg.Usage != nil {
+				masterStats.InputTokens += msg.Usage.InputTokens
+				masterStats.OutputTokens += msg.Usage.OutputTokens
+				masterStats.CacheReadTokens += msg.Usage.CacheReadTokens
+				masterStats.CacheWriteTokens += msg.Usage.CacheCreationTokens
+			}
+			continue
 		}
 	}
-	return completed
+	return completed, masterStats
 }
 
 // processPlainText reads plain-text lines from stdout and accumulates them.
@@ -649,6 +667,7 @@ type streamMessage struct {
 	IsError bool             `json:"is_error"`
 	Result  string           `json:"result"`
 	Message *streamAssistant `json:"message"`
+	Usage   *tasklib.ClaudeUsage      `json:"usage,omitempty"`
 }
 
 type streamAssistant struct {
@@ -659,6 +678,7 @@ type streamContentBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
 }
+
 
 // hasToolUse returns true if any content block is a tool_use.
 func hasToolUse(blocks []streamContentBlock) bool {
