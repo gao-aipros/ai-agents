@@ -276,8 +276,16 @@ func processOneTask(
 		window = taskPayload.HistoryWindow
 	}
 
-	// Read thread history
-	msgs, _ := client.GetThreadHistoryTail(context.Background(), threadID, window)
+	// Read thread history. For group tasks, filter to only show messages
+	// addressed to this worker so it does not see instructions meant for
+	// other workers in the same fan-out group.
+	groupLabel, _ := rdb.Get(context.Background(), tasklib.TaskKey(taskID, "group")).Result()
+	var msgs []tasklib.Message
+	if groupLabel != "" {
+		msgs, _ = client.GetThreadHistoryTailForWorker(context.Background(), threadID, window, workerType)
+	} else {
+		msgs, _ = client.GetThreadHistoryTail(context.Background(), threadID, window)
+	}
 	var contextBuilder strings.Builder
 	if len(msgs) > 0 {
 		contextBuilder.WriteString("## Thread History (recent)\n\n")

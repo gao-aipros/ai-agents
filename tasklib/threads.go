@@ -176,6 +176,40 @@ func (c *Client) GetThreadHistoryTail(ctx context.Context, threadID string, tail
 	return result, nil
 }
 
+// GetThreadHistoryTailForWorker retrieves the last N messages from thread
+// history that are addressed to a specific worker. Messages without a
+// "worker" metadata field pass through for backward compatibility.
+// Fetches up to 3*tail raw messages before filtering to maintain the
+// requested window size after filtering out other workers' messages.
+func (c *Client) GetThreadHistoryTailForWorker(ctx context.Context, threadID string, tail int, worker string) ([]Message, error) {
+	if tail <= 0 {
+		return nil, nil
+	}
+	key := ThreadMessagesKey(threadID)
+	// Fetch a larger window to account for filtered-out messages
+	fetchSize := tail * 3
+	msgs, err := c.rdb.LRange(ctx, key, int64(-fetchSize), -1).Result()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]Message, 0, tail)
+	for _, raw := range msgs {
+		var m Message
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			m = Message{Content: raw, Role: "unknown"}
+		}
+		msgWorker := m.Metadata["worker"]
+		if msgWorker == "" || msgWorker == worker {
+			result = append(result, m)
+		}
+	}
+	// Return only the last `tail` matching messages
+	if len(result) > tail {
+		result = result[len(result)-tail:]
+	}
+	return result, nil
+}
+
 // AppendMessage appends a message to thread history and refreshes TTL.
 func (c *Client) AppendMessage(ctx context.Context, threadID string, msg Message) error {
 	data, err := json.Marshal(msg)
