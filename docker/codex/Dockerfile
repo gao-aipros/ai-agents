@@ -4,7 +4,6 @@ ARG WORKER_BASE_IMAGE=worker-base:latest
 FROM debian:trixie AS codex-download
 
 ARG CODEX_VERSION=latest
-ARG GITHUB_TOKEN
 ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -17,9 +16,7 @@ RUN case "${TARGETARCH}" in \
       *) echo "Unsupported arch: ${TARGETARCH}"; exit 1 ;; \
     esac && \
     if [ "${CODEX_VERSION}" = "latest" ]; then \
-      AUTH_HEADER="" && \
-      if [ -n "${GITHUB_TOKEN}" ]; then AUTH_HEADER="Authorization: Bearer ${GITHUB_TOKEN}"; fi && \
-      API_RESPONSE=$(curl -sSf -H "${AUTH_HEADER}" \
+      API_RESPONSE=$(curl -sSf \
         https://api.github.com/repos/openai/codex/releases/latest) && \
       CODEX_VERSION=$(echo "${API_RESPONSE}" | jq -re '.tag_name | capture("^rust-v(?<ver>.+)") | .ver') && \
       if [ -z "${CODEX_VERSION}" ]; then \
