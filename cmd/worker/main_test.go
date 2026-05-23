@@ -539,6 +539,52 @@ func TestGroupTaskBackwardCompatNoWorkerMetadata(t *testing.T) {
 	}
 }
 
+func TestGroupTaskAllMessagesForOtherWorkers(t *testing.T) {
+	client, _ := newTestClient(t)
+	rdb := client.RDB()
+	log := newLogger()
+
+	// All thread messages are for other workers
+	for i := 0; i < 5; i++ {
+		rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread),
+			makeMsg("master", fmt.Sprintf("Copilot instruction %d", i),
+				"2026-05-10T00:00:00Z", "task-copilot", "copilot"))
+	}
+
+	// Mark task as group task
+	rdb.Set(context.Background(), tasklib.TaskKey(testTaskID, "group"), "design-review", 0)
+
+	var capturedPrompt string
+	orig := execCommand
+	execCommand = func(ctx context.Context, args []string, dir string) (string, string, int, error) {
+		capturedPrompt = args[len(args)-1]
+		return "ok", "", 0, nil
+	}
+	defer func() { execCommand = orig }()
+
+	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
+	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
+	workspace := t.TempDir()
+	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
+
+	// Should still produce a valid prompt without thread history section
+	if strings.Contains(capturedPrompt, "## Thread History") {
+		t.Error("prompt should not have thread history section when no matching messages")
+	}
+	if !strings.Contains(capturedPrompt, "## Task") {
+		t.Error("prompt should still have task section")
+	}
+	if !strings.Contains(capturedPrompt, testInstruction) {
+		t.Error("prompt missing instruction")
+	}
+	// Task should complete successfully
+	status, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "status")).Result()
+	if status != "done" {
+		t.Errorf("expected status=done, got %s", status)
+	}
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Workspace Tests
 // ═══════════════════════════════════════════════════════════════════════════════

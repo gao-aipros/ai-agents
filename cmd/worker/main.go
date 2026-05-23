@@ -279,7 +279,11 @@ func processOneTask(
 	// Read thread history. For group tasks, filter to only show messages
 	// addressed to this worker so it does not see instructions meant for
 	// other workers in the same fan-out group.
-	groupLabel, _ := rdb.Get(context.Background(), tasklib.TaskKey(taskID, "group")).Result()
+	groupLabel, groupErr := rdb.Get(context.Background(), tasklib.TaskKey(taskID, "group")).Result()
+	if groupErr != nil {
+		log.Debug("group key lookup failed, falling back to full history",
+			"task_id", taskID, "error", groupErr.Error())
+	}
 	var msgs []tasklib.Message
 	if groupLabel != "" {
 		msgs, _ = client.GetThreadHistoryTailForWorker(context.Background(), threadID, window, workerType)
