@@ -3,11 +3,11 @@ ARG WORKER_BASE_IMAGE=worker-base:latest
 # Build stage: download Codex CLI binary
 FROM debian:trixie AS codex-download
 
-ARG CODEX_VERSION=latest
+ARG CODEX_VERSION=0.133.0
 ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl jq tar && \
+    ca-certificates curl tar && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN case "${TARGETARCH}" in \
@@ -15,14 +15,6 @@ RUN case "${TARGETARCH}" in \
       arm64) ARCH=aarch64-unknown-linux-musl ;; \
       *) echo "Unsupported arch: ${TARGETARCH}"; exit 1 ;; \
     esac && \
-    if [ "${CODEX_VERSION}" = "latest" ]; then \
-      API_RESPONSE=$(curl -sSf \
-        https://api.github.com/repos/openai/codex/releases/latest) && \
-      CODEX_VERSION=$(echo "${API_RESPONSE}" | jq -re '.tag_name | capture("^rust-v(?<ver>.+)") | .ver') && \
-      if [ -z "${CODEX_VERSION}" ]; then \
-        echo "ERROR: Failed to extract version from GitHub API response"; exit 1; \
-      fi; \
-    fi && \
     echo "Downloading codex version ${CODEX_VERSION} for ${ARCH}" && \
     curl -sSL "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-${ARCH}.tar.gz" \
       -o /tmp/codex.tar.gz && \
