@@ -325,6 +325,7 @@ jobs:
             --platform ${PLATFORMS} \
             --push \
             --build-arg WORKER_BASE_IMAGE=${PREFIX}/worker-base:latest \
+            --build-arg GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} \
             -t ${PREFIX}/codex:latest \
             -f docker/codex/Dockerfile \
             .

@@ -133,6 +133,8 @@ wait
 
 Note: local builds use `--load` (no `--platform` flag). `ARG BASE_IMAGE` and `ARG WORKER_BASE_IMAGE` default to local tags. For arm64 hosts, change `out/amd64/` to `out/arm64/` in the Go build step.
 
+The codex build supports `--build-arg CODEX_VERSION=<version>` to pin a specific version (defaults to `latest`, which resolves from GitHub releases API). For authenticated API access (avoids 60 req/hour rate limit), pass `--build-arg GITHUB_TOKEN=$(gh auth token)`.
+
 ### Build multi-arch (CI)
 
 CI pre-builds Go binaries for both architectures, then uses `docker buildx build --platform linux/amd64,linux/arm64 --push` in 3 parallel phases:
