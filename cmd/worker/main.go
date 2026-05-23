@@ -228,6 +228,9 @@ func processOneTask(
 
 	log.Info("task dequeued", "task_id", taskID, "thread_id", threadID)
 
+	// Select stats provider for this agent type
+	provider := tasklib.NewStatsProvider(workerType)
+
 	// Read correlation_id from thread state
 	correlationID := ""
 	if threadState, err := client.GetThread(context.Background(), threadID); err != nil {
@@ -380,7 +383,18 @@ func processOneTask(
 		timeout = taskPayload.Timeout
 	}
 
-	args := append(strings.Fields(agentCmd), fullPrompt)
+
+	// Setup provider: extra CLI args, cleanup function
+	extraArgs, cleanup, setupErr := provider.Setup(workspace)
+	if setupErr != nil {
+		log.Warn("provider setup failed", "error", setupErr.Error())
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+
+	baseArgs := append(strings.Fields(agentCmd), extraArgs...)
+	args := append(baseArgs, fullPrompt)
 
 	log.Info("starting agent", "task_id", taskID, "thread_id", threadID,
 		"cmd", agentCmd, "timeout", timeout)
@@ -389,6 +403,20 @@ func processOneTask(
 	defer taskCancel()
 
 	stdout, stderr, exitCode, runErr := execCommand(taskCtx, args, workspace)
+
+	// Process agent output: separate content from metadata, extract token stats
+	var tokenStats tasklib.TokenStats
+	if stdout != "" && runErr == nil {
+		cleanContent, extractedStats, procErr := provider.Process(workspace, stdout)
+		if procErr != nil {
+			log.Warn("token extraction failed", "error", procErr.Error())
+		}
+		if cleanContent != "" {
+			// Use clean content (no metadata), not raw stdout
+			stdout = cleanContent
+		}
+		tokenStats = extractedStats
+	}
 
 	var result string
 	var status string
@@ -442,6 +470,8 @@ func processOneTask(
 	}
 	pipe.Expire(context.Background(), "stats:task_total", tasklib.TTLStats)
 	pipe.Exec(context.Background())
+	// Persist token stats to global counters and per-task keys
+	tasklib.PersistTokenStats(context.Background(), pipe, taskID, workerType, tokenStats)
 
 	// Best-effort event: task_completed or task_failed
 	durationMs := int(time.Since(startTime).Milliseconds())
@@ -453,7 +483,7 @@ func processOneTask(
 			WorkerType:     workerType,
 			WorkerHostname: hostname,
 			CorrelationID:  correlationID,
-			Detail:         tasklib.TaskCompletedDetail{ExitCode: exitCode, DurationMs: durationMs},
+			Detail:         tasklib.TaskCompletedDetail{ExitCode: exitCode, DurationMs: durationMs, InputTokens: tokenStats.InputTokens, OutputTokens: tokenStats.OutputTokens, CacheReadTokens: tokenStats.CacheReadTokens, CacheWriteTokens: tokenStats.CacheWriteTokens, ReasoningTokens: tokenStats.ReasoningTokens},
 		})
 	case "failed":
 		cappedStderr := stderr

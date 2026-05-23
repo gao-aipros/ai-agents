@@ -25,6 +25,26 @@
         <div class="value mono">{{or .Task.ExitCode "-"}}</div>
       </div>
       <div class="state-item">
+        <div class="label">Input tokens</div>
+        <div class="value mono">{{if .Task.InputTokens}}{{formatTokenCount .Task.InputTokens}}{{else}}-{{end}}</div>
+      </div>
+      <div class="state-item">
+        <div class="label">Output tokens</div>
+        <div class="value mono">{{if .Task.OutputTokens}}{{formatTokenCount .Task.OutputTokens}}{{else}}-{{end}}</div>
+      </div>
+      <div class="state-item">
+        <div class="label">Cache read</div>
+        <div class="value mono">{{if .Task.CacheReadTokens}}{{formatTokenCount .Task.CacheReadTokens}}{{else}}-{{end}}</div>
+      </div>
+      <div class="state-item">
+        <div class="label">Cache write</div>
+        <div class="value mono">{{if .Task.CacheWriteTokens}}{{formatTokenCount .Task.CacheWriteTokens}}{{else}}-{{end}}</div>
+      </div>
+      <div class="state-item">
+        <div class="label">Reasoning</div>
+        <div class="value mono">{{if .Task.ReasoningTokens}}{{formatTokenCount .Task.ReasoningTokens}}{{else}}-{{end}}</div>
+      </div>
+      <div class="state-item">
         <div class="label">Runtime</div>
         <div class="value mono">{{runtime .Task.EnqueuedAt (or .Task.CompletedAt "") .Task.Status}}</div>
       </div>

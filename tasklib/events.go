@@ -46,8 +46,12 @@ type TaskEnqueuedDetail struct {
 type TaskCompletedDetail struct {
 	ExitCode   int `json:"exit_code"`
 	DurationMs int `json:"duration_ms"`
+	InputTokens      int64 `json:"input_tokens,omitempty"`
+	OutputTokens     int64 `json:"output_tokens,omitempty"`
+	CacheReadTokens  int64 `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int64 `json:"cache_write_tokens,omitempty"`
+	ReasoningTokens  int64 `json:"reasoning_tokens,omitempty"`
 }
-
 // TaskFailedDetail is the detail payload for task_failed events.
 type TaskFailedDetail struct {
 	ExitCode     int    `json:"exit_code"`

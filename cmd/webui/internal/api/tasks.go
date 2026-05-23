@@ -31,7 +31,7 @@ func (tr *tasksResource) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if IsHTMX(r) {
-		Partial(w, tr.renderer, "task-table", map[string]interface{}{"Tasks": tasks})
+		Partial(w, tr.renderer, "task-table", map[string]interface{}{"Tasks": tasks, "HasTokens": tasklib.HasAnyTaskTokens(tasks)})
 	} else {
 		Respond(w, r, http.StatusOK, tasks)
 	}

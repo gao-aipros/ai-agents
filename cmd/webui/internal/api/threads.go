@@ -107,11 +107,69 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 		slog.Warn(fmt.Sprintf("[webui] IsThreadComplete error thread=%s: %v", threadID, err))
 	}
 
+	// Build token rows for the token usage table
+	type tokenRow struct {
+		Agent     string
+		Input     string
+		Output    string
+		Cache     string
+		Reasoning string
+	}
+	var tokenRows []tokenRow
+
+	// Master agent tokens
+	masterTokens, _ := tr.client.GetMasterTokenStats(r.Context(), threadID)
+	if masterTokens.HasAny() {
+		tokenRows = append(tokenRows, tokenRow{
+			Agent:     "master",
+			Input:     tasklib.FormatTokenCount(masterTokens.InputTokens),
+			Output:    tasklib.FormatTokenCount(masterTokens.OutputTokens),
+			Cache:     tasklib.FormatTokenCount(masterTokens.CacheReadTokens),
+			Reasoning: tasklib.FormatTokenCount(masterTokens.ReasoningTokens),
+		})
+	}
+
+	// Per-worker token aggregation from tasks
+	tasks, _ := tr.client.ListTasks(r.Context(), "", "", threadID, 200, 0)
+	if tasks != nil {
+		type agentToks struct {
+			input, output, cacheRead, cacheWrite, reasoning int64
+		}
+		agentMap := map[string]agentToks{
+			"claude":   {},
+			"codex":    {},
+			"copilot":  {},
+			"opencode": {},
+		}
+		for _, t := range tasks {
+			at := agentMap[t.Worker]
+			at.input += t.InputTokens
+			at.output += t.OutputTokens
+			at.cacheRead += t.CacheReadTokens
+			at.cacheWrite += t.CacheWriteTokens
+			at.reasoning += t.ReasoningTokens
+			agentMap[t.Worker] = at
+		}
+		for _, wt := range []string{"claude", "codex", "copilot", "opencode"} {
+			at := agentMap[wt]
+			if at.input > 0 || at.output > 0 || at.cacheRead > 0 {
+				tokenRows = append(tokenRows, tokenRow{
+					Agent:     wt,
+					Input:     tasklib.FormatTokenCount(at.input),
+					Output:    tasklib.FormatTokenCount(at.output),
+					Cache:     tasklib.FormatTokenCount(at.cacheRead),
+					Reasoning: tasklib.FormatTokenCount(at.reasoning),
+				})
+			}
+		}
+	}
+
 	if IsHTMX(r) {
 		Partial(w, tr.renderer, "thread-state-oob", map[string]interface{}{
-			"Thread":   thread,
-			"Running":  running,
-			"Complete": complete,
+			"Thread":    thread,
+			"Running":   running,
+			"Complete":  complete,
+			"TokenRows": tokenRows,
 		})
 	} else {
 		messages, err := tr.client.GetThreadHistoryTail(r.Context(), threadID, 20)

@@ -8,6 +8,7 @@
       <th>Thread</th>
       <th>Status</th>
       <th>Runtime</th>
+      {{if .HasTokens}}<th class="right">Output Tok</th>{{end}}
       <th>Created</th>
       <th></th>
     </tr>
@@ -24,6 +25,7 @@
       </td>
       <td>{{statusBadge .Status}}</td>
       <td class="text-muted">{{runtime .EnqueuedAt (or .CompletedAt "") .Status}}</td>
+      {{if $.HasTokens}}<td class="right">{{if .OutputTokens}}{{formatTokenCount .OutputTokens}}{{else}}-{{end}}</td>{{end}}
       <td class="text-muted">{{if .EnqueuedAt}}<time datetime="{{.EnqueuedAt}}">{{.EnqueuedAt}}</time>{{else}}-{{end}}</td>
       <td><a href="/tasks/{{.TaskID}}" class="btn btn-sm">View</a></td>
     </tr>

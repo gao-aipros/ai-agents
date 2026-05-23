@@ -1,4 +1,17 @@
 {{define "page-dashboard"}}
+{{if .TokenStats}}
+<section>
+  <div class="card token-stats">
+    <div class="flex-between mb-8">
+      <span><strong>Total usage:</strong> {{.TokenStats.TotalIn}} in / {{.TokenStats.TotalOut}} out &middot; {{.TokenStats.TaskCount}} tasks</span>
+    </div>
+    {{range .TokenStats.Rows}}
+    <span class="text-muted" style="font-size:12px">{{.Agent}} {{.Input}}/{{.Output}}</span>
+    {{end}}
+  </div>
+</section>
+{{end}}
+
 <section>
   <div class="flex-between mb-16">
     <h2 style="margin:0">Workers</h2>
