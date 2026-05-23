@@ -407,7 +407,7 @@ func processOneTask(
 	// Build result if not already set (timeout sets it above)
 	if status == "" {
 		result = stdout
-		if stderr != "" {
+		if exitCode != 0 && stderr != "" {
 			result += "\n[stderr]\n" + stderr
 		}
 		if exitCode != 0 {
