@@ -402,7 +402,6 @@ type codexTurnEvent struct {
 }
 
 type codexStreamEvent struct {
-	Type string          `json:"type"`
 	Turn *codexTurnEvent `json:"turn,omitempty"`
 }
 
@@ -599,5 +598,4 @@ func formatFloatStr(f float64) string {
 	return s
 }
 
-// Ensure math package is used (clampInt64Val uses int64 conversion, not math)
 
