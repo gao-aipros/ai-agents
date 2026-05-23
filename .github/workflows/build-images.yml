@@ -319,13 +319,20 @@ jobs:
           OWNER_LC="${OWNER_LC,,}"
           echo "PREFIX=${REGISTRY}/${OWNER_LC}" >> $GITHUB_ENV
 
+
+      - name: Get latest codex version
+        id: codex-version
+        uses: pozetroninc/github-action-get-latest-release@v0.8.0
+        with:
+          repository: openai/codex
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
       - name: Build and push codex
         run: |
           docker buildx build \
             --platform ${PLATFORMS} \
             --push \
             --build-arg WORKER_BASE_IMAGE=${PREFIX}/worker-base:latest \
-            --build-arg GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} \
+            --build-arg CODEX_VERSION=$(echo "${{ steps.codex-version.outputs.release }}" | sed 's/^rust-v//') \
             -t ${PREFIX}/codex:latest \
             -f docker/codex/Dockerfile \
             .
