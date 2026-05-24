@@ -29,6 +29,7 @@ services:
       WEBUI_THEME: ${WEBUI_THEME:-light}
       WORKSPACE_DIR: /workspace
       CLAUDE_PATH: /usr/local/bin/claude
+      CLAUDE_OUTPUT_FORMAT: stream-json
       CLAUDE_SESSIONS_DIR: /home/agent/.claude
       REQUEST_TIMEOUT: "9000"
       MAX_CONCURRENT_REQUESTS: "5"
@@ -51,7 +52,7 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      TASK_TIMEOUT: "1800"
+      TASK_TIMEOUT: "3600"
       HISTORY_WINDOW: "10"
       ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
       GH_TOKEN: ${WORKER_CLAUDE_GH_TOKEN}
@@ -72,7 +73,7 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      TASK_TIMEOUT: "1800"
+      TASK_TIMEOUT: "3600"
       HISTORY_WINDOW: "10"
       COPILOT_PROVIDER_API_KEY: ${DEEPSEEK_API_KEY}
       GH_TOKEN: ${WORKER_COPILOT_GH_TOKEN}
@@ -93,7 +94,7 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      TASK_TIMEOUT: "1800"
+      TASK_TIMEOUT: "3600"
       HISTORY_WINDOW: "10"
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       GH_TOKEN: ${WORKER_OPENCODE_GH_TOKEN}
@@ -134,7 +135,7 @@ services:
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
-      TASK_TIMEOUT: "1800"
+      TASK_TIMEOUT: "3600"
       HISTORY_WINDOW: "10"
       GH_TOKEN: ${WORKER_CODEX_GH_TOKEN:-}
     depends_on:
