@@ -34,28 +34,39 @@
   </thead>
   <tbody>
   {{range .Threads}}
-    <tr>
-      <td><a href="/threads/{{.ThreadID}}" class="mono">{{.ThreadID}}</a></td>
-      <td>{{statusBadge .Status}}</td>
-      <td class="text-muted">{{or .GHRepo "-"}}</td>
-      <td class="text-muted">{{or .GHPRNumber "-"}}</td>
-      <td class="text-muted">{{runtime .CreatedAt (or .UpdatedAt "") .Status}}</td>
-      <td class="text-muted">{{if .UpdatedAt}}<time datetime="{{.UpdatedAt}}">{{.UpdatedAt}}</time>{{else}}-{{end}}</td>
-      <td>
-        <a href="/threads/{{.ThreadID}}" class="btn btn-sm">View</a>
-        <button class="btn btn-danger btn-sm"
-                hx-delete="/api/threads/{{.ThreadID}}?confirm=true"
-                hx-confirm="Delete thread {{.ThreadID}}? This removes all data and workspace files."
-                hx-target="closest tr"
-                hx-swap="delete">
-          Delete
-        </button>
-      </td>
-    </tr>
+    {{template "thread-row" dict "Thread" . "Children" $.Children "Indent" ""}}
   {{end}}
   </tbody>
 </table>
 {{else}}
 <div class="text-center text-muted" style="padding:24px">No threads yet</div>
+{{end}}
+{{end}}
+
+{{define "thread-row"}}
+{{$thread := .Thread}}
+{{$children := .Children}}
+{{$indent := .Indent}}
+<tr>
+  <td>{{$indent}}<a href="/threads/{{$thread.ThreadID}}" class="mono">{{$thread.ThreadID}}</a></td>
+  <td>{{statusBadge $thread.Status}}</td>
+  <td class="text-muted">{{or $thread.GHRepo "-"}}</td>
+  <td class="text-muted">{{or $thread.GHPRNumber "-"}}</td>
+  <td class="text-muted">{{runtime $thread.CreatedAt (or $thread.UpdatedAt "") $thread.Status}}</td>
+  <td class="text-muted">{{if $thread.UpdatedAt}}<time datetime="{{$thread.UpdatedAt}}">{{$thread.UpdatedAt}}</time>{{else}}-{{end}}</td>
+  <td>
+    <a href="/threads/{{$thread.ThreadID}}" class="btn btn-sm">View</a>
+    <button class="btn btn-danger btn-sm"
+            hx-delete="/api/threads/{{$thread.ThreadID}}?confirm=true"
+            hx-confirm="Delete thread {{$thread.ThreadID}}? This removes all data and workspace files."
+            hx-target="closest tr"
+            hx-swap="delete">
+      Delete
+    </button>
+  </td>
+</tr>
+{{$childList := index $children $thread.ThreadID}}
+{{range $childList}}
+  {{template "thread-row" dict "Thread" . "Children" $children "Indent" (printf "%s&nbsp;&nbsp;&nbsp;&nbsp;" $indent)}}
 {{end}}
 {{end}}

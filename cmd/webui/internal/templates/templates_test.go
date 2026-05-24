@@ -681,7 +681,10 @@ func TestTimeElement_ThreadList(t *testing.T) {
 		"CreatedAt": "2026-05-19T14:20:00Z",
 		"UpdatedAt": "2026-05-19T14:30:00Z",
 	}
-	data := map[string]interface{}{"Threads": []interface{}{thread}}
+	data := map[string]interface{}{
+		"Threads":  []interface{}{thread},
+		"Children": make(map[string]interface{}),
+	}
 
 	var buf mockWriter
 	if err := r.Partial(&buf, "thread-table", data); err != nil {

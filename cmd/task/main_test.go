@@ -510,6 +510,35 @@ func TestCmdThreadCreate(t *testing.T) {
 	}
 }
 
+func TestCmdThreadCreate_WithParent(t *testing.T) {
+	_, cleanup := setupTestRedis(t)
+	defer cleanup()
+
+	cmd := &cobra.Command{}
+	cmd.Flags().StringVar(&tcID, "id", "", "")
+	cmd.Flags().StringVar(&tcRepo, "repo", "", "")
+	cmd.Flags().StringVar(&tcParent, "parent", "", "")
+	tcID = "child-thread"
+	tcRepo = "owner/repo"
+	tcParent = "parent-thread"
+
+	output := captureOutput(func() {
+		if err := cmdThreadCreate(cmd, nil); err != nil {
+			t.Fatalf("cmdThreadCreate: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "Thread 'child-thread' created") {
+		t.Errorf("expected 'Thread created', got: %s", output)
+	}
+
+	c := getClient()
+	state, _ := c.RDB().HGetAll(context.Background(), tasklib.ThreadStateKey("child-thread")).Result()
+	if state["parent_thread_id"] != "parent-thread" {
+		t.Errorf("expected parent_thread_id=parent-thread, got %s", state["parent_thread_id"])
+	}
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // thread-history
 // ═══════════════════════════════════════════════════════════════════════════════

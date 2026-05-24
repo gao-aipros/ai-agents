@@ -407,7 +407,7 @@ func TestRequeueStaleTerminalStatus(t *testing.T) {
 func TestCreateAndGetThread(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	th, err := c.CreateThread(ctx(), "thr1", "owner/repo")
+	th, err := c.CreateThread(ctx(), "thr1", "owner/repo", "")
 	if err != nil {
 		t.Fatalf("CreateThread failed: %v", err)
 	}
@@ -440,8 +440,8 @@ func TestGetThreadNotFound(t *testing.T) {
 func TestListThreads(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.CreateThread(ctx(), "thr1", "a/b")
-	c.CreateThread(ctx(), "thr2", "c/d")
+	c.CreateThread(ctx(), "thr1", "a/b", "")
+	c.CreateThread(ctx(), "thr2", "c/d", "")
 
 	threads, err := c.ListThreads(ctx(), "", "")
 	if err != nil {
@@ -490,7 +490,7 @@ func TestThreadHistory(t *testing.T) {
 func TestAppendMessage(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.CreateThread(ctx(), "thr1", "")
+	c.CreateThread(ctx(), "thr1", "", "")
 
 	err := c.AppendMessage(ctx(), "thr1", Message{
 		Role:    "master",
@@ -513,7 +513,7 @@ func TestAppendMessage(t *testing.T) {
 func TestUpdateThread(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.CreateThread(ctx(), "thr1", "")
+	c.CreateThread(ctx(), "thr1", "", "")
 
 	err := c.UpdateThread(ctx(), "thr1", map[string]string{
 		"status":      "complete",
@@ -746,7 +746,7 @@ func TestGetSessionIDNotFound(t *testing.T) {
 func TestCancelRequest(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.CreateThread(ctx(), "cr-thread", "owner/repo")
+	c.CreateThread(ctx(), "cr-thread", "owner/repo", "")
 
 	err := c.CancelRequest(ctx(), "cr-thread")
 	if err != nil {
@@ -842,7 +842,7 @@ func TestWaitTaskImmediateCompletion(t *testing.T) {
 	c, _ := setupTestClient(t)
 
 	// Create thread first so UpdateThread succeeds
-	if _, err := c.CreateThread(ctx(), "thr1", ""); err != nil {
+	if _, err := c.CreateThread(ctx(), "thr1", "", ""); err != nil {
 		t.Fatalf("CreateThread failed: %v", err)
 	}
 
@@ -949,7 +949,7 @@ func TestWaitTaskUpdatesThreadStatus(t *testing.T) {
 			threadID := "thr-" + tt.taskStatus
 			taskID := "t-" + tt.taskStatus
 
-			if _, err := c.CreateThread(ctx(), threadID, ""); err != nil {
+			if _, err := c.CreateThread(ctx(), threadID, "", ""); err != nil {
 				t.Fatalf("CreateThread failed: %v", err)
 			}
 			c.rdb.Set(ctx(), TaskKey(taskID, "status"), tt.taskStatus, 0)
@@ -1153,16 +1153,16 @@ func TestListTasksSortByColumn(t *testing.T) {
 func TestListThreadsDefaultSort(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.CreateThread(ctx(), "thr-a", "")
+	c.CreateThread(ctx(), "thr-a", "", "")
 	c.UpdateThread(ctx(), "thr-a", map[string]string{"status": "complete"})
 
-	c.CreateThread(ctx(), "thr-b", "")
+	c.CreateThread(ctx(), "thr-b", "", "")
 	c.UpdateThread(ctx(), "thr-b", map[string]string{"status": "running"})
 
-	c.CreateThread(ctx(), "thr-c", "")
+	c.CreateThread(ctx(), "thr-c", "", "")
 	c.UpdateThread(ctx(), "thr-c", map[string]string{"status": "error"})
 
-	c.CreateThread(ctx(), "thr-d", "")
+	c.CreateThread(ctx(), "thr-d", "", "")
 	c.UpdateThread(ctx(), "thr-d", map[string]string{"status": "complete"})
 
 	threads, err := c.ListThreads(ctx(), "", "")
@@ -1182,13 +1182,13 @@ func TestListThreadsDefaultSort(t *testing.T) {
 func TestListThreadsSortByColumn(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.CreateThread(ctx(), "zzz", "")
+	c.CreateThread(ctx(), "zzz", "", "")
 	c.UpdateThread(ctx(), "zzz", map[string]string{"status": "complete", "gh_repo": "owner/repo-a"})
 
-	c.CreateThread(ctx(), "aaa", "")
+	c.CreateThread(ctx(), "aaa", "", "")
 	c.UpdateThread(ctx(), "aaa", map[string]string{"status": "complete", "gh_repo": "owner/repo-b"})
 
-	c.CreateThread(ctx(), "mmm", "")
+	c.CreateThread(ctx(), "mmm", "", "")
 	c.UpdateThread(ctx(), "mmm", map[string]string{"status": "running", "gh_repo": "owner/repo-a"})
 
 	// Sort by thread_id ASC
@@ -1284,16 +1284,16 @@ func TestGetWorkerStatsThreadCountFromTaskKeys(t *testing.T) {
 func TestListThreadsSortByPRNumeric(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.CreateThread(ctx(), "thr-9", "")
+	c.CreateThread(ctx(), "thr-9", "", "")
 	c.UpdateThread(ctx(), "thr-9", map[string]string{"status": "complete", "gh_pr_number": "9"})
 
-	c.CreateThread(ctx(), "thr-100", "")
+	c.CreateThread(ctx(), "thr-100", "", "")
 	c.UpdateThread(ctx(), "thr-100", map[string]string{"status": "complete", "gh_pr_number": "100"})
 
-	c.CreateThread(ctx(), "thr-50", "")
+	c.CreateThread(ctx(), "thr-50", "", "")
 	c.UpdateThread(ctx(), "thr-50", map[string]string{"status": "complete", "gh_pr_number": "50"})
 
-	c.CreateThread(ctx(), "thr-empty", "")
+	c.CreateThread(ctx(), "thr-empty", "", "")
 	c.UpdateThread(ctx(), "thr-empty", map[string]string{"status": "complete"})
 
 	// Sort by PR ASC — numeric order: 9, 50, 100, then empty
@@ -1331,11 +1331,11 @@ func TestListThreadsSortByPRNumeric(t *testing.T) {
 func TestListThreadsSortByUpdatedAt(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.CreateThread(ctx(), "thr-a", "")
+	c.CreateThread(ctx(), "thr-a", "", "")
 	c.UpdateThread(ctx(), "thr-a", map[string]string{"status": "complete"})
 	// thr-a gets updated_at from the UpdateThread call
 
-	c.CreateThread(ctx(), "thr-b", "")
+	c.CreateThread(ctx(), "thr-b", "", "")
 	c.UpdateThread(ctx(), "thr-b", map[string]string{"status": "complete"})
 
 	threads, err := c.ListThreads(ctx(), "updated_at", "asc")
@@ -1478,11 +1478,11 @@ func TestListTasksDefaultSortDesc(t *testing.T) {
 func TestListThreadsDefaultSortDesc(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.CreateThread(ctx(), "thr-a", "")
+	c.CreateThread(ctx(), "thr-a", "", "")
 	c.UpdateThread(ctx(), "thr-a", map[string]string{"status": "complete"})
-	c.CreateThread(ctx(), "thr-b", "")
+	c.CreateThread(ctx(), "thr-b", "", "")
 	c.UpdateThread(ctx(), "thr-b", map[string]string{"status": "error"})
-	c.CreateThread(ctx(), "thr-c", "")
+	c.CreateThread(ctx(), "thr-c", "", "")
 	c.UpdateThread(ctx(), "thr-c", map[string]string{"status": "running"})
 
 	// Default sort DESC — reverse status priority: complete > running > error

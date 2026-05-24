@@ -161,10 +161,13 @@ func (pr *pageResource) threadList(w http.ResponseWriter, r *http.Request) {
 		slog.Warn(fmt.Sprintf("[webui] thread list page error: %v", err))
 		threads = nil
 	}
+	children := buildThreadTree(threads)
+	rootThreads := filterRootThreads(threads)
 	Page(w, pr.renderer, "page-thread-list", map[string]interface{}{
-		"Threads": threads,
-		"SortBy":  sortBy,
-		"SortDir": sortDir,
+		"Threads":  rootThreads,
+		"Children": children,
+		"SortBy":   sortBy,
+		"SortDir":  sortDir,
 	})
 }
 
@@ -195,10 +198,20 @@ func (pr *pageResource) threadDetail(w http.ResponseWriter, r *http.Request) {
 	running, _ := pr.client.IsRequestRunning(r.Context(), threadID)
 	complete, _ := pr.client.IsThreadComplete(r.Context(), threadID)
 
+	// Find child threads
+	allThreads, _ := pr.client.ListThreads(r.Context(), "", "")
+	var children []*tasklib.Thread
+	for _, t := range allThreads {
+		if t.ParentThreadID == threadID {
+			children = append(children, t)
+		}
+	}
+
 	Page(w, pr.renderer, "page-thread-detail", map[string]interface{}{
 		"Thread":   thread,
 		"Running":  running,
 		"Complete": complete,
+		"Children": children,
 	})
 }
 

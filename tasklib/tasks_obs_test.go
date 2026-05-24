@@ -37,7 +37,7 @@ func TestStatsCounterOnEnqueue(t *testing.T) {
 func TestStatsCounterOnEnqueueGroup(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.CreateThread(ctxbg(), "thr-grp", "")
+	c.CreateThread(ctxbg(), "thr-grp", "", "")
 	task, err := c.EnqueueGroup(ctxbg(), "claude", "thr-grp", "review", "group task")
 	if err != nil {
 		t.Fatalf("EnqueueGroup failed: %v", err)
@@ -276,7 +276,7 @@ func TestRequeueStaleIncrementsRetryCount(t *testing.T) {
 func TestCreateThreadGeneratesCorrelationID(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	th, err := c.CreateThread(ctxbg(), "thr-corr", "owner/repo")
+	th, err := c.CreateThread(ctxbg(), "thr-corr", "owner/repo", "")
 	if err != nil {
 		t.Fatalf("CreateThread failed: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestCreateThreadGeneratesCorrelationID(t *testing.T) {
 func TestGetThreadReadsCorrelationID(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.CreateThread(ctxbg(), "thr-read-corr", "")
+	c.CreateThread(ctxbg(), "thr-read-corr", "", "")
 	th, err := c.GetThread(ctxbg(), "thr-read-corr")
 	if err != nil {
 		t.Fatalf("GetThread failed: %v", err)
@@ -312,7 +312,7 @@ func TestDeleteThreadRemovesAllKeys(t *testing.T) {
 	c, _ := setupTestClient(t)
 
 	// Create thread and add extra keys
-	c.CreateThread(ctxbg(), "thr-del", "")
+	c.CreateThread(ctxbg(), "thr-del", "", "")
 	c.rdb.Set(ctxbg(), ThreadEventsKey("thr-del"), "[]", 0)
 	c.rdb.Set(ctxbg(), ThreadLockedAtKey("thr-del"), "2025-01-01T00:00:00Z", 0)
 
@@ -339,7 +339,7 @@ func TestDeleteThreadRemovesAllKeys(t *testing.T) {
 func TestSetThreadTTLCoversNewKeys(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.CreateThread(ctxbg(), "thr-ttl", "")
+	c.CreateThread(ctxbg(), "thr-ttl", "", "")
 	c.rdb.Set(ctxbg(), ThreadEventsKey("thr-ttl"), "[]", 0)
 	c.rdb.Set(ctxbg(), ThreadLockedAtKey("thr-ttl"), "2025-01-01T00:00:00Z", 0)
 
@@ -428,7 +428,7 @@ func TestErrorMessageSetOnFailure(t *testing.T) {
 func TestPushThreadEvent(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.CreateThread(ctxbg(), "thr-ev", "")
+	c.CreateThread(ctxbg(), "thr-ev", "", "")
 	ev := &Event{
 		Type:           EventTaskEnqueued,
 		TaskID:         "task-1",
@@ -487,7 +487,7 @@ func TestPushSystemEvent(t *testing.T) {
 func TestThreadEventsTrimmed(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.CreateThread(ctxbg(), "thr-trim", "")
+	c.CreateThread(ctxbg(), "thr-trim", "", "")
 	// Push more than the cap (1000), but test with a smaller cap
 	for i := 0; i < 10; i++ {
 		c.PushThreadEvent(ctxbg(), "thr-trim", &Event{
@@ -532,7 +532,7 @@ func TestEnqueueEmitsTaskEnqueuedEvent(t *testing.T) {
 func TestGetThreadDiagnostics(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	th, err := c.CreateThread(ctxbg(), "thr-diag", "owner/repo")
+	th, err := c.CreateThread(ctxbg(), "thr-diag", "owner/repo", "")
 	if err != nil {
 		t.Fatalf("CreateThread failed: %v", err)
 	}
@@ -565,7 +565,7 @@ func TestGetThreadDiagnostics(t *testing.T) {
 func TestGetThreadDiagnosticsWithLock(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.CreateThread(ctxbg(), "thr-diag-lock", "")
+	c.CreateThread(ctxbg(), "thr-diag-lock", "", "")
 	// Simulate a lock being held
 	c.rdb.Set(ctxbg(), ThreadLockKey("thr-diag-lock"), "task-holder", LockTTL)
 	c.rdb.Set(ctxbg(), ThreadLockedAtKey("thr-diag-lock"), "2025-06-01T10:00:00Z", LockTTL)
@@ -625,7 +625,7 @@ func TestUnlockThreadClearsLockedAt(t *testing.T) {
 func TestEventEnvelopeHasRequiredFields(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.CreateThread(ctxbg(), "thr-env", "")
+	c.CreateThread(ctxbg(), "thr-env", "", "")
 	c.PushThreadEvent(ctxbg(), "thr-env", &Event{
 		Type:           EventTaskCompleted,
 		TaskID:         "t-env",
@@ -691,7 +691,7 @@ func TestStaleLockAutoClearOnEnqueue(t *testing.T) {
 	c, _ := setupTestClient(t)
 
 	// Set up: create a thread, set a lock held by a "done" task (stale)
-	c.CreateThread(ctxbg(), "thr-stale", "")
+	c.CreateThread(ctxbg(), "thr-stale", "", "")
 	c.rdb.Set(ctxbg(), ThreadLockKey("thr-stale"), "old-task-done", LockTTL)
 	c.rdb.Set(ctxbg(), ThreadLockedAtKey("thr-stale"), "2020-01-01T00:00:00Z", LockTTL)
 	// Mark the holder task as done (terminal)
@@ -723,7 +723,7 @@ func TestStaleLockNotClearedForActiveHolder(t *testing.T) {
 	c, _ := setupTestClient(t)
 
 	// Set up: thread locked by a "running" task (active, not stale)
-	c.CreateThread(ctxbg(), "thr-active", "")
+	c.CreateThread(ctxbg(), "thr-active", "", "")
 	c.rdb.Set(ctxbg(), ThreadLockKey("thr-active"), "task-running", LockTTL)
 	c.rdb.Set(ctxbg(), ThreadLockedAtKey("thr-active"), "2020-01-01T00:00:00Z", LockTTL)
 	c.rdb.Set(ctxbg(), TaskKey("task-running", "status"), "running", TTLTask)
@@ -741,7 +741,7 @@ func TestStaleLockNotClearedForActiveHolder(t *testing.T) {
 func TestRequeueStaleEmitsTaskRequeued(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.CreateThread(ctxbg(), "thr-req", "")
+	c.CreateThread(ctxbg(), "thr-req", "", "")
 	// Set up a stale task in the processing list
 	payload := `{"task_id":"req-1","thread_id":"thr-req","instruction":"do X"}`
 	c.rdb.LPush(ctxbg(), ProcessingKey("claude"), payload)
@@ -771,7 +771,7 @@ func TestRequeueStaleEmitsTaskRequeued(t *testing.T) {
 func TestUnlockThreadEmitsLockReleased(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.CreateThread(ctxbg(), "thr-ul-ev", "")
+	c.CreateThread(ctxbg(), "thr-ul-ev", "", "")
 	c.rdb.Set(ctxbg(), ThreadLockKey("thr-ul-ev"), "task-1", LockTTL)
 	c.rdb.Set(ctxbg(), ThreadLockedAtKey("thr-ul-ev"), "2025-06-01T10:00:00Z", LockTTL)
 
@@ -802,7 +802,7 @@ func TestUnlockThreadEmitsLockReleased(t *testing.T) {
 func TestGroupWaitEmitsGroupComplete(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.CreateThread(ctxbg(), "thr-gc", "")
+	c.CreateThread(ctxbg(), "thr-gc", "", "")
 	// Create group tasks that are already done
 	for i, tid := range []string{"gc-1", "gc-2"} {
 		c.rdb.Set(ctxbg(), TaskKey(tid, "status"), "done", TTLTask)
@@ -858,7 +858,7 @@ func TestWorkerOfflineEmittedOnExpiry(t *testing.T) {
 func TestThreadStatusChangeEmitsEvent(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.CreateThread(ctxbg(), "thr-tsc", "")
+	c.CreateThread(ctxbg(), "thr-tsc", "", "")
 	// Simulate WaitTask completion: updateThreadStatus is called
 	// We can trigger it indirectly by calling UpdateThread
 	c.UpdateThread(ctxbg(), "thr-tsc", map[string]string{"status": "complete"})
