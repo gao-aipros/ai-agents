@@ -571,12 +571,19 @@ func (c *Client) ListTasks(ctx context.Context, worker, status, threadID string,
 		"unknown":   6,
 	}
 	sort.Slice(rows, func(i, j int) bool {
+		sortDir = strings.ToLower(sortDir)
 		asc := sortDir != "desc"
 		switch sortBy {
 		case "worker":
-			return asc == (rows[i].Worker < rows[j].Worker)
+			if rows[i].Worker != rows[j].Worker {
+				return asc == (rows[i].Worker < rows[j].Worker)
+			}
+			return asc == (rows[i].TaskID < rows[j].TaskID)
 		case "thread_id":
-			return asc == (rows[i].ThreadID < rows[j].ThreadID)
+			if rows[i].ThreadID != rows[j].ThreadID {
+				return asc == (rows[i].ThreadID < rows[j].ThreadID)
+			}
+			return asc == (rows[i].TaskID < rows[j].TaskID)
 		case "status":
 			oi := taskStatusOrder[rows[i].Status]
 			oj := taskStatusOrder[rows[j].Status]
@@ -585,17 +592,20 @@ func (c *Client) ListTasks(ctx context.Context, worker, status, threadID string,
 			}
 			return asc == (rows[i].TaskID < rows[j].TaskID)
 		case "enqueued_at":
-			return asc == (rows[i].EnqueuedAt < rows[j].EnqueuedAt)
+			if rows[i].EnqueuedAt != rows[j].EnqueuedAt {
+				return asc == (rows[i].EnqueuedAt < rows[j].EnqueuedAt)
+			}
+			return asc == (rows[i].TaskID < rows[j].TaskID)
 		case "task_id":
 			return asc == (rows[i].TaskID < rows[j].TaskID)
 		default:
-			// Default: status priority (error > running > pending > complete)
+			// Default: status priority (failed > running > pending > done)
 			oi := taskStatusOrder[rows[i].Status]
 			oj := taskStatusOrder[rows[j].Status]
 			if oi != oj {
-				return oi < oj
+				return asc == (oi < oj)
 			}
-			return rows[i].TaskID < rows[j].TaskID
+			return asc == (rows[i].TaskID < rows[j].TaskID)
 		}
 	})
 

@@ -118,14 +118,14 @@ func (c *Client) GetWorkerStats(ctx context.Context) (WorkerStats, error) {
 			if threadID == "" {
 				continue
 			}
-			if _, exists := threadWorkers[threadID]; exists {
-				continue
-			}
 			worker, _ := c.rdb.Get(ctx, TaskKey(taskID, "worker")).Result()
 			if worker == "" {
 				continue
 			}
-			threadWorkers[threadID] = map[string]struct{}{worker: {}}
+			if _, ok := threadWorkers[threadID]; !ok {
+				threadWorkers[threadID] = make(map[string]struct{})
+			}
+			threadWorkers[threadID][worker] = struct{}{}
 		}
 		tCursor = nc
 		if nc == 0 {

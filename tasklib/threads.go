@@ -136,6 +136,7 @@ func (c *Client) ListThreads(ctx context.Context, sortBy, sortDir string) ([]*Th
 	}
 
 	sort.Slice(threads, func(i, j int) bool {
+		sortDir = strings.ToLower(sortDir)
 		asc := sortDir != "desc"
 		switch sortBy {
 		case "status":
@@ -151,7 +152,18 @@ func (c *Client) ListThreads(ctx context.Context, sortBy, sortDir string) ([]*Th
 			}
 			return asc == (threads[i].ThreadID < threads[j].ThreadID)
 		case "pr":
-			if threads[i].GHPRNumber != threads[j].GHPRNumber {
+			prI, errI := ParsePRNumber(threads[i].GHPRNumber)
+			prJ, errJ := ParsePRNumber(threads[j].GHPRNumber)
+			if errI == nil && errJ == nil {
+				if prI != prJ {
+					return asc == (prI < prJ)
+				}
+			} else if errI == nil {
+				// i has a valid PR, j doesn't — valid PRs come first in ASC
+				return asc
+			} else if errJ == nil {
+				return !asc
+			} else if threads[i].GHPRNumber != threads[j].GHPRNumber {
 				return asc == (threads[i].GHPRNumber < threads[j].GHPRNumber)
 			}
 			return asc == (threads[i].ThreadID < threads[j].ThreadID)
@@ -167,9 +179,9 @@ func (c *Client) ListThreads(ctx context.Context, sortBy, sortDir string) ([]*Th
 			oi := threadStatusOrder[threads[i].Status]
 			oj := threadStatusOrder[threads[j].Status]
 			if oi != oj {
-				return oi < oj
+				return asc == (oi < oj)
 			}
-			return threads[i].ThreadID < threads[j].ThreadID
+			return asc == (threads[i].ThreadID < threads[j].ThreadID)
 		}
 	})
 

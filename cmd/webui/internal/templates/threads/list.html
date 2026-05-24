@@ -4,7 +4,11 @@
     <h2 style="margin:0">Threads</h2>
     <span class="text-muted">{{len .Threads}} total</span>
   </div>
-  <div class="card" id="thread-list" hx-get="/api/threads" hx-trigger="every {{.PollDash}}s" hx-swap="innerHTML">
+  <div id="thread-sort-params" style="display:none">
+    <input type="hidden" name="sort_by" value="{{.SortBy}}">
+    <input type="hidden" name="sort_dir" value="{{.SortDir}}">
+  </div>
+  <div class="card" id="thread-list" hx-get="/api/threads" hx-trigger="every {{.PollDash}}s" hx-include="#thread-sort-params" hx-swap="innerHTML">
     {{template "thread-table" .}}
   </div>
 </section>
