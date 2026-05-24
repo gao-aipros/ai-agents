@@ -33,9 +33,10 @@ func (ts TokenStats) HasAny() bool {
 // StatsProvider extracts token usage from agent output. Each agent type
 // (claude, codex, opencode, copilot) has its own implementation.
 type StatsProvider interface {
-	// Setup runs BEFORE the agent command. Returns extra CLI args to append
-	// and an optional cleanup function.
-	Setup(workspaceDir string) (extraArgs []string, cleanup func(), err error)
+	// Setup runs BEFORE the agent command. Returns an optional command
+	// expander (for replacing template variables like __SESSION_ID__ in
+	// AGENT_CMD) and an optional cleanup function.
+	Setup(workspaceDir string) (expandCmd func(string) string, cleanup func(), err error)
 
 	// Process runs AFTER the agent command. Takes raw stdout, returns clean
 	// content (no JSONL/NDJSON metadata) and extracted token stats.
@@ -48,7 +49,7 @@ type StatsProvider interface {
 // unknown agent types.
 type NoopStatsProvider struct{}
 
-func (p *NoopStatsProvider) Setup(workspaceDir string) ([]string, func(), error) {
+func (p *NoopStatsProvider) Setup(workspaceDir string) (func(string) string, func(), error) {
 	return nil, nil, nil
 }
 
@@ -62,8 +63,7 @@ func (p *NoopStatsProvider) Process(workspaceDir, stdout string) (string, TokenS
 // Used by master-agent and worker-claude.
 type ClaudeStatsProvider struct{}
 
-func (p *ClaudeStatsProvider) Setup(workspaceDir string) ([]string, func(), error) {
-	// --output-format stream-json --verbose already in AGENT_CMD
+func (p *ClaudeStatsProvider) Setup(workspaceDir string) (func(string) string, func(), error) {
 	return nil, nil, nil
 }
 
@@ -76,8 +76,7 @@ func (p *ClaudeStatsProvider) Process(workspaceDir, stdout string) (string, Toke
 // CodexStatsProvider parses JSONL output from codex --json.
 type CodexStatsProvider struct{}
 
-func (p *CodexStatsProvider) Setup(workspaceDir string) ([]string, func(), error) {
-	// --json already in AGENT_CMD
+func (p *CodexStatsProvider) Setup(workspaceDir string) (func(string) string, func(), error) {
 	return nil, nil, nil
 }
 
@@ -90,8 +89,7 @@ func (p *CodexStatsProvider) Process(workspaceDir, stdout string) (string, Token
 // OpenCodeStatsProvider parses JSONL output from opencode --format json.
 type OpenCodeStatsProvider struct{}
 
-func (p *OpenCodeStatsProvider) Setup(workspaceDir string) ([]string, func(), error) {
-	// --format json already in AGENT_CMD
+func (p *OpenCodeStatsProvider) Setup(workspaceDir string) (func(string) string, func(), error) {
 	return nil, nil, nil
 }
 
@@ -111,7 +109,7 @@ type CopilotStatsProvider struct {
 	sessionID string
 }
 
-func (p *CopilotStatsProvider) Setup(workspaceDir string) ([]string, func(), error) {
+func (p *CopilotStatsProvider) Setup(workspaceDir string) (func(string) string, func(), error) {
 	id, err := NewUUID()
 	if err != nil {
 		return nil, nil, fmt.Errorf("generate copilot session id: %w", err)
@@ -123,7 +121,12 @@ func (p *CopilotStatsProvider) Setup(workspaceDir string) ([]string, func(), err
 		os.RemoveAll(dir)
 	}
 
-	return []string{"--session-id=" + id}, cleanup, nil
+	// Replace __SESSION_ID__ placeholder in AGENT_CMD with the generated UUID.
+	expandCmd := func(cmd string) string {
+		return strings.ReplaceAll(cmd, "__SESSION_ID__", id)
+	}
+
+	return expandCmd, cleanup, nil
 }
 
 func (p *CopilotStatsProvider) Process(workspaceDir, stdout string) (string, TokenStats, error) {
@@ -364,13 +367,24 @@ func extractClaudeTokens(stdout string) (string, TokenStats, error) {
 			}
 		case "result":
 			var res struct {
-				Result  string `json:"result"`
-				IsError bool   `json:"is_error"`
+				Result  string       `json:"result"`
+				IsError bool         `json:"is_error"`
+				Usage   *ClaudeUsage `json:"usage"`
 			}
-			if err := json.Unmarshal([]byte(line), &res); err == nil && res.Result != "" {
-				contentLines = append(contentLines, res.Result)
+			if err := json.Unmarshal([]byte(line), &res); err == nil {
+				if res.Result != "" {
+					contentLines = append(contentLines, res.Result)
+				}
+				if res.Usage != nil {
+					stats.InputTokens = res.Usage.InputTokens
+					stats.OutputTokens = res.Usage.OutputTokens
+					stats.CacheReadTokens = res.Usage.CacheReadTokens
+					stats.CacheWriteTokens = res.Usage.CacheCreationTokens
+				}
 			}
 		case "usage":
+			// Anthropic-native format: separate usage event. DeepSeek embeds
+			// usage in the result event instead, but keep this for compatibility.
 			if ev.Usage != nil {
 				stats.InputTokens = ev.Usage.InputTokens
 				stats.OutputTokens = ev.Usage.OutputTokens
@@ -392,21 +406,20 @@ type codexUsage struct {
 	ReasoningOutputTokens int64 `json:"reasoning_output_tokens"`
 }
 
-type codexAgentMessage struct {
-	AgentMessage *struct {
-		Text string `json:"text"`
-	} `json:"AgentMessage,omitempty"`
+// codexItem matches the "item" object inside codex stream events.
+// Items can be agent_message, command_execution, mcp_tool_call, todo_list, or file_change.
+type codexItem struct {
+	Type string `json:"type"`
+	Text string `json:"text,omitempty"`
 }
 
 // codexStreamEvent matches the JSONL output of codex exec --json.
 // codex uses #[serde(tag = "type")] internally-tagged enum representation,
-// so variant fields (id, details from ItemStarted/ItemUpdated/ItemCompleted;
-// usage from TurnCompleted) are inlined into the top-level object.
+// so variant fields (item, usage) are inlined at the top level.
 type codexStreamEvent struct {
-	Type    string              `json:"type"`
-	ID      string              `json:"id,omitempty"`
-	Details *codexAgentMessage  `json:"details,omitempty"`
-	Usage   *codexUsage         `json:"usage,omitempty"`
+	Type string      `json:"type"`
+	Item *codexItem  `json:"item,omitempty"`
+	Usage *codexUsage `json:"usage,omitempty"`
 }
 
 func extractCodexTokens(stdout string) (string, TokenStats, error) {
@@ -420,15 +433,12 @@ func extractCodexTokens(stdout string) (string, TokenStats, error) {
 			contentLines = append(contentLines, line)
 			continue
 		}
-		// Extract text only from ItemStarted events — ItemUpdated/ItemCompleted
-		// may carry incremental or duplicate text for the same message.
-		if ev.Type == "ItemStarted" && ev.Details != nil && ev.Details.AgentMessage != nil {
-			if ev.Details.AgentMessage.Text != "" {
-				contentLines = append(contentLines, ev.Details.AgentMessage.Text)
-			}
+		// Extract text from completed agent_message items.
+		if ev.Type == "item.completed" && ev.Item != nil && ev.Item.Type == "agent_message" && ev.Item.Text != "" {
+			contentLines = append(contentLines, ev.Item.Text)
 		}
-		// Extract token usage from TurnCompleted events
-		if ev.Type == "TurnCompleted" && ev.Usage != nil {
+		// Extract token usage from turn.completed events.
+		if ev.Type == "turn.completed" && ev.Usage != nil {
 			u := ev.Usage
 			stats.InputTokens += u.InputTokens
 			stats.OutputTokens += u.OutputTokens

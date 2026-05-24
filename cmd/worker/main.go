@@ -384,17 +384,19 @@ func processOneTask(
 	}
 
 
-	// Setup provider: extra CLI args, cleanup function
-	extraArgs, cleanup, setupErr := provider.Setup(workspace)
+	// Setup provider: command template expansion, cleanup function
+	expandCmd, cleanup, setupErr := provider.Setup(workspace)
 	if setupErr != nil {
 		log.Warn("provider setup failed", "error", setupErr.Error())
 	}
 	if cleanup != nil {
 		defer cleanup()
 	}
+	if expandCmd != nil {
+		agentCmd = expandCmd(agentCmd)
+	}
 
-	baseArgs := append(strings.Fields(agentCmd), extraArgs...)
-	args := append(baseArgs, fullPrompt)
+	args := append(strings.Fields(agentCmd), fullPrompt)
 
 	log.Info("starting agent", "task_id", taskID, "thread_id", threadID,
 		"cmd", agentCmd, "timeout", timeout)
