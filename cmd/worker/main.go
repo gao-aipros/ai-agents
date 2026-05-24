@@ -420,6 +420,14 @@ func processOneTask(
 		tokenStats = extractedStats
 	}
 
+	// Copilot outputs token stats to stderr, not stdout JSONL.
+	// Parse stderr to extract token counts for persistence.
+	if workerType == "copilot" && stderr != "" {
+		if cs := tasklib.ParseCopilotStderr(stderr); cs.HasAny() {
+			tokenStats = cs
+		}
+	}
+
 	var result string
 	var status string
 

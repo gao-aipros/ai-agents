@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"strconv"
 	"os"
@@ -130,16 +131,7 @@ func (p *CopilotStatsProvider) Setup(workspaceDir string) (func(string) string, 
 }
 
 func (p *CopilotStatsProvider) Process(workspaceDir, stdout string) (string, TokenStats, error) {
-	// stdout is plain text — no filtering needed
-	var stats TokenStats
-	sessionFile := filepath.Join(copilotSessionDir, p.sessionID, "events.jsonl")
-	data, err := os.ReadFile(sessionFile)
-	if err != nil {
-		// File missing is not fatal — return zero stats
-		return stdout, stats, nil
-	}
-	stats = parseCopilotSessionFile(string(data))
-	return stdout, stats, nil
+	return stdout, TokenStats{}, nil
 }
 
 // ── NewStatsProvider selects the correct provider per agent type ─────────────
@@ -464,23 +456,19 @@ type opencodeTokens struct {
 	Cache     opencodeCache `json:"cache"`
 }
 
-type opencodeStepPart struct {
-	Tokens *opencodeTokens `json:"tokens,omitempty"`
-	Text   string          `json:"text,omitempty"`
+type opencodePartState struct {
+	Output string `json:"output,omitempty"`
 }
 
-type opencodeStepFinish struct {
-	Part *opencodeStepPart `json:"part,omitempty"`
-}
-
-type opencodeTextPart struct {
-	Text string `json:"text,omitempty"`
+type opencodePart struct {
+	Text   string             `json:"text,omitempty"`
+	Tokens *opencodeTokens    `json:"tokens,omitempty"`
+	State  *opencodePartState `json:"state,omitempty"`
 }
 
 type opencodeStreamEvent struct {
-	Type       string              `json:"type"`
-	Part       *opencodeTextPart   `json:"part,omitempty"`
-	StepFinish *opencodeStepFinish `json:"step_finish,omitempty"`
+	Type string        `json:"type"`
+	Part *opencodePart `json:"part,omitempty"`
 }
 
 func extractOpenCodeTokens(stdout string) (string, TokenStats, error) {
@@ -499,23 +487,18 @@ func extractOpenCodeTokens(stdout string) (string, TokenStats, error) {
 			if ev.Part != nil && ev.Part.Text != "" {
 				contentLines = append(contentLines, ev.Part.Text)
 			}
+		case "tool_use":
+			if ev.Part != nil && ev.Part.State != nil && ev.Part.State.Output != "" {
+				contentLines = append(contentLines, ev.Part.State.Output)
+			}
 		case "step_finish":
-			// In the actual opencode format, step_finish events carry
-			// tokens and a reason string — NOT text content (which
-			// arrives in separate "text" events). The text extraction
-			// below is a defensive fallback that never fires in practice.
-			if ev.StepFinish != nil && ev.StepFinish.Part != nil {
-				if ev.StepFinish.Part.Text != "" {
-					contentLines = append(contentLines, ev.StepFinish.Part.Text)
-				}
-				if ev.StepFinish.Part.Tokens != nil {
-					t := ev.StepFinish.Part.Tokens
-					stats.InputTokens += t.Input
-					stats.OutputTokens += t.Output
-					stats.ReasoningTokens += t.Reasoning
-					stats.CacheReadTokens += t.Cache.Read
-					stats.CacheWriteTokens += t.Cache.Write
-				}
+			if ev.Part != nil && ev.Part.Tokens != nil {
+				t := ev.Part.Tokens
+				stats.InputTokens += t.Input
+				stats.OutputTokens += t.Output
+				stats.ReasoningTokens += t.Reasoning
+				stats.CacheReadTokens += t.Cache.Read
+				stats.CacheWriteTokens += t.Cache.Write
 			}
 		}
 	}
@@ -523,36 +506,54 @@ func extractOpenCodeTokens(stdout string) (string, TokenStats, error) {
 	return joinContentLines(contentLines), stats, nil
 }
 
-// ── Copilot session event ─────────────────────────────────────────────────
+// ── Copilot stderr parser ─────────────────────────────────────────────────
 
-type copilotSessionEvent struct {
-	Type             string `json:"type"`
-	InputTokens      int    `json:"inputTokens"`
-	OutputTokens     int    `json:"outputTokens"`
-	CacheReadTokens  int    `json:"cacheReadTokens"`
-	CacheWriteTokens int    `json:"cacheWriteTokens"`
-	ReasoningTokens  int    `json:"reasoningTokens"`
+// ParseCopilotStderr extracts token counts from Copilot's stderr output.
+// Copilot prints a summary line to stderr in the format:
+//
+//	Tokens ↑ 42.2k (27.4k cached) • ↓ 574
+//
+// Input and cache values may have k/M suffixes; output is usually a raw integer.
+func ParseCopilotStderr(stderr string) TokenStats {
+	// Match: Tokens ↑ <input> (<cache> cached) • ↓ <output>
+	// Each number may have k, K, m, M, b, B suffix.
+	re := regexp.MustCompile(`Tokens\s+↑\s+([\d.]+[kKmMbB]?)\s*\(([\d.]+[kKmMbB]?)\s+cached\)\s*•\s*↓\s+([\d.]+[kKmMbB]?)`)
+	matches := re.FindStringSubmatch(stderr)
+	if len(matches) != 4 {
+		return TokenStats{}
+	}
+	return TokenStats{
+		InputTokens:      parseSuffixedNumber(matches[1]),
+		CacheReadTokens:  parseSuffixedNumber(matches[2]),
+		OutputTokens:     parseSuffixedNumber(matches[3]),
+	}
 }
 
-func parseCopilotSessionFile(fileContent string) TokenStats {
-	var stats TokenStats
-	lines := splitGenericLines(fileContent)
-	for _, line := range lines {
-		var ev copilotSessionEvent
-		if err := json.Unmarshal([]byte(line), &ev); err != nil {
-			continue
-		}
-		if ev.Type == "session.shutdown" {
-			stats = TokenStats{
-				InputTokens:      clampInt64Val(ev.InputTokens),
-				OutputTokens:     clampInt64Val(ev.OutputTokens),
-				CacheReadTokens:  clampInt64Val(ev.CacheReadTokens),
-				CacheWriteTokens: clampInt64Val(ev.CacheWriteTokens),
-				ReasoningTokens:  clampInt64Val(ev.ReasoningTokens),
-			}
-		}
+// parseSuffixedNumber parses a number string with optional k/M/B suffix.
+// "42.2k" → 42200, "1.5M" → 1500000, "574" → 574.
+func parseSuffixedNumber(s string) int64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
 	}
-	return stats
+	multiplier := int64(1)
+	last := s[len(s)-1]
+	switch last {
+	case 'k', 'K':
+		multiplier = 1000
+		s = s[:len(s)-1]
+	case 'm', 'M':
+		multiplier = 1000000
+		s = s[:len(s)-1]
+	case 'b', 'B':
+		multiplier = 1000000000
+		s = s[:len(s)-1]
+	}
+	val, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
+	}
+	return int64(val * float64(multiplier))
 }
 
 // ── Shared helpers ────────────────────────────────────────────────────────
@@ -578,13 +579,6 @@ func joinContentLines(lines []string) string {
 		result += "\n" + lines[i]
 	}
 	return result
-}
-
-func clampInt64Val(v int) int64 {
-	if v < 0 {
-		return 0
-	}
-	return int64(v)
 }
 
 func parseFieldInt(fields map[string]string, name string) int64 {
