@@ -17,9 +17,7 @@ RUN case "${TARGETARCH}" in \
     esac && \
     echo "Downloading opencode version ${OPENCODE_VERSION} for ${ARCH}" && \
     curl -sSL "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-${ARCH}.tar.gz" \
-      -o /tmp/opencode.tar.gz && \
-    tar -xzf /tmp/opencode.tar.gz -C /tmp && \
-    mv /tmp/opencode /usr/local/bin/opencode && \
+      | tar -xz -C /usr/local/bin opencode && \
     chmod +x /usr/local/bin/opencode
 
 # Build stage: download skills

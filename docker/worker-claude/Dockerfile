@@ -17,9 +17,7 @@ RUN case "${TARGETARCH}" in \
     esac && \
     echo "Downloading claude version ${CLAUDE_VERSION} for ${ARCH}" && \
     curl -sSL "https://github.com/anthropics/claude-code/releases/download/v${CLAUDE_VERSION}/claude-linux-${ARCH}.tar.gz" \
-      -o /tmp/claude.tar.gz && \
-    tar -xzf /tmp/claude.tar.gz -C /tmp && \
-    mv /tmp/claude /usr/local/bin/claude && \
+      | tar -xz -C /usr/local/bin claude && \
     chmod +x /usr/local/bin/claude
 
 # Build stage: download skills

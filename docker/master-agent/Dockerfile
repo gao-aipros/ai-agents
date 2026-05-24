@@ -1,17 +1,24 @@
 ARG BASE_IMAGE=ai-base:latest
 
-# Build stage: install Claude CLI
+# Build stage: download Claude CLI
 FROM debian:trixie AS claude-build
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash \
-    ca-certificates \
-    curl \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+ARG CLAUDE_VERSION=2.1.150
+ARG TARGETARCH
 
-ARG CLAUDE_VERSION=latest
-RUN curl -sL https://claude.ai/install.sh | bash -s -- "$CLAUDE_VERSION"
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl tar && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN case "${TARGETARCH}" in \
+      amd64) ARCH=x64 ;; \
+      arm64) ARCH=arm64 ;; \
+      *) echo "Unsupported arch: ${TARGETARCH}"; exit 1 ;; \
+    esac && \
+    echo "Downloading claude version ${CLAUDE_VERSION} for ${ARCH}" && \
+    curl -sSL "https://github.com/anthropics/claude-code/releases/download/v${CLAUDE_VERSION}/claude-linux-${ARCH}.tar.gz" \
+      | tar -xz -C /usr/local/bin claude && \
+    chmod +x /usr/local/bin/claude
 
 # Build stage: download skills
 FROM debian:trixie AS skills-download
@@ -51,7 +58,7 @@ FROM ${BASE_IMAGE}
 USER root
 
 # Claude CLI
-COPY --from=claude-build /root/.local/bin/claude /usr/local/bin/claude
+COPY --from=claude-build /usr/local/bin/claude /usr/local/bin/claude
 
 # DeepSeek config (non-sensitive defaults)
 ENV ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic \

@@ -17,9 +17,7 @@ RUN case "${TARGETARCH}" in \
     esac && \
     echo "Downloading copilot version ${COPILOT_VERSION} for ${ARCH}" && \
     curl -sSL "https://github.com/github/copilot-cli/releases/download/v${COPILOT_VERSION}/copilot-linux-${ARCH}.tar.gz" \
-      -o /tmp/copilot.tar.gz && \
-    tar -xzf /tmp/copilot.tar.gz -C /tmp && \
-    mv /tmp/copilot /usr/local/bin/copilot && \
+      | tar -xz -C /usr/local/bin copilot && \
     chmod +x /usr/local/bin/copilot
 
 # Build stage: download skills
