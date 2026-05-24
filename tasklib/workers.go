@@ -10,9 +10,10 @@ import (
 
 // WorkerInfo represents aggregated information about a worker type.
 type WorkerInfo struct {
-	Instances   int `json:"instances"`
-	Online      int `json:"online"`
-	TotalActive int `json:"total_active"`
+	Instances    int `json:"instances"`
+	Online       int `json:"online"`
+	TotalActive  int `json:"total_active"`
+	TotalThreads int `json:"total_threads"`
 }
 
 // WorkerStats is the full per-worker-type stats map.
@@ -85,15 +86,58 @@ func (c *Client) GetWorkerStats(ctx context.Context) (WorkerStats, error) {
 	}
 
 	// Augment with active_tasks counts per worker type
-	active, err := c.rdb.HGetAll(ctx, "active_tasks").Result()
-	if err == nil {
-		for _, raw := range active {
-			var info TaskInfo
-			if err := json.Unmarshal([]byte(raw), &info); err != nil {
+	active, _ := c.rdb.HGetAll(ctx, "active_tasks").Result()
+	threadWorkers := make(map[string]map[string]struct{})
+
+	for _, raw := range active {
+		var info TaskInfo
+		if err := json.Unmarshal([]byte(raw), &info); err != nil {
+			continue
+		}
+		if s, ok := stats[info.Worker]; ok {
+			s.TotalActive++
+		}
+		if info.ThreadID != "" && info.Worker != "" {
+			if _, ok := threadWorkers[info.ThreadID]; !ok {
+				threadWorkers[info.ThreadID] = make(map[string]struct{})
+			}
+			threadWorkers[info.ThreadID][info.Worker] = struct{}{}
+		}
+	}
+
+	// Scan remaining tasks to capture threads not in active_tasks
+	var tCursor uint64
+	for {
+		keys, nc, err := c.rdb.Scan(ctx, tCursor, "task:*:thread_id", 100).Result()
+		if err != nil {
+			break
+		}
+		for _, key := range keys {
+			taskID := strings.SplitN(key, ":", 3)[1]
+			threadID, _ := c.rdb.Get(ctx, key).Result()
+			if threadID == "" {
 				continue
 			}
-			if s, ok := stats[info.Worker]; ok {
-				s.TotalActive++
+			if _, exists := threadWorkers[threadID]; exists {
+				continue
+			}
+			worker, _ := c.rdb.Get(ctx, TaskKey(taskID, "worker")).Result()
+			if worker == "" {
+				continue
+			}
+			threadWorkers[threadID] = map[string]struct{}{worker: {}}
+		}
+		tCursor = nc
+		if nc == 0 {
+			break
+		}
+	}
+
+	// Count threads per worker type
+	for _, workers := range threadWorkers {
+		for wt := range workers {
+			if s, ok := stats[wt]; ok {
+				s.TotalThreads++
 			}
 		}
 	}

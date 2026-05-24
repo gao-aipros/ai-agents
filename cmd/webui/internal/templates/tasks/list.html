@@ -1,4 +1,8 @@
 {{define "page-task-list"}}
+{{$sortBy := ""}}{{$sortDir := ""}}
+{{with .SortBy}}{{$sortBy = .}}{{end}}
+{{with .SortDir}}{{$sortDir = .}}{{end}}
+
 <section>
   <div class="flex-between mb-16">
     <h2 style="margin:0">Tasks</h2>
@@ -10,6 +14,8 @@
           hx-trigger="change from:find select, input delay:200ms"
           hx-target="#task-table"
           hx-swap="innerHTML">
+      <input type="hidden" name="sort_by" value="{{$sortBy}}">
+      <input type="hidden" name="sort_dir" value="{{$sortDir}}">
       <div class="filters">
         <select name="worker">
           <option value="">All workers</option>

@@ -423,7 +423,10 @@ func (c *Client) GetTaskResult(ctx context.Context, taskID string, tail int) (st
 }
 
 // ListTasks retrieves tasks matching optional filters.
-func (c *Client) ListTasks(ctx context.Context, worker, status, threadID string, limit, offset int) ([]*Task, error) {
+// sortBy and sortDir control ordering. Default sort: status priority
+// (failed > running > pending > done), secondary by task_id ASC.
+// Supported sortBy: task_id, worker, thread_id, status, enqueued_at.
+func (c *Client) ListTasks(ctx context.Context, worker, status, threadID string, limit, offset int, sortBy, sortDir string) ([]*Task, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -557,8 +560,44 @@ func (c *Client) ListTasks(ctx context.Context, worker, status, threadID string,
 		rows = append(rows, task)
 	}
 
-	// Sort by task ID for deterministic pagination (matching Python sorted(tasks.keys()))
-	sort.Slice(rows, func(i, j int) bool { return rows[i].TaskID < rows[j].TaskID })
+	// Sort by status priority by default, or by specified column.
+	taskStatusOrder := map[string]int{
+		"failed":    0,
+		"running":   1,
+		"pending":   2,
+		"done":      3,
+		"cancelled": 4,
+		"queued":    5,
+		"unknown":   6,
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		asc := sortDir != "desc"
+		switch sortBy {
+		case "worker":
+			return asc == (rows[i].Worker < rows[j].Worker)
+		case "thread_id":
+			return asc == (rows[i].ThreadID < rows[j].ThreadID)
+		case "status":
+			oi := taskStatusOrder[rows[i].Status]
+			oj := taskStatusOrder[rows[j].Status]
+			if oi != oj {
+				return asc == (oi < oj)
+			}
+			return asc == (rows[i].TaskID < rows[j].TaskID)
+		case "enqueued_at":
+			return asc == (rows[i].EnqueuedAt < rows[j].EnqueuedAt)
+		case "task_id":
+			return asc == (rows[i].TaskID < rows[j].TaskID)
+		default:
+			// Default: status priority (error > running > pending > complete)
+			oi := taskStatusOrder[rows[i].Status]
+			oj := taskStatusOrder[rows[j].Status]
+			if oi != oj {
+				return oi < oj
+			}
+			return rows[i].TaskID < rows[j].TaskID
+		}
+	})
 
 	// Apply offset
 	if offset > 0 && offset < len(rows) {

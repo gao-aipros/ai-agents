@@ -1,15 +1,22 @@
 {{define "task-table"}}
+{{$sortBy := ""}}{{$sortDir := ""}}{{$worker := ""}}{{$status := ""}}{{$threadID := ""}}
+{{with .SortBy}}{{$sortBy = .}}{{end}}
+{{with .SortDir}}{{$sortDir = .}}{{end}}
+{{with .Worker}}{{$worker = .}}{{end}}
+{{with .Status}}{{$status = .}}{{end}}
+{{with .ThreadID}}{{$threadID = .}}{{end}}
+
 {{if .Tasks}}
 <table>
   <thead>
     <tr>
-      <th>Task ID</th>
-      <th>Worker</th>
-      <th>Thread</th>
-      <th>Status</th>
+      <th><a href="/tasks?sort_by=task_id&sort_dir={{if and (eq $sortBy "task_id") (eq $sortDir "asc")}}desc{{else}}asc{{end}}{{if $worker}}&worker={{$worker}}{{end}}{{if $status}}&status={{$status}}{{end}}{{if $threadID}}&thread_id={{$threadID}}{{end}}">Task ID{{if eq $sortBy "task_id"}}{{if eq $sortDir "asc"}} ▲{{else if eq $sortDir "desc"}} ▼{{end}}{{end}}</a></th>
+      <th><a href="/tasks?sort_by=worker&sort_dir={{if and (eq $sortBy "worker") (eq $sortDir "asc")}}desc{{else}}asc{{end}}{{if $worker}}&worker={{$worker}}{{end}}{{if $status}}&status={{$status}}{{end}}{{if $threadID}}&thread_id={{$threadID}}{{end}}">Worker{{if eq $sortBy "worker"}}{{if eq $sortDir "asc"}} ▲{{else if eq $sortDir "desc"}} ▼{{end}}{{end}}</a></th>
+      <th><a href="/tasks?sort_by=thread_id&sort_dir={{if and (eq $sortBy "thread_id") (eq $sortDir "asc")}}desc{{else}}asc{{end}}{{if $worker}}&worker={{$worker}}{{end}}{{if $status}}&status={{$status}}{{end}}{{if $threadID}}&thread_id={{$threadID}}{{end}}">Thread{{if eq $sortBy "thread_id"}}{{if eq $sortDir "asc"}} ▲{{else if eq $sortDir "desc"}} ▼{{end}}{{end}}</a></th>
+      <th><a href="/tasks?sort_by=status&sort_dir={{if and (eq $sortBy "status") (eq $sortDir "asc")}}desc{{else}}asc{{end}}{{if $worker}}&worker={{$worker}}{{end}}{{if $status}}&status={{$status}}{{end}}{{if $threadID}}&thread_id={{$threadID}}{{end}}">Status{{if eq $sortBy "status"}}{{if eq $sortDir "asc"}} ▲{{else if eq $sortDir "desc"}} ▼{{end}}{{end}}</a></th>
       <th>Runtime</th>
       {{if .HasTokens}}<th class="right">Output Tok</th>{{end}}
-      <th>Created</th>
+      <th><a href="/tasks?sort_by=enqueued_at&sort_dir={{if and (eq $sortBy "enqueued_at") (eq $sortDir "asc")}}desc{{else}}asc{{end}}{{if $worker}}&worker={{$worker}}{{end}}{{if $status}}&status={{$status}}{{end}}{{if $threadID}}&thread_id={{$threadID}}{{end}}">Created{{if eq $sortBy "enqueued_at"}}{{if eq $sortDir "asc"}} ▲{{else if eq $sortDir "desc"}} ▼{{end}}{{end}}</a></th>
       <th></th>
     </tr>
   </thead>

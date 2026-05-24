@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -87,7 +88,10 @@ func (c *Client) GetThread(ctx context.Context, threadID string) (*Thread, error
 }
 
 // ListThreads retrieves all threads by scanning for thread:*:current_state keys.
-func (c *Client) ListThreads(ctx context.Context) ([]*Thread, error) {
+// sortBy and sortDir control ordering. Default sort: status priority
+// (error > running > complete), secondary by thread_id ASC.
+// Supported sortBy: thread_id, status, repo, pr, updated_at.
+func (c *Client) ListThreads(ctx context.Context, sortBy, sortDir string) ([]*Thread, error) {
 	var threads []*Thread
 	var cursor uint64
 
@@ -119,6 +123,55 @@ func (c *Client) ListThreads(ctx context.Context) ([]*Thread, error) {
 			break
 		}
 	}
+
+	// Sort by status priority by default, or by specified column.
+	threadStatusOrder := map[string]int{
+		"error":      0,
+		"running":    1,
+		"cancelled":  2,
+		"complete":   3,
+		"initiated":  4,
+		"reviewing":  5,
+		"unknown":    6,
+	}
+
+	sort.Slice(threads, func(i, j int) bool {
+		asc := sortDir != "desc"
+		switch sortBy {
+		case "status":
+			oi := threadStatusOrder[threads[i].Status]
+			oj := threadStatusOrder[threads[j].Status]
+			if oi != oj {
+				return asc == (oi < oj)
+			}
+			return asc == (threads[i].ThreadID < threads[j].ThreadID)
+		case "repo":
+			if threads[i].GHRepo != threads[j].GHRepo {
+				return asc == (threads[i].GHRepo < threads[j].GHRepo)
+			}
+			return asc == (threads[i].ThreadID < threads[j].ThreadID)
+		case "pr":
+			if threads[i].GHPRNumber != threads[j].GHPRNumber {
+				return asc == (threads[i].GHPRNumber < threads[j].GHPRNumber)
+			}
+			return asc == (threads[i].ThreadID < threads[j].ThreadID)
+		case "updated_at":
+			if threads[i].UpdatedAt != threads[j].UpdatedAt {
+				return asc == (threads[i].UpdatedAt < threads[j].UpdatedAt)
+			}
+			return asc == (threads[i].ThreadID < threads[j].ThreadID)
+		case "thread_id":
+			return asc == (threads[i].ThreadID < threads[j].ThreadID)
+		default:
+			// Default: status priority (error > running > complete)
+			oi := threadStatusOrder[threads[i].Status]
+			oj := threadStatusOrder[threads[j].Status]
+			if oi != oj {
+				return oi < oj
+			}
+			return threads[i].ThreadID < threads[j].ThreadID
+		}
+	})
 
 	return threads, nil
 }
@@ -467,7 +520,7 @@ func (c *Client) GetThreadDiagnostics(ctx context.Context, threadID string) (*Th
 	}
 
 	// Task counts by status + find last error
-	tasks, err := c.ListTasks(ctx, "", "", threadID, 200, 0)
+	tasks, err := c.ListTasks(ctx, "", "", threadID, 200, 0, "", "")
 	if err != nil {
 		d.Warnings = append(d.Warnings, "failed to list tasks: "+err.Error())
 	} else {

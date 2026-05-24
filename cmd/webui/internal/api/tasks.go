@@ -25,13 +25,24 @@ func (tr *tasksResource) list(w http.ResponseWriter, r *http.Request) {
 		limit = 50
 	}
 
-	tasks, err := tr.client.ListTasks(r.Context(), worker, status, threadID, limit, offset)
+	sortBy := q.Get("sort_by")
+	sortDir := q.Get("sort_dir")
+
+	tasks, err := tr.client.ListTasks(r.Context(), worker, status, threadID, limit, offset, sortBy, sortDir)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
 	}
 	if IsHTMX(r) {
-		Partial(w, tr.renderer, "task-table", map[string]interface{}{"Tasks": tasks, "HasTokens": tasklib.HasAnyTaskTokens(tasks)})
+		Partial(w, tr.renderer, "task-table", map[string]interface{}{
+			"Tasks":    tasks,
+			"HasTokens": tasklib.HasAnyTaskTokens(tasks),
+			"SortBy":   sortBy,
+			"SortDir":  sortDir,
+			"Worker":   worker,
+			"Status":   status,
+			"ThreadID": threadID,
+		})
 	} else {
 		Respond(w, r, http.StatusOK, tasks)
 	}
