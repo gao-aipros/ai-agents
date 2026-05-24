@@ -1,0 +1,102 @@
+name: Monitor Agent Versions
+
+on:
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      # ── claude ──
+      - name: Get latest claude release
+        id: claude-latest
+        uses: pozetroninc/github-action-get-latest-release@v0.8.0
+        with:
+          repository: anthropics/claude-code
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      - name: Update claude version
+        run: |
+          PINNED=$(grep "^ARG CLAUDE_VERSION=" docker/worker-claude/Dockerfile | head -1 | sed 's/.*=//')
+          LATEST=$(echo "${{ steps.claude-latest.outputs.release }}" | sed 's/^v//')
+          echo "claude: pinned=${PINNED} latest=${LATEST}"
+          if [ "${PINNED}" != "${LATEST}" ]; then
+            sed -i "s/^ARG CLAUDE_VERSION=.*/ARG CLAUDE_VERSION=${LATEST}/" docker/worker-claude/Dockerfile
+            echo "CHANGED=true" >> $GITHUB_ENV
+          fi
+
+      # ── opencode ──
+      - name: Get latest opencode release
+        id: opencode-latest
+        uses: pozetroninc/github-action-get-latest-release@v0.8.0
+        with:
+          repository: anomalyco/opencode
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      - name: Update opencode version
+        run: |
+          PINNED=$(grep "^ARG OPENCODE_VERSION=" docker/opencode/Dockerfile | head -1 | sed 's/.*=//')
+          LATEST=$(echo "${{ steps.opencode-latest.outputs.release }}" | sed 's/^v//')
+          echo "opencode: pinned=${PINNED} latest=${LATEST}"
+          if [ "${PINNED}" != "${LATEST}" ]; then
+            sed -i "s/^ARG OPENCODE_VERSION=.*/ARG OPENCODE_VERSION=${LATEST}/" docker/opencode/Dockerfile
+            echo "CHANGED=true" >> $GITHUB_ENV
+          fi
+
+      # ── copilot ──
+      - name: Get latest copilot release
+        id: copilot-latest
+        uses: pozetroninc/github-action-get-latest-release@v0.8.0
+        with:
+          repository: github/copilot-cli
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      - name: Update copilot version
+        run: |
+          PINNED=$(grep "^ARG COPILOT_VERSION=" docker/copilot/Dockerfile | head -1 | sed 's/.*=//')
+          LATEST=$(echo "${{ steps.copilot-latest.outputs.release }}" | sed 's/^v//')
+          echo "copilot: pinned=${PINNED} latest=${LATEST}"
+          if [ "${PINNED}" != "${LATEST}" ]; then
+            sed -i "s/^ARG COPILOT_VERSION=.*/ARG COPILOT_VERSION=${LATEST}/" docker/copilot/Dockerfile
+            echo "CHANGED=true" >> $GITHUB_ENV
+          fi
+
+      # ── codex ──
+      - name: Get latest codex release
+        id: codex-latest
+        uses: pozetroninc/github-action-get-latest-release@v0.8.0
+        with:
+          repository: openai/codex
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      - name: Update codex version
+        run: |
+          PINNED=$(grep "^ARG CODEX_VERSION=" docker/codex/Dockerfile | head -1 | sed 's/.*=//')
+          LATEST=$(echo "${{ steps.codex-latest.outputs.release }}" | sed 's/^rust-v//')
+          echo "codex: pinned=${PINNED} latest=${LATEST}"
+          if [ "${PINNED}" != "${LATEST}" ]; then
+            sed -i "s/^ARG CODEX_VERSION=.*/ARG CODEX_VERSION=${LATEST}/" docker/codex/Dockerfile
+            echo "CHANGED=true" >> $GITHUB_ENV
+          fi
+
+      # ── Commit and push ──
+      - name: Commit and push
+        if: env.CHANGED == 'true'
+        run: |
+          git add docker/worker-claude/Dockerfile docker/opencode/Dockerfile docker/copilot/Dockerfile docker/codex/Dockerfile
+          git commit -m "chore: bump agent versions" || echo "Nothing to commit"
+          git push
