@@ -2,6 +2,7 @@ package request
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	crand "crypto/rand"
 	"encoding/json"
@@ -315,11 +316,8 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		return
 	}
 
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		h.writeErrorMessage(ctx, threadID, fmt.Sprintf("failed to create stderr pipe: %v", err))
-		return
-	}
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
 
 	if err := cmd.Start(); err != nil {
 		h.writeErrorMessage(ctx, threadID, fmt.Sprintf("failed to start claude: %v", err))
@@ -329,32 +327,6 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 	if h.isCancelled(ctx) {
 		return
 	}
-
-	// Read stderr in a background goroutine for error reporting.
-	var stderrMu sync.Mutex
-	var stderrWg sync.WaitGroup
-	var lastStderr strings.Builder
-	stderrWg.Add(1)
-	go func() {
-		defer stderrWg.Done()
-		reader := bufio.NewReader(stderr)
-		for {
-			line, readErr := reader.ReadString('\n')
-			line = strings.TrimRight(line, "\r\n")
-			stderrMu.Lock()
-			lastStderr.WriteString(line)
-			lastStderr.WriteByte('\n')
-			if lastStderr.Len() > 4096 {
-				s := lastStderr.String()
-				lastStderr.Reset()
-				lastStderr.WriteString(s[len(s)-4096:])
-			}
-			stderrMu.Unlock()
-			if readErr != nil {
-				break
-			}
-		}
-	}()
 
 	// Read stdout. In "text" mode we accumulate plain text and write each
 	// line as a "plan" message. In "stream-json" mode we dispatch JSON messages
@@ -393,9 +365,6 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		waitErr = cmd.Wait()
 	}
 
-	// Wait for stderr collector to finish now that the pipe is closed.
-	stderrWg.Wait()
-
 	// Determine completion.
 	// Text mode: use exit code + accumulated stdout.
 	// Stream-json mode: rely on processStreamJSON's result message;
@@ -409,9 +378,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 			} else if ctx.Err() == context.Canceled {
 				errContent = "Request cancelled"
 			} else {
-				stderrMu.Lock()
-				errContent = strings.TrimSpace(lastStderr.String())
-				stderrMu.Unlock()
+				errContent = strings.TrimSpace(stderrBuf.String())
 				if errContent == "" && waitErr != nil {
 					errContent = fmt.Sprintf("claude exited with error: %v", waitErr)
 				} else if errContent == "" {
@@ -429,9 +396,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		} else if ctx.Err() == context.Canceled {
 			h.writeErrorMessage(ctx, threadID, "Request cancelled")
 		} else if waitErr != nil {
-			stderrMu.Lock()
-			errContent := strings.TrimSpace(lastStderr.String())
-			stderrMu.Unlock()
+			errContent := strings.TrimSpace(stderrBuf.String())
 			if errContent == "" {
 				errContent = fmt.Sprintf("claude exited with error: %v", waitErr)
 			}
@@ -440,9 +405,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		} else {
 			result := strings.TrimSpace(fullStdout.String())
 			if result == "" {
-				stderrMu.Lock()
-				errDetail := strings.TrimSpace(lastStderr.String())
-				stderrMu.Unlock()
+				errDetail := strings.TrimSpace(stderrBuf.String())
 				errMsg := "claude exited without producing output"
 				if errDetail != "" {
 					errMsg = fmt.Sprintf("claude exited without producing output (stderr: %s)", errDetail)
