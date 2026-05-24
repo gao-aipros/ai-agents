@@ -11,6 +11,8 @@ services:
   master:
     image: ${MASTER_AGENT_IMAGE:-master-agent:latest}
     restart: unless-stopped
+    ports:
+      - "${WEBUI_PORT:-8000}:${WEBUI_PORT:-8000}"
     volumes:
       - workspace:/workspace
       - claude_sessions:/home/agent/.claude

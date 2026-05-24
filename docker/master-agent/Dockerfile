@@ -87,5 +87,7 @@ RUN ln -sf /home/agent/.claude/claude.json /home/agent/.claude.json \
 
 COPY --chown=agent:agent --chmod=755 docker/master-agent/entrypoint.sh /usr/local/bin/entrypoint.sh
 
+EXPOSE 8000
+
 USER agent
 ENTRYPOINT ["entrypoint.sh"]
