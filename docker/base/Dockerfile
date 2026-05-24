@@ -8,11 +8,11 @@ RUN ARCH=$(dpkg --print-architecture) \
     && DOWNLOAD_URL=$(curl -fsSL https://api.github.com/repos/cli/cli/releases/latest \
         | jq -r --arg arch "$ARCH" \
             '.assets[].browser_download_url | select(test("linux_" + $arch + ".tar.gz"))') \
-    && curl -fsSL "$DOWNLOAD_URL" -o /tmp/gh.tar.gz \
-    && tar -xzf /tmp/gh.tar.gz -C /tmp \
+    && curl -fsSL "$DOWNLOAD_URL" \
+      | tar -xz -C /tmp \
     && cp /tmp/gh_*/bin/gh /usr/local/bin/gh \
     && chmod +x /usr/local/bin/gh \
-    && rm -rf /tmp/gh.tar.gz /tmp/gh_*
+    && rm -rf /tmp/gh_*
 
 FROM debian:trixie
 

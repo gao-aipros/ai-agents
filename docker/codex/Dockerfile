@@ -17,9 +17,8 @@ RUN case "${TARGETARCH}" in \
     esac && \
     echo "Downloading codex version ${CODEX_VERSION} for ${ARCH}" && \
     curl -sSL "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-${ARCH}.tar.gz" \
-      -o /tmp/codex.tar.gz && \
-    tar -xzf /tmp/codex.tar.gz -C /tmp && \
-    mv "/tmp/codex-${ARCH}" /usr/local/bin/codex && \
+      | tar -xz -C /usr/local/bin && \
+    mv "/usr/local/bin/codex-${ARCH}" /usr/local/bin/codex && \
     chmod +x /usr/local/bin/codex
 
 # Build stage: download skills

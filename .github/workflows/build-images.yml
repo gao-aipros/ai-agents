@@ -178,13 +178,19 @@ jobs:
           OWNER_LC="${OWNER_LC,,}"
           echo "PREFIX=${REGISTRY}/${OWNER_LC}" >> $GITHUB_ENV
 
+      - name: Read claude version from Dockerfile
+        run: |
+          echo "CLAUDE_VERSION=$(grep '^ARG CLAUDE_VERSION=' docker/master-agent/Dockerfile | head -1 | sed 's/.*=//')" >> $GITHUB_ENV
+
       - name: Build and push master-agent
         run: |
           docker buildx build \
             --platform ${PLATFORMS} \
             --push \
             --build-arg BASE_IMAGE=${PREFIX}/ai-base:latest \
+            --build-arg CLAUDE_VERSION=${CLAUDE_VERSION} \
             -t ${PREFIX}/master-agent:latest \
+            -t ${PREFIX}/master-agent:claude-${CLAUDE_VERSION} \
             -f docker/master-agent/Dockerfile \
             .
 

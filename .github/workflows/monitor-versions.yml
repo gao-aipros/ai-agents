@@ -37,6 +37,7 @@ jobs:
           echo "claude: pinned=${PINNED} latest=${LATEST}"
           if [ "${PINNED}" != "${LATEST}" ]; then
             sed -i "s/^ARG CLAUDE_VERSION=.*/ARG CLAUDE_VERSION=${LATEST}/" docker/worker-claude/Dockerfile
+            sed -i "s/^ARG CLAUDE_VERSION=.*/ARG CLAUDE_VERSION=${LATEST}/" docker/master-agent/Dockerfile
             echo "CHANGED=true" >> $GITHUB_ENV
           fi
 
@@ -101,6 +102,6 @@ jobs:
       - name: Commit and push
         if: env.CHANGED == 'true'
         run: |
-          git add docker/worker-claude/Dockerfile docker/opencode/Dockerfile docker/copilot/Dockerfile docker/codex/Dockerfile
+          git add docker/worker-claude/Dockerfile docker/master-agent/Dockerfile docker/opencode/Dockerfile docker/copilot/Dockerfile docker/codex/Dockerfile
           git commit -m "chore: bump agent versions" || echo "Nothing to commit"
           git push
