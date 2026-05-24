@@ -25,6 +25,22 @@
     <div class="label">Updated</div>
     <div class="value mono" style="font-size:12px">{{if .Thread.UpdatedAt}}<time datetime="{{.Thread.UpdatedAt}}">{{.Thread.UpdatedAt}}</time>{{else}}-{{end}}</div>
   </div>
+  {{if .Thread.ParentThreadID}}
+  <div class="state-item">
+    <div class="label">Parent thread</div>
+    <div class="value mono"><a href="/threads/{{.Thread.ParentThreadID}}">{{.Thread.ParentThreadID}}</a></div>
+  </div>
+  {{end}}
+  {{if .Children}}
+  <div class="state-item">
+    <div class="label">Child threads</div>
+    <div class="value mono">
+    {{range .Children}}
+      <a href="/threads/{{.ThreadID}}">{{.ThreadID}}</a>
+    {{end}}
+    </div>
+  </div>
+  {{end}}
 </div>
 
 {{if .TokenRows}}
@@ -123,6 +139,22 @@
     <div class="label">Updated</div>
     <div class="value mono" style="font-size:12px">{{if .Thread.UpdatedAt}}<time datetime="{{.Thread.UpdatedAt}}">{{.Thread.UpdatedAt}}</time>{{else}}-{{end}}</div>
   </div>
+  {{if .Thread.ParentThreadID}}
+  <div class="state-item">
+    <div class="label">Parent thread</div>
+    <div class="value mono"><a href="/threads/{{.Thread.ParentThreadID}}">{{.Thread.ParentThreadID}}</a></div>
+  </div>
+  {{end}}
+  {{if .Children}}
+  <div class="state-item">
+    <div class="label">Child threads</div>
+    <div class="value mono">
+    {{range .Children}}
+      <a href="/threads/{{.ThreadID}}">{{.ThreadID}}</a>
+    {{end}}
+    </div>
+  </div>
+  {{end}}
 </div>
 {{if .TokenRows}}
 <div class="state-panel" style="margin-top:16px">

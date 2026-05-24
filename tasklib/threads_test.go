@@ -9,7 +9,7 @@ func TestDeleteThread(t *testing.T) {
 
 	// Create a thread with data in all keys
 	threadID := "delete-me"
-	_, err := c.CreateThread(ctx(), threadID, "owner/repo")
+	_, err := c.CreateThread(ctx(), threadID, "owner/repo", "")
 	if err != nil {
 		t.Fatalf("CreateThread failed: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestGetThreadHistoryTailForWorker(t *testing.T) {
 	c, _ := setupTestClient(t)
 	threadID := "th-worker-filter"
 
-	c.CreateThread(ctx(), threadID, "")
+	c.CreateThread(ctx(), threadID, "", "")
 
 	msgForClaude := Message{
 		Role:      "master",
@@ -142,7 +142,7 @@ func TestGetThreadHistoryTailForWorker(t *testing.T) {
 
 	t.Run("no messages in thread returns nil", func(t *testing.T) {
 		emptyThread := "th-empty"
-		c.CreateThread(ctx(), emptyThread, "")
+		c.CreateThread(ctx(), emptyThread, "", "")
 		msgs, err := c.GetThreadHistoryTailForWorker(ctx(), emptyThread, 10, "claude")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -161,4 +161,156 @@ func TestGetThreadHistoryTailForWorker(t *testing.T) {
 			t.Errorf("expected nil for tail=0, got %d messages", len(msgs))
 		}
 	})
+}
+
+// ── parent-child thread tests ─────────────────────────────────────────────
+
+func TestCreateThread_WithParent(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	thread, err := c.CreateThread(ctx(), "child-thread", "owner/repo", "parent-thread")
+	if err != nil {
+		t.Fatalf("CreateThread with parent: %v", err)
+	}
+	if thread.ParentThreadID != "parent-thread" {
+		t.Errorf("ParentThreadID = %q, want %q", thread.ParentThreadID, "parent-thread")
+	}
+	if thread.ThreadID != "child-thread" {
+		t.Errorf("ThreadID = %q, want %q", thread.ThreadID, "child-thread")
+	}
+
+	// Verify stored in Redis
+	state, _ := c.rdb.HGetAll(ctx(), ThreadStateKey("child-thread")).Result()
+	if state["parent_thread_id"] != "parent-thread" {
+		t.Errorf("Redis parent_thread_id = %q, want %q", state["parent_thread_id"], "parent-thread")
+	}
+	if state["status"] != "initiated" {
+		t.Errorf("Redis status = %q, want %q", state["status"], "initiated")
+	}
+}
+
+func TestCreateThread_WithoutParent(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	thread, err := c.CreateThread(ctx(), "root-thread", "owner/repo", "")
+	if err != nil {
+		t.Fatalf("CreateThread: %v", err)
+	}
+	if thread.ParentThreadID != "" {
+		t.Errorf("ParentThreadID = %q, want empty", thread.ParentThreadID)
+	}
+
+	// Verify parent_thread_id is not stored in Redis
+	state, _ := c.rdb.HGetAll(ctx(), ThreadStateKey("root-thread")).Result()
+	if v, ok := state["parent_thread_id"]; ok {
+		t.Errorf("parent_thread_id should not exist in Redis, got %q", v)
+	}
+}
+
+func TestGetThread_ReturnsParentThreadID(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "child-1", "repo/x", "parent-abc")
+
+	thread, err := c.GetThread(ctx(), "child-1")
+	if err != nil {
+		t.Fatalf("GetThread: %v", err)
+	}
+	if thread.ParentThreadID != "parent-abc" {
+		t.Errorf("ParentThreadID = %q, want %q", thread.ParentThreadID, "parent-abc")
+	}
+}
+
+func TestGetThread_NoParent(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "root-1", "repo/x", "")
+
+	thread, err := c.GetThread(ctx(), "root-1")
+	if err != nil {
+		t.Fatalf("GetThread: %v", err)
+	}
+	if thread.ParentThreadID != "" {
+		t.Errorf("ParentThreadID = %q, want empty", thread.ParentThreadID)
+	}
+}
+
+func TestListThreads_ReturnsParentThreadID(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "root-thread", "repo/x", "")
+	c.CreateThread(ctx(), "child-thread", "repo/y", "root-thread")
+
+	threads, err := c.ListThreads(ctx(), "", "")
+	if err != nil {
+		t.Fatalf("ListThreads: %v", err)
+	}
+
+	foundRoot := false
+	foundChild := false
+	for _, th := range threads {
+		switch th.ThreadID {
+		case "root-thread":
+			foundRoot = true
+			if th.ParentThreadID != "" {
+				t.Errorf("root thread ParentThreadID = %q, want empty", th.ParentThreadID)
+			}
+		case "child-thread":
+			foundChild = true
+			if th.ParentThreadID != "root-thread" {
+				t.Errorf("child thread ParentThreadID = %q, want %q", th.ParentThreadID, "root-thread")
+			}
+		}
+	}
+	if !foundRoot {
+		t.Error("root-thread not found in list")
+	}
+	if !foundChild {
+		t.Error("child-thread not found in list")
+	}
+}
+
+func TestUpdateThread_ParentThreadIDPassedThrough(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "update-me", "", "old-parent")
+
+	// Update with parent_thread_id field
+	err := c.UpdateThread(ctx(), "update-me", map[string]string{
+		"parent_thread_id": "new-parent",
+		"status":           "complete",
+	})
+	if err != nil {
+		t.Fatalf("UpdateThread: %v", err)
+	}
+
+	state, _ := c.rdb.HGetAll(ctx(), ThreadStateKey("update-me")).Result()
+	if state["parent_thread_id"] != "new-parent" {
+		t.Errorf("parent_thread_id in Redis = %q, want %q", state["parent_thread_id"], "new-parent")
+	}
+	if state["status"] != "complete" {
+		t.Errorf("status in Redis = %q, want %q", state["status"], "complete")
+	}
+}
+
+func TestUpdateThread_UnrelatedFieldsDoNotWipeParent(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "keep-parent", "", "my-parent")
+
+	// Update only status — parent_thread_id should be preserved by HSet (only updated_at is always set)
+	err := c.UpdateThread(ctx(), "keep-parent", map[string]string{
+		"status": "running",
+	})
+	if err != nil {
+		t.Fatalf("UpdateThread: %v", err)
+	}
+
+	state, _ := c.rdb.HGetAll(ctx(), ThreadStateKey("keep-parent")).Result()
+	if state["parent_thread_id"] != "my-parent" {
+		t.Errorf("parent_thread_id in Redis = %q, want %q", state["parent_thread_id"], "my-parent")
+	}
+	if state["status"] != "running" {
+		t.Errorf("status in Redis = %q, want %q", state["status"], "running")
+	}
 }

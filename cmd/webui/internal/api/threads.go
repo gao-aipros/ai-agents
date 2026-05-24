@@ -20,8 +20,9 @@ type threadsResource struct {
 // POST /api/threads
 func (tr *threadsResource) create(w http.ResponseWriter, r *http.Request) {
 	type body struct {
-		ThreadID string `json:"thread_id"`
-		Repo     string `json:"repo"`
+		ThreadID       string `json:"thread_id"`
+		Repo           string `json:"repo"`
+		ParentThreadID string `json:"parent_thread_id"`
 	}
 
 	var b body
@@ -53,7 +54,7 @@ func (tr *threadsResource) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	thread, err := tr.client.CreateThread(r.Context(), threadID, b.Repo)
+	thread, err := tr.client.CreateThread(r.Context(), threadID, b.Repo, b.ParentThreadID)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -74,10 +75,13 @@ func (tr *threadsResource) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if IsHTMX(r) {
+		children := buildThreadTree(threads)
+		rootThreads := filterRootThreads(threads)
 		Partial(w, tr.renderer, "thread-table", map[string]interface{}{
-			"Threads": threads,
-			"SortBy":  sortBy,
-			"SortDir": sortDir,
+			"Threads":  rootThreads,
+			"Children": children,
+			"SortBy":   sortBy,
+			"SortDir":  sortDir,
 		})
 	} else {
 		Respond(w, r, http.StatusOK, threads)
@@ -172,12 +176,17 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Find child threads
+	children, _ := tr.client.ListThreads(r.Context(), "", "")
+	children = filterChildren(children, threadID)
+
 	if IsHTMX(r) {
 		Partial(w, tr.renderer, "thread-state-oob", map[string]interface{}{
 			"Thread":    thread,
 			"Running":   running,
 			"Complete":  complete,
 			"TokenRows": tokenRows,
+			"Children":  children,
 		})
 	} else {
 		messages, err := tr.client.GetThreadHistoryTail(r.Context(), threadID, 20)
@@ -190,6 +199,7 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 			"running":  running,
 			"complete": complete,
 			"messages": messages,
+			"children": children,
 		})
 	}
 }
@@ -428,4 +438,39 @@ func (tr *threadsResource) resetSession(w http.ResponseWriter, r *http.Request) 
 
 	slog.Info(fmt.Sprintf("[webui] session reset thread=%s", threadID))
 	Respond(w, r, http.StatusOK, map[string]string{"status": "session reset"})
+}
+
+// buildThreadTree groups threads by their ParentThreadID, returning a map
+// of parent_thread_id -> child threads. Threads with no parent are excluded
+// from the map values.
+func buildThreadTree(threads []*tasklib.Thread) map[string][]*tasklib.Thread {
+	children := make(map[string][]*tasklib.Thread)
+	for _, t := range threads {
+		if t.ParentThreadID != "" {
+			children[t.ParentThreadID] = append(children[t.ParentThreadID], t)
+		}
+	}
+	return children
+}
+
+// filterRootThreads returns threads without a parent (root-level threads).
+func filterRootThreads(threads []*tasklib.Thread) []*tasklib.Thread {
+	var roots []*tasklib.Thread
+	for _, t := range threads {
+		if t.ParentThreadID == "" {
+			roots = append(roots, t)
+		}
+	}
+	return roots
+}
+
+// filterChildren returns threads whose ParentThreadID matches the given threadID.
+func filterChildren(threads []*tasklib.Thread, threadID string) []*tasklib.Thread {
+	var children []*tasklib.Thread
+	for _, t := range threads {
+		if t.ParentThreadID == threadID {
+			children = append(children, t)
+		}
+	}
+	return children
 }

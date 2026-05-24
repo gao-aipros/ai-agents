@@ -49,6 +49,7 @@ var (
 	unlockThread       string
 	tcID               string
 	tcRepo             string
+	tcParent           string
 	thID               string
 	thTail             int
 	tsID               string
@@ -176,6 +177,7 @@ func main() {
 	}
 	threadCreateCmd.Flags().StringVar(&tcID, "id", "", "")
 	threadCreateCmd.Flags().StringVar(&tcRepo, "repo", "", "")
+	threadCreateCmd.Flags().StringVar(&tcParent, "parent", "", "")
 	threadCreateCmd.MarkFlagRequired("id")
 	root.AddCommand(threadCreateCmd)
 
@@ -612,7 +614,7 @@ func cmdThreadCreate(cmd *cobra.Command, args []string) error {
 	c := getClient()
 	ctx := context.Background()
 
-	_, err := c.CreateThread(ctx, tcID, tcRepo)
+	_, err := c.CreateThread(ctx, tcID, tcRepo, tcParent)
 	if err != nil {
 		die(err.Error())
 	}

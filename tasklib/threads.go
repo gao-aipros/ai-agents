@@ -12,14 +12,15 @@ import (
 
 // Thread represents a thread entity.
 type Thread struct {
-	ThreadID      string `json:"thread_id"`
-	Status        string `json:"status,omitempty"`
-	CreatedAt     string `json:"created_at,omitempty"`
-	UpdatedAt     string `json:"updated_at,omitempty"`
-	GHRepo        string `json:"gh_repo,omitempty"`
-	GHPRNumber    string `json:"gh_pr_number,omitempty"`
-	LastDesign    string `json:"last_design,omitempty"`
-	CorrelationID string `json:"correlation_id,omitempty"`
+	ThreadID       string `json:"thread_id"`
+	Status         string `json:"status,omitempty"`
+	CreatedAt      string `json:"created_at,omitempty"`
+	UpdatedAt      string `json:"updated_at,omitempty"`
+	GHRepo         string `json:"gh_repo,omitempty"`
+	GHPRNumber     string `json:"gh_pr_number,omitempty"`
+	LastDesign     string `json:"last_design,omitempty"`
+	CorrelationID  string `json:"correlation_id,omitempty"`
+	ParentThreadID string `json:"parent_thread_id,omitempty"`
 }
 
 // Message is a single message in thread history.
@@ -33,7 +34,7 @@ type Message struct {
 }
 
 // CreateThread initializes a new thread with status "initiated".
-func (c *Client) CreateThread(ctx context.Context, threadID, repo string) (*Thread, error) {
+func (c *Client) CreateThread(ctx context.Context, threadID, repo, parentThreadID string) (*Thread, error) {
 	correlationID, err := NewUUID()
 	if err != nil {
 		return nil, fmt.Errorf("generate correlation_id: %w", err)
@@ -49,6 +50,9 @@ func (c *Client) CreateThread(ctx context.Context, threadID, repo string) (*Thre
 	if repo != "" {
 		mapping["gh_repo"] = repo
 	}
+	if parentThreadID != "" {
+		mapping["parent_thread_id"] = parentThreadID
+	}
 
 	key := ThreadStateKey(threadID)
 	if err := c.rdb.HSet(ctx, key, mapping).Err(); err != nil {
@@ -57,11 +61,12 @@ func (c *Client) CreateThread(ctx context.Context, threadID, repo string) (*Thre
 	c.rdb.Expire(ctx, key, TTLThread)
 
 	return &Thread{
-		ThreadID:      threadID,
-		Status:        "initiated",
-		CreatedAt:     now,
-		GHRepo:        repo,
-		CorrelationID: correlationID,
+		ThreadID:       threadID,
+		Status:         "initiated",
+		CreatedAt:      now,
+		GHRepo:         repo,
+		CorrelationID:  correlationID,
+		ParentThreadID: parentThreadID,
 	}, nil
 }
 
@@ -76,14 +81,15 @@ func (c *Client) GetThread(ctx context.Context, threadID string) (*Thread, error
 	}
 
 	return &Thread{
-		ThreadID:      threadID,
-		Status:        state["status"],
-		CreatedAt:     state["created_at"],
-		UpdatedAt:     state["updated_at"],
-		GHRepo:        state["gh_repo"],
-		GHPRNumber:    state["gh_pr_number"],
-		LastDesign:    state["last_design"],
-		CorrelationID: state["correlation_id"],
+		ThreadID:       threadID,
+		Status:         state["status"],
+		CreatedAt:      state["created_at"],
+		UpdatedAt:      state["updated_at"],
+		GHRepo:         state["gh_repo"],
+		GHPRNumber:     state["gh_pr_number"],
+		LastDesign:     state["last_design"],
+		CorrelationID:  state["correlation_id"],
+		ParentThreadID: state["parent_thread_id"],
 	}, nil
 }
 
@@ -115,7 +121,8 @@ func (c *Client) ListThreads(ctx context.Context, sortBy, sortDir string) ([]*Th
 				UpdatedAt:     stateVal(state, "updated_at", "-"),
 				GHRepo:        stateVal(state, "gh_repo", "-"),
 				GHPRNumber:    stateVal(state, "gh_pr_number", "-"),
-				CorrelationID: stateVal(state, "correlation_id", ""),
+				CorrelationID:  stateVal(state, "correlation_id", ""),
+				ParentThreadID: stateVal(state, "parent_thread_id", ""),
 			})
 		}
 		cursor = nextCursor
@@ -338,6 +345,8 @@ func (c *Client) UpdateThread(ctx context.Context, threadID string, fields map[s
 			mapping["last_design"] = v
 		case "pr", "pr_number", "gh_pr_number":
 			mapping["gh_pr_number"] = v
+		case "parent_thread_id":
+			mapping["parent_thread_id"] = v
 		default:
 			mapping[k] = v
 		}

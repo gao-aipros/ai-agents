@@ -171,7 +171,7 @@ func TestHandleStats(t *testing.T) {
 	defer th.Cleanup()
 
 	ctx := context.Background()
-	th.Client.CreateThread(ctx, "stats-thread", "repo/test")
+	th.Client.CreateThread(ctx, "stats-thread", "repo/test", "")
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/api/stats", nil)
@@ -288,7 +288,7 @@ func TestHandleCreateThread_Conflict(t *testing.T) {
 	th := newTestRouter(t)
 	defer th.Cleanup()
 
-	th.Client.CreateThread(context.Background(), "dup-thread", "")
+	th.Client.CreateThread(context.Background(), "dup-thread", "", "")
 
 	body := strings.NewReader(`{"thread_id":"dup-thread"}`)
 	w := httptest.NewRecorder()
@@ -305,8 +305,8 @@ func TestHandleListThreads(t *testing.T) {
 	th := newTestRouter(t)
 	defer th.Cleanup()
 
-	th.Client.CreateThread(context.Background(), "list-thread-1", "")
-	th.Client.CreateThread(context.Background(), "list-thread-2", "")
+	th.Client.CreateThread(context.Background(), "list-thread-1", "", "")
+	th.Client.CreateThread(context.Background(), "list-thread-2", "", "")
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/api/threads", nil)
@@ -327,7 +327,7 @@ func TestHandleGetThread(t *testing.T) {
 	th := newTestRouter(t)
 	defer th.Cleanup()
 
-	th.Client.CreateThread(context.Background(), "detail-thread", "repo/test")
+	th.Client.CreateThread(context.Background(), "detail-thread", "repo/test", "")
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/api/threads/detail-thread", nil)
@@ -366,7 +366,7 @@ func TestHandleThreadHistory(t *testing.T) {
 	defer th.Cleanup()
 
 	ctx := context.Background()
-	th.Client.CreateThread(ctx, "hist-thread", "")
+	th.Client.CreateThread(ctx, "hist-thread", "", "")
 	th.Client.AppendMessage(ctx, "hist-thread", tasklib.Message{
 		Role: "user", Type: "request", Content: "hello",
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
@@ -396,7 +396,7 @@ func TestHandleThreadHistory_Tail(t *testing.T) {
 	defer th.Cleanup()
 
 	ctx := context.Background()
-	th.Client.CreateThread(ctx, "tail-thread", "")
+	th.Client.CreateThread(ctx, "tail-thread", "", "")
 	for i := 0; i < 5; i++ {
 		th.Client.AppendMessage(ctx, "tail-thread", tasklib.Message{
 			Role: "user", Type: "request", Content: fmt.Sprintf("msg %d", i),
@@ -423,7 +423,7 @@ func TestHandleDeleteWorkspace_NoConfirm(t *testing.T) {
 	th := newTestRouter(t)
 	defer th.Cleanup()
 
-	th.Client.CreateThread(context.Background(), "ws-thread", "")
+	th.Client.CreateThread(context.Background(), "ws-thread", "", "")
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("DELETE", "/api/threads/ws-thread/workspace", nil)
@@ -439,7 +439,7 @@ func TestHandleDeleteWorkspace_Confirm(t *testing.T) {
 	th := newTestRouter(t)
 	defer th.Cleanup()
 
-	th.Client.CreateThread(context.Background(), "ws-delete-thread", "")
+	th.Client.CreateThread(context.Background(), "ws-delete-thread", "", "")
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("DELETE", "/api/threads/ws-delete-thread/workspace?confirm=true", nil)
@@ -455,7 +455,7 @@ func TestHandleKeepThread(t *testing.T) {
 	th := newTestRouter(t)
 	defer th.Cleanup()
 
-	th.Client.CreateThread(context.Background(), "keep-thread", "")
+	th.Client.CreateThread(context.Background(), "keep-thread", "", "")
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/api/threads/keep-thread/keep", nil)
@@ -472,7 +472,7 @@ func TestHandleResetSession(t *testing.T) {
 	defer th.Cleanup()
 
 	ctx := context.Background()
-	th.Client.CreateThread(ctx, "reset-thread", "")
+	th.Client.CreateThread(ctx, "reset-thread", "", "")
 	th.Client.SetThreadSessionID(ctx, "reset-thread", "test-session-uuid")
 
 	w := httptest.NewRecorder()
@@ -494,7 +494,7 @@ func TestHandleDeleteThread_NoConfirm(t *testing.T) {
 	th := newTestRouter(t)
 	defer th.Cleanup()
 
-	th.Client.CreateThread(context.Background(), "del-noconfirm", "")
+	th.Client.CreateThread(context.Background(), "del-noconfirm", "", "")
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("DELETE", "/api/threads/del-noconfirm", nil)
@@ -537,7 +537,7 @@ func TestHandleDeleteThread_Success(t *testing.T) {
 
 	ctx := context.Background()
 	threadID := "delete-success"
-	th.Client.CreateThread(ctx, threadID, "repo/test")
+	th.Client.CreateThread(ctx, threadID, "repo/test", "")
 	th.Client.SetThreadSessionID(ctx, threadID, "session-to-delete")
 	th.Client.SetThreadComplete(ctx, threadID)
 	th.Client.AppendMessage(ctx, threadID, tasklib.Message{
@@ -568,7 +568,7 @@ func TestHandleDeleteThread_LockHeld(t *testing.T) {
 	defer th.Cleanup()
 
 	threadID := "delete-locked"
-	th.Client.CreateThread(context.Background(), threadID, "")
+	th.Client.CreateThread(context.Background(), threadID, "", "")
 
 	// Hold a request lock — delete should be rejected
 	ok, err := th.Client.AcquireRequestLock(context.Background(), threadID, "req-1", tasklib.LockTTL)
@@ -594,7 +594,7 @@ func TestHandleDeleteThread_ThreadLockHeld(t *testing.T) {
 	defer th.Cleanup()
 
 	threadID := "delete-thread-locked"
-	th.Client.CreateThread(context.Background(), threadID, "")
+	th.Client.CreateThread(context.Background(), threadID, "", "")
 
 	// Hold a thread lock (as Enqueue does) — delete should be rejected
 	ok, err := th.Client.LockThread(context.Background(), threadID, "task-1", tasklib.LockTTL)
@@ -778,7 +778,7 @@ func TestHandleCancelRequest(t *testing.T) {
 	th.setSlowFakeClaude(t)
 
 	ctx := context.Background()
-	th.Client.CreateThread(ctx, "cancel-thread", "")
+	th.Client.CreateThread(ctx, "cancel-thread", "", "")
 
 	body := strings.NewReader(`{"request":"Long task","thread_id":"cancel-thread"}`)
 	w := httptest.NewRecorder()
@@ -817,7 +817,7 @@ func TestHandleCancelRequest_NoRunning(t *testing.T) {
 	th := newTestRouter(t)
 	defer th.Cleanup()
 
-	th.Client.CreateThread(context.Background(), "idle-thread", "")
+	th.Client.CreateThread(context.Background(), "idle-thread", "", "")
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/api/threads/idle-thread/cancel", nil)
@@ -868,7 +868,7 @@ func TestHandleGetThread_HTMXReturnsPartial(t *testing.T) {
 	defer th.Cleanup()
 
 	ctx := context.Background()
-	th.Client.CreateThread(ctx, "htmx-thread", "repo/test")
+	th.Client.CreateThread(ctx, "htmx-thread", "repo/test", "")
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/api/threads/htmx-thread", nil)
@@ -894,7 +894,7 @@ func TestHandleGetThread_NonHTMXReturnsJSON(t *testing.T) {
 	defer th.Cleanup()
 
 	ctx := context.Background()
-	th.Client.CreateThread(ctx, "json-thread", "repo/test")
+	th.Client.CreateThread(ctx, "json-thread", "repo/test", "")
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/api/threads/json-thread", nil)
@@ -1033,7 +1033,7 @@ func TestHandleThreadHistory_Poll(t *testing.T) {
 	defer th.Cleanup()
 
 	ctx := context.Background()
-	th.Client.CreateThread(ctx, "poll-thread", "")
+	th.Client.CreateThread(ctx, "poll-thread", "", "")
 	for i := 0; i < 3; i++ {
 		th.Client.AppendMessage(ctx, "poll-thread", tasklib.Message{
 			Role: "user", Type: "request", Content: fmt.Sprintf("msg %d", i),
@@ -1065,7 +1065,7 @@ func TestHandleThreadHistory_PollRunning(t *testing.T) {
 	defer th.Cleanup()
 
 	ctx := context.Background()
-	th.Client.CreateThread(ctx, "poll-running-thread", "")
+	th.Client.CreateThread(ctx, "poll-running-thread", "", "")
 	th.Client.AppendMessage(ctx, "poll-running-thread", tasklib.Message{
 		Role: "user", Type: "request", Content: "hello",
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
@@ -1094,7 +1094,7 @@ func TestHandleThreadHistory_PollPreservesMsgCSSClasses(t *testing.T) {
 	defer th.Cleanup()
 
 	ctx := context.Background()
-	th.Client.CreateThread(ctx, "poll-css-thread", "")
+	th.Client.CreateThread(ctx, "poll-css-thread", "", "")
 	th.Client.AppendMessage(ctx, "poll-css-thread", tasklib.Message{
 		Role: "master", Type: "response", Content: "styled response",
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
@@ -1147,7 +1147,7 @@ func TestHandleGetThread_StatePollDoesNotReplaceFollowupForm(t *testing.T) {
 	defer th.Cleanup()
 
 	ctx := context.Background()
-	th.Client.CreateThread(ctx, "state-nofollowup", "repo/test")
+	th.Client.CreateThread(ctx, "state-nofollowup", "repo/test", "")
 	th.Client.SetThreadComplete(ctx, "state-nofollowup")
 	th.Client.UpdateThread(ctx, "state-nofollowup", map[string]string{"status": "complete"})
 
@@ -1178,7 +1178,7 @@ func TestHandleThreadHistory_PollCompleteInjectsFollowupForm(t *testing.T) {
 	defer th.Cleanup()
 
 	ctx := context.Background()
-	th.Client.CreateThread(ctx, "hist-complete-followup", "")
+	th.Client.CreateThread(ctx, "hist-complete-followup", "", "")
 	th.Client.AppendMessage(ctx, "hist-complete-followup", tasklib.Message{
 		Role: "user", Type: "request", Content: "hello",
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
@@ -1216,7 +1216,7 @@ func TestHandleSubmitRequest_FollowUpClearsComplete(t *testing.T) {
 
 	ctx := context.Background()
 	// Create a thread that has already completed
-	th.Client.CreateThread(ctx, "followup-thread", "")
+	th.Client.CreateThread(ctx, "followup-thread", "", "")
 	th.Client.SetThreadComplete(ctx, "followup-thread")
 	th.Client.UpdateThread(ctx, "followup-thread", map[string]string{"status": "complete"})
 
@@ -1385,6 +1385,119 @@ func TestMetricsEndpoint_QueueDepthLabels(t *testing.T) {
 	for _, wt := range tasklib.WorkerTypes {
 		if !strings.Contains(body, `worker_type="`+wt+`"`) {
 			t.Errorf("expected worker_type label %q in output", wt)
+		}
+	}
+}
+
+// ── parent-child thread tests ────────────────────────────────────────────
+
+func TestHandleCreateThread_WithParentThreadID(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	body := strings.NewReader(`{"thread_id":"child","repo":"owner/repo","parent_thread_id":"parent"}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/threads", body)
+	r.Header.Set("Content-Type", "application/json")
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusCreated {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusCreated, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	readJSON(w, &resp)
+	if resp["parent_thread_id"] != "parent" {
+		t.Errorf("parent_thread_id = %q, want %q", resp["parent_thread_id"], "parent")
+	}
+
+	// Verify parent stored in Redis
+	state, _ := th.Client.RDB().HGetAll(context.Background(), tasklib.ThreadStateKey("child")).Result()
+	if state["parent_thread_id"] != "parent" {
+		t.Errorf("Redis parent_thread_id = %q, want %q", state["parent_thread_id"], "parent")
+	}
+}
+
+func TestHandleGetThread_ReturnsChildren(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	ctx := context.Background()
+	th.Client.CreateThread(ctx, "parent", "", "")
+	th.Client.CreateThread(ctx, "child-1", "", "parent")
+	th.Client.CreateThread(ctx, "child-2", "", "parent")
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/threads/parent", nil)
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	readJSON(w, &resp)
+	children, ok := resp["children"].([]interface{})
+	if !ok {
+		t.Fatal("response missing children field")
+	}
+	if len(children) != 2 {
+		t.Errorf("got %d children, want 2", len(children))
+	}
+}
+
+func TestBuildThreadTree(t *testing.T) {
+	threads := []*tasklib.Thread{
+		{ThreadID: "root", ParentThreadID: ""},
+		{ThreadID: "child-1", ParentThreadID: "root"},
+		{ThreadID: "child-2", ParentThreadID: "root"},
+		{ThreadID: "orphan", ParentThreadID: "missing"},
+	}
+
+	children := buildThreadTree(threads)
+	if len(children["root"]) != 2 {
+		t.Errorf("root children = %d, want 2", len(children["root"]))
+	}
+	if len(children["missing"]) != 1 {
+		t.Errorf("missing children = %d, want 1", len(children["missing"]))
+	}
+	if _, ok := children[""]; ok {
+		t.Error("empty parent should not have entries")
+	}
+}
+
+func TestFilterRootThreads(t *testing.T) {
+	threads := []*tasklib.Thread{
+		{ThreadID: "root", ParentThreadID: ""},
+		{ThreadID: "child", ParentThreadID: "root"},
+		{ThreadID: "root-2", ParentThreadID: ""},
+	}
+
+	roots := filterRootThreads(threads)
+	if len(roots) != 2 {
+		t.Errorf("got %d root threads, want 2", len(roots))
+	}
+	for _, r := range roots {
+		if r.ParentThreadID != "" {
+			t.Errorf("root thread %q has ParentThreadID = %q", r.ThreadID, r.ParentThreadID)
+		}
+	}
+}
+
+func TestFilterChildren(t *testing.T) {
+	threads := []*tasklib.Thread{
+		{ThreadID: "c1", ParentThreadID: "p"},
+		{ThreadID: "c2", ParentThreadID: "p"},
+		{ThreadID: "c3", ParentThreadID: "other"},
+	}
+
+	children := filterChildren(threads, "p")
+	if len(children) != 2 {
+		t.Errorf("got %d children, want 2", len(children))
+	}
+	for _, c := range children {
+		if c.ParentThreadID != "p" {
+			t.Errorf("child %q has ParentThreadID = %q", c.ThreadID, c.ParentThreadID)
 		}
 	}
 }

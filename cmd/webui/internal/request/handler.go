@@ -119,7 +119,7 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 		return nil, fmt.Errorf("check thread exists: %w", err)
 	}
 	if !exists {
-		if _, err := h.client.CreateThread(ctx, threadID, repo); err != nil {
+		if _, err := h.client.CreateThread(ctx, threadID, repo, ""); err != nil {
 			<-h.sem
 			return nil, fmt.Errorf("create thread: %w", err)
 		}

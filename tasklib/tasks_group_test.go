@@ -236,7 +236,7 @@ func TestWaitTaskSkipsThreadStatusAndLockForGroup(t *testing.T) {
 		c, _ := setupTestClient(t)
 
 		// Create thread and acquire + immediately release lock (simulating EnqueueGroup)
-		if _, err := c.CreateThread(ctx(), "thr-group-done", ""); err != nil {
+		if _, err := c.CreateThread(ctx(), "thr-group-done", "", ""); err != nil {
 			t.Fatalf("CreateThread failed: %v", err)
 		}
 		// EnqueueGroup would have done SET NX → DEL on the lock.
@@ -326,7 +326,7 @@ func TestWaitTaskSequentialStillWorks(t *testing.T) {
 	t.Run("update_thread_status", func(t *testing.T) {
 		c, _ := setupTestClient(t)
 
-		if _, err := c.CreateThread(ctx(), "thr-seq", ""); err != nil {
+		if _, err := c.CreateThread(ctx(), "thr-seq", "", ""); err != nil {
 			t.Fatalf("CreateThread failed: %v", err)
 		}
 		c.rdb.Set(ctx(), TaskKey("st1", "status"), "done", 0)
@@ -351,7 +351,7 @@ func TestWaitTaskSequentialStillWorks(t *testing.T) {
 	t.Run("lock_release", func(t *testing.T) {
 		c, _ := setupTestClient(t)
 
-		if _, err := c.CreateThread(ctx(), "thr-seq2", ""); err != nil {
+		if _, err := c.CreateThread(ctx(), "thr-seq2", "", ""); err != nil {
 			t.Fatalf("CreateThread failed: %v", err)
 		}
 
@@ -434,7 +434,7 @@ func TestEnqueueGroupKeysHaveTTLs(t *testing.T) {
 func TestGroupWaitAllDone(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	if _, err := c.CreateThread(ctx(), "thr-gw-done", ""); err != nil {
+	if _, err := c.CreateThread(ctx(), "thr-gw-done", "", ""); err != nil {
 		t.Fatalf("CreateThread failed: %v", err)
 	}
 
@@ -476,7 +476,7 @@ func TestGroupWaitAllDone(t *testing.T) {
 func TestGroupWaitMixedOutcomes(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	if _, err := c.CreateThread(ctx(), "thr-gw-mixed", ""); err != nil {
+	if _, err := c.CreateThread(ctx(), "thr-gw-mixed", "", ""); err != nil {
 		t.Fatalf("CreateThread failed: %v", err)
 	}
 
@@ -510,7 +510,7 @@ func TestGroupWaitMixedOutcomes(t *testing.T) {
 func TestGroupWaitCancelled(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	if _, err := c.CreateThread(ctx(), "thr-gw-cancelled", ""); err != nil {
+	if _, err := c.CreateThread(ctx(), "thr-gw-cancelled", "", ""); err != nil {
 		t.Fatalf("CreateThread failed: %v", err)
 	}
 
@@ -535,7 +535,7 @@ func TestGroupWaitCancelled(t *testing.T) {
 func TestGroupWaitTimeout(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	if _, err := c.CreateThread(ctx(), "thr-gw-timeout", ""); err != nil {
+	if _, err := c.CreateThread(ctx(), "thr-gw-timeout", "", ""); err != nil {
 		t.Fatalf("CreateThread failed: %v", err)
 	}
 
@@ -588,7 +588,7 @@ func TestThreadStatusAfterGroupWait(t *testing.T) {
 			c, _ := setupTestClient(t)
 
 			threadID := "thr-agg-" + tt.name
-			if _, err := c.CreateThread(ctx(), threadID, ""); err != nil {
+			if _, err := c.CreateThread(ctx(), threadID, "", ""); err != nil {
 				t.Fatalf("CreateThread failed: %v", err)
 			}
 
@@ -616,7 +616,7 @@ func TestThreadStatusAfterGroupWait(t *testing.T) {
 func TestParallelSequentialPhases(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	if _, err := c.CreateThread(ctx(), "thr-phases", ""); err != nil {
+	if _, err := c.CreateThread(ctx(), "thr-phases", "", ""); err != nil {
 		t.Fatalf("CreateThread failed: %v", err)
 	}
 
@@ -657,7 +657,7 @@ func TestParallelSequentialPhases(t *testing.T) {
 func TestGroupWaitMixedTerminalAndNonTerminal(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	if _, err := c.CreateThread(ctx(), "thr-gw-mixed-nonterm", ""); err != nil {
+	if _, err := c.CreateThread(ctx(), "thr-gw-mixed-nonterm", "", ""); err != nil {
 		t.Fatalf("CreateThread failed: %v", err)
 	}
 
@@ -714,7 +714,7 @@ func TestGroupWaitDoesNotUpdateThreadStatus(t *testing.T) {
 			c, _ := setupTestClient(t)
 
 			threadID := "thr-gw-noup-" + tt.name
-			if _, err := c.CreateThread(ctx(), threadID, ""); err != nil {
+			if _, err := c.CreateThread(ctx(), threadID, "", ""); err != nil {
 				t.Fatalf("CreateThread failed: %v", err)
 			}
 
