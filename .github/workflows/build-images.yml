@@ -214,16 +214,9 @@ jobs:
           OWNER_LC="${OWNER_LC,,}"
           echo "PREFIX=${REGISTRY}/${OWNER_LC}" >> $GITHUB_ENV
 
-      - name: Get latest copilot version
-        id: copilot-version
-        uses: pozetroninc/github-action-get-latest-release@v0.8.0
-        with:
-          repository: github/copilot-cli
-          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-
-      - name: Compute copilot version
+      - name: Read copilot version from Dockerfile
         run: |
-          echo "COPILOT_VERSION=$(echo "${{ steps.copilot-version.outputs.release }}" | sed 's/^v//')" >> $GITHUB_ENV
+          echo "COPILOT_VERSION=$(grep '^ARG COPILOT_VERSION=' docker/copilot/Dockerfile | head -1 | sed 's/.*=//')" >> $GITHUB_ENV
 
       - name: Build and push copilot
         run: |
@@ -262,16 +255,9 @@ jobs:
           OWNER_LC="${OWNER_LC,,}"
           echo "PREFIX=${REGISTRY}/${OWNER_LC}" >> $GITHUB_ENV
 
-      - name: Get latest opencode version
-        id: opencode-version
-        uses: pozetroninc/github-action-get-latest-release@v0.8.0
-        with:
-          repository: anomalyco/opencode
-          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-
-      - name: Compute opencode version
+      - name: Read opencode version from Dockerfile
         run: |
-          echo "OPENCODE_VERSION=$(echo "${{ steps.opencode-version.outputs.release }}" | sed 's/^v//')" >> $GITHUB_ENV
+          echo "OPENCODE_VERSION=$(grep '^ARG OPENCODE_VERSION=' docker/opencode/Dockerfile | head -1 | sed 's/.*=//')" >> $GITHUB_ENV
 
       - name: Build and push opencode
         run: |
@@ -310,16 +296,9 @@ jobs:
           OWNER_LC="${OWNER_LC,,}"
           echo "PREFIX=${REGISTRY}/${OWNER_LC}" >> $GITHUB_ENV
 
-      - name: Get latest claude version
-        id: claude-version
-        uses: pozetroninc/github-action-get-latest-release@v0.8.0
-        with:
-          repository: anthropics/claude-code
-          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-
-      - name: Compute claude version
+      - name: Read claude version from Dockerfile
         run: |
-          echo "CLAUDE_VERSION=$(echo "${{ steps.claude-version.outputs.release }}" | sed 's/^v//')" >> $GITHUB_ENV
+          echo "CLAUDE_VERSION=$(grep '^ARG CLAUDE_VERSION=' docker/worker-claude/Dockerfile | head -1 | sed 's/.*=//')" >> $GITHUB_ENV
 
       - name: Build and push worker-claude
         run: |
@@ -358,16 +337,9 @@ jobs:
           OWNER_LC="${OWNER_LC,,}"
           echo "PREFIX=${REGISTRY}/${OWNER_LC}" >> $GITHUB_ENV
 
-      - name: Get latest codex version
-        id: codex-version
-        uses: pozetroninc/github-action-get-latest-release@v0.8.0
-        with:
-          repository: openai/codex
-          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-
-      - name: Compute codex version
+      - name: Read codex version from Dockerfile
         run: |
-          echo "CODEX_VERSION=$(echo "${{ steps.codex-version.outputs.release }}" | sed 's/^rust-v//')" >> $GITHUB_ENV
+          echo "CODEX_VERSION=$(grep '^ARG CODEX_VERSION=' docker/codex/Dockerfile | head -1 | sed 's/.*=//')" >> $GITHUB_ENV
 
       - name: Build and push codex
         run: |
