@@ -87,8 +87,8 @@ func provTypeName(v StatsProvider) string {
 
 func TestNoopStatsProvider(t *testing.T) {
 	p := &NoopStatsProvider{}
-	args, cleanup, err := p.Setup("/tmp")
-	if err != nil || args != nil || cleanup != nil {
+	expandCmd, cleanup, err := p.Setup("/tmp")
+	if err != nil || expandCmd != nil || cleanup != nil {
 		t.Error("Setup should return nil,nil,nil")
 	}
 	content, stats, err := p.Process("/tmp", "hello")
@@ -151,7 +151,7 @@ func TestClaudeStatsProvider_Process_MalformedLines(t *testing.T) {
 // ── CodexStatsProvider ────────────────────────────────────────────────────
 
 func TestCodexStatsProvider_Process(t *testing.T) {
-	stdout := `{"type":"TurnCompleted","usage":{"input_tokens":200,"cached_input_tokens":30,"output_tokens":80,"reasoning_output_tokens":5}}
+	stdout := `{"type":"turn.completed","usage":{"input_tokens":200,"cached_input_tokens":30,"output_tokens":80,"reasoning_output_tokens":5}}
 `
 	p := &CodexStatsProvider{}
 	_, stats, err := p.Process("/tmp", stdout)
@@ -165,7 +165,7 @@ func TestCodexStatsProvider_Process(t *testing.T) {
 }
 
 func TestCodexStatsProvider_Process_NoUsage(t *testing.T) {
-	stdout := `{"type":"TurnCompleted"}`
+	stdout := `{"type":"turn.completed"}`
 	p := &CodexStatsProvider{}
 	_, stats, err := p.Process("/tmp", stdout)
 	if err != nil || stats.HasAny() {
@@ -203,16 +203,26 @@ func TestOpenCodeStatsProvider_Process_NoTokens(t *testing.T) {
 
 func TestCopilotStatsProvider_Setup(t *testing.T) {
 	p := &CopilotStatsProvider{}
-	args, cleanup, err := p.Setup("/tmp")
+	expandCmd, cleanup, err := p.Setup("/tmp")
 	if err != nil {
 		t.Fatalf("Setup error: %v", err)
 	}
-	if len(args) != 1 || !strings.HasPrefix(args[0], "--session-id=") {
-		t.Errorf("args = %v, want [--session-id=<uuid>]", args)
+	if expandCmd == nil {
+		t.Fatal("expandCmd should not be nil")
 	}
 	if cleanup == nil {
 		t.Error("cleanup should not be nil")
 	}
+
+	// Verify the expander replaces __SESSION_ID__ with the UUID.
+	expanded := expandCmd("copilot --yolo --session-id=__SESSION_ID__ -p")
+	if expanded == "copilot --yolo --session-id=__SESSION_ID__ -p" {
+		t.Error("__SESSION_ID__ was not replaced")
+	}
+	if !strings.Contains(expanded, "--session-id="+p.sessionID) {
+		t.Errorf("expanded cmd = %s, want session-id to be %s", expanded, p.sessionID)
+	}
+
 	cleanup() // should not panic
 }
 
@@ -443,8 +453,8 @@ func TestHasAnyTaskTokens(t *testing.T) {
 // ── Codex content extraction tests ─────────────────────────────────────
 
 func TestCodexStatsProvider_Process_ContentExtraction(t *testing.T) {
-	// Codex with --json outputs ItemStarted events with inlined AgentMessage details
-	stdout := `{"type":"ItemStarted","id":"msg_1","details":{"AgentMessage":{"text":"This is the agent response"}}}
+	// Codex with --json outputs item.completed events with agent_message items.
+	stdout := `{"type":"item.completed","item":{"type":"agent_message","text":"This is the agent response"}}
 `
 	p := &CodexStatsProvider{}
 	content, stats, err := p.Process("/tmp", stdout)
@@ -454,17 +464,16 @@ func TestCodexStatsProvider_Process_ContentExtraction(t *testing.T) {
 	if !strings.Contains(content, "This is the agent response") {
 		t.Errorf("content should contain agent response, got: %q", content)
 	}
-	// AgentMessage events don't carry usage — stats come from TurnCompleted events
 	if stats.HasAny() {
-		t.Errorf("AgentMessage events should not carry tokens: got %+v", stats)
+		t.Errorf("agent_message items should not carry tokens: got %+v", stats)
 	}
 }
 
 func TestCodexStatsProvider_Process_MultipleTurnsAccumulate(t *testing.T) {
-	stdout := `{"type":"ItemStarted","id":"m1","details":{"AgentMessage":{"text":"First"}}}
-{"type":"TurnCompleted","usage":{"input_tokens":10,"output_tokens":5}}
-{"type":"ItemStarted","id":"m2","details":{"AgentMessage":{"text":"Second"}}}
-{"type":"TurnCompleted","usage":{"input_tokens":20,"output_tokens":8}}
+	stdout := `{"type":"item.completed","item":{"type":"agent_message","text":"First"}}
+{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}
+{"type":"item.completed","item":{"type":"agent_message","text":"Second"}}
+{"type":"turn.completed","usage":{"input_tokens":20,"output_tokens":8}}
 `
 	p := &CodexStatsProvider{}
 	content, stats, err := p.Process("/tmp", stdout)
@@ -483,7 +492,7 @@ func TestCodexStatsProvider_Process_MultipleTurnsAccumulate(t *testing.T) {
 }
 
 func TestCodexStatsProvider_Process_MixedValidAndInvalid(t *testing.T) {
-	stdout := `{"type":"ItemStarted","id":"m1","details":{"AgentMessage":{"text":"Good"}}}
+	stdout := `{"type":"item.completed","item":{"type":"agent_message","text":"Good"}}
 plain text line
 `
 	p := &CodexStatsProvider{}
@@ -498,16 +507,16 @@ plain text line
 		t.Error("missing plain text content")
 	}
 	if stats.HasAny() {
-		t.Error("no TurnCompleted event, stats should be zero")
+		t.Error("no turn.completed event, stats should be zero")
 	}
 }
 
 func TestCodexStatsProvider_Process_SkipsItemUpdatedAndItemCompleted(t *testing.T) {
-	// Only ItemStarted events should contribute text — ItemUpdated and
-	// ItemCompleted may carry incremental or duplicate text.
-	stdout := `{"type":"ItemStarted","id":"m1","details":{"AgentMessage":{"text":"Final text"}}}
-{"type":"ItemUpdated","id":"m1","details":{"AgentMessage":{"text":"Duplicate"}}}
-{"type":"ItemCompleted","id":"m1","details":{"AgentMessage":{"text":"Duplicate 2"}}}
+	// Only item.completed with agent_message type contributes text.
+	// Other item types (command_execution, mcp_tool_call, etc.) are skipped.
+	stdout := `{"type":"item.completed","item":{"type":"agent_message","text":"Final text"}}
+{"type":"item.completed","item":{"type":"command_execution","command":"ls","aggregated_output":"file list"}}
+{"type":"item.completed","item":{"type":"todo_list","items":[]}}
 `
 	p := &CodexStatsProvider{}
 	content, _, err := p.Process("/tmp", stdout)
@@ -515,17 +524,17 @@ func TestCodexStatsProvider_Process_SkipsItemUpdatedAndItemCompleted(t *testing.
 		t.Fatalf("Process error: %v", err)
 	}
 	if !strings.Contains(content, "Final text") {
-		t.Errorf("content should contain ItemStarted text: %q", content)
+		t.Errorf("content should contain agent_message text: %q", content)
 	}
-	if strings.Contains(content, "Duplicate") {
-		t.Error("content should NOT contain ItemUpdated/ItemCompleted text")
+	if strings.Contains(content, "file list") {
+		t.Error("content should NOT contain command_execution aggregated_output")
 	}
 }
 
 func TestCodexStatsProvider_Process_IgnoresUsageOnNonTurnCompleted(t *testing.T) {
-	stdout := `{"type":"ItemStarted","id":"m1","details":{"AgentMessage":{"text":"Hello"}}}
-{"type":"ItemCompleted","usage":{"input_tokens":999,"output_tokens":999}}
-{"type":"TurnCompleted","usage":{"input_tokens":100,"output_tokens":50}}
+	stdout := `{"type":"item.completed","item":{"type":"agent_message","text":"Hello"}}
+{"type":"item.completed","item":{"type":"mcp_tool_call"},"usage":{"input_tokens":999,"output_tokens":999}}
+{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":50}}
 `
 	p := &CodexStatsProvider{}
 	_, stats, err := p.Process("/tmp", stdout)
@@ -533,7 +542,7 @@ func TestCodexStatsProvider_Process_IgnoresUsageOnNonTurnCompleted(t *testing.T)
 		t.Fatalf("Process error: %v", err)
 	}
 	if stats.InputTokens != 100 || stats.OutputTokens != 50 {
-		t.Errorf("stats = %+v, want Input=100 Output=50 (ItemCompleted usage ignored)", stats)
+		t.Errorf("stats = %+v, want Input=100 Output=50 (non-turn usage ignored)", stats)
 	}
 }
 

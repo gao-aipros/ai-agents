@@ -59,7 +59,7 @@ ENV COPILOT_PROVIDER_TYPE=anthropic \
     COPILOT_MODEL=deepseek-v4-pro[1m] \
     COPILOT_PROVIDER_MAX_PROMPT_TOKENS=840000 \
     COPILOT_PROVIDER_MAX_OUTPUT_TOKENS=128000 \
-    AGENT_CMD="copilot --yolo -p"
+    AGENT_CMD="copilot --yolo --session-id=__SESSION_ID__ -p"
 
 RUN mkdir -p /home/agent/.copilot && chown -R agent:agent /home/agent/.copilot
 COPY --chown=agent:agent docker/copilot/copilot-instructions.md /home/agent/.copilot/copilot-instructions.md
