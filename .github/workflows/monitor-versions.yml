@@ -26,6 +26,7 @@ jobs:
         id: claude-latest
         uses: pozetroninc/github-action-get-latest-release@v0.8.0
         with:
+          excludes: prerelease,draft
           repository: anthropics/claude-code
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
@@ -44,6 +45,7 @@ jobs:
         id: opencode-latest
         uses: pozetroninc/github-action-get-latest-release@v0.8.0
         with:
+          excludes: prerelease,draft
           repository: anomalyco/opencode
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
@@ -62,6 +64,7 @@ jobs:
         id: copilot-latest
         uses: pozetroninc/github-action-get-latest-release@v0.8.0
         with:
+          excludes: prerelease,draft
           repository: github/copilot-cli
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
@@ -80,6 +83,7 @@ jobs:
         id: codex-latest
         uses: pozetroninc/github-action-get-latest-release@v0.8.0
         with:
+          excludes: prerelease,draft
           repository: openai/codex
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
