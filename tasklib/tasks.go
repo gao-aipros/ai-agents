@@ -318,6 +318,7 @@ func (c *Client) GetTask(ctx context.Context, taskID string) (*Task, error) {
 		"enqueued_at", "started_at", "last_started_at", "completed_at", "created_at",
 		"worker_hostname", "retry_count", "error_message", "correlation_id",
 		"cancelled_by", "cancelled_at", "cancelled_previous_status",
+		"input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens", "reasoning_tokens",
 	}
 	pipe := c.rdb.Pipeline()
 	cmds := make([]*redis.StringCmd, len(keys))
@@ -515,6 +516,31 @@ func (c *Client) ListTasks(ctx context.Context, worker, status, threadID string,
 			task.CompletedAt, _ = c.rdb.Get(ctx, TaskKey(task.TaskID, "completed_at")).Result()
 			if task.CompletedAt == "" {
 				task.CompletedAt = "-"
+			}
+		}
+		if task.InputTokens == 0 {
+			if v, err := c.rdb.Get(ctx, TaskKey(task.TaskID, "input_tokens")).Int64(); err == nil {
+				task.InputTokens = v
+			}
+		}
+		if task.OutputTokens == 0 {
+			if v, err := c.rdb.Get(ctx, TaskKey(task.TaskID, "output_tokens")).Int64(); err == nil {
+				task.OutputTokens = v
+			}
+		}
+		if task.CacheReadTokens == 0 {
+			if v, err := c.rdb.Get(ctx, TaskKey(task.TaskID, "cache_read_tokens")).Int64(); err == nil {
+				task.CacheReadTokens = v
+			}
+		}
+		if task.CacheWriteTokens == 0 {
+			if v, err := c.rdb.Get(ctx, TaskKey(task.TaskID, "cache_write_tokens")).Int64(); err == nil {
+				task.CacheWriteTokens = v
+			}
+		}
+		if task.ReasoningTokens == 0 {
+			if v, err := c.rdb.Get(ctx, TaskKey(task.TaskID, "reasoning_tokens")).Int64(); err == nil {
+				task.ReasoningTokens = v
 			}
 		}
 
