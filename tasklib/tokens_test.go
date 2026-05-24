@@ -3,7 +3,6 @@ package tasklib
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -176,7 +175,7 @@ func TestCodexStatsProvider_Process_NoUsage(t *testing.T) {
 // ── OpenCodeStatsProvider ─────────────────────────────────────────────────
 
 func TestOpenCodeStatsProvider_Process(t *testing.T) {
-	stdout := `{"type":"step_finish","step_finish":{"part":{"tokens":{"input":300,"output":120,"reasoning":10,"cache":{"read":40,"write":15}}}}}
+	stdout := `{"type":"step_finish","part":{"tokens":{"input":300,"output":120,"reasoning":10,"cache":{"read":40,"write":15}}}}
 `
 	p := &OpenCodeStatsProvider{}
 	_, stats, err := p.Process("/tmp", stdout)
@@ -191,7 +190,7 @@ func TestOpenCodeStatsProvider_Process(t *testing.T) {
 }
 
 func TestOpenCodeStatsProvider_Process_NoTokens(t *testing.T) {
-	stdout := `{"type":"step_finish","step_finish":{"part":{}}}`
+	stdout := `{"type":"step_finish","part":{}}`
 	p := &OpenCodeStatsProvider{}
 	_, stats, err := p.Process("/tmp", stdout)
 	if err != nil || stats.HasAny() {
@@ -226,73 +225,54 @@ func TestCopilotStatsProvider_Setup(t *testing.T) {
 	cleanup() // should not panic
 }
 
-func TestCopilotStatsProvider_Process_NoSessionFile(t *testing.T) {
-	// Use a real fresh provider
-	p2 := &CopilotStatsProvider{}
-	content, stats, err := p2.Process("/tmp", "plain text")
+func TestCopilotStatsProvider_Process_Passthrough(t *testing.T) {
+	p := &CopilotStatsProvider{}
+	content, stats, err := p.Process("/tmp", "plain text")
 	if err != nil {
 		t.Fatalf("Process error: %v", err)
 	}
 	if content != "plain text" || stats.HasAny() {
-		t.Error("missing session file should passthrough with zero stats")
+		t.Error("Process should passthrough stdout with zero stats")
 	}
 }
 
-func TestCopilotStatsProvider_Process_WithSessionFile(t *testing.T) {
-	origDir := copilotSessionDir
-	tmpDir := t.TempDir()
-	copilotSessionDir = tmpDir
-	defer func() { copilotSessionDir = origDir }()
-
-	sessionID := "test-session-001"
-	sessionPath := filepath.Join(tmpDir, sessionID)
-	os.MkdirAll(sessionPath, 0755)
-	os.WriteFile(filepath.Join(sessionPath, "events.jsonl"),
-		[]byte(`{"type":"session.shutdown","inputTokens":500,"outputTokens":200,"cacheReadTokens":50,"cacheWriteTokens":25,"reasoningTokens":10}`), 0644)
-
-	p := &CopilotStatsProvider{}
-	p.sessionID = sessionID
-	_, stats, err := p.Process("/tmp", "output")
-	if err != nil {
-		t.Fatalf("Process error: %v", err)
+func TestParseCopilotStderr(t *testing.T) {
+	stderr := "Tokens ↑ 42.2k (27.4k cached) • ↓ 574"
+	stats := ParseCopilotStderr(stderr)
+	if stats.InputTokens != 42200 {
+		t.Errorf("InputTokens = %d, want 42200", stats.InputTokens)
 	}
-	if stats.InputTokens != 500 || stats.OutputTokens != 200 ||
-		stats.CacheReadTokens != 50 || stats.CacheWriteTokens != 25 ||
-		stats.ReasoningTokens != 10 {
-		t.Errorf("stats = %+v", stats)
+	if stats.CacheReadTokens != 27400 {
+		t.Errorf("CacheReadTokens = %d, want 27400", stats.CacheReadTokens)
+	}
+	if stats.OutputTokens != 574 {
+		t.Errorf("OutputTokens = %d, want 574", stats.OutputTokens)
 	}
 }
 
-func TestCopilotStatsProvider_LastShutdownWins(t *testing.T) {
-	origDir := copilotSessionDir
-	tmpDir := t.TempDir()
-	copilotSessionDir = tmpDir
-	defer func() { copilotSessionDir = origDir }()
-
-	sessionID := "multi-shutdown"
-	sessionPath := filepath.Join(tmpDir, sessionID)
-	os.MkdirAll(sessionPath, 0755)
-	os.WriteFile(filepath.Join(sessionPath, "events.jsonl"),
-		[]byte(`{"type":"session.shutdown","inputTokens":100}
-{"type":"session.shutdown","inputTokens":999}`), 0644)
-
-	p := &CopilotStatsProvider{}
-	p.sessionID = sessionID
-	_, stats, _ := p.Process("/tmp", "out")
-	if stats.InputTokens != 999 {
-		t.Errorf("last shutdown should win: got %d", stats.InputTokens)
+func TestParseCopilotStderr_MegaScale(t *testing.T) {
+	stderr := "Tokens ↑ 1.5M (800K cached) • ↓ 12.3k"
+	stats := ParseCopilotStderr(stderr)
+	if stats.InputTokens != 1500000 {
+		t.Errorf("InputTokens = %d, want 1500000", stats.InputTokens)
+	}
+	if stats.CacheReadTokens != 800000 {
+		t.Errorf("CacheReadTokens = %d, want 800000", stats.CacheReadTokens)
+	}
+	if stats.OutputTokens != 12300 {
+		t.Errorf("OutputTokens = %d, want 12300", stats.OutputTokens)
 	}
 }
 
-func TestParseCopilotSessionFile_Empty(t *testing.T) {
-	if parseCopilotSessionFile("").HasAny() {
-		t.Error("empty file should yield zero stats")
+func TestParseCopilotStderr_NoMatch(t *testing.T) {
+	if ParseCopilotStderr("some random error message").HasAny() {
+		t.Error("unrelated stderr should yield zero stats")
 	}
 }
 
-func TestParseCopilotSessionFile_NoShutdown(t *testing.T) {
-	if parseCopilotSessionFile(`{"type":"other"}`).HasAny() {
-		t.Error("no shutdown event should yield zero stats")
+func TestParseCopilotStderr_Empty(t *testing.T) {
+	if ParseCopilotStderr("").HasAny() {
+		t.Error("empty stderr should yield zero stats")
 	}
 }
 
@@ -549,8 +529,8 @@ func TestCodexStatsProvider_Process_IgnoresUsageOnNonTurnCompleted(t *testing.T)
 // ── OpenCode content extraction tests ──────────────────────────────────
 
 func TestOpenCodeStatsProvider_Process_ContentExtraction(t *testing.T) {
-	// OpenCode with --format json outputs text events with text content
-	stdout := `{"type":"text","part":{"text":"Implementation complete"}}
+	// OpenCode with --format json outputs tool_use events with output in part.state.output
+	stdout := `{"type":"tool_use","part":{"state":{"output":"Implementation complete"}}}
 `
 	p := &OpenCodeStatsProvider{}
 	content, stats, err := p.Process("/tmp", stdout)
@@ -565,17 +545,18 @@ func TestOpenCodeStatsProvider_Process_ContentExtraction(t *testing.T) {
 	}
 }
 
-func TestOpenCodeStatsProvider_Process_TextFromStepFinish(t *testing.T) {
-	// step_finish.part.text is still extracted as a fallback
-	stdout := `{"type":"step_finish","step_finish":{"part":{"text":"from step finish","tokens":{"input":10,"output":5,"cache":{"read":1,"write":2}}}}}
+func TestOpenCodeStatsProvider_Process_ToolUseContent(t *testing.T) {
+	// Content is extracted from tool_use events at part.state.output
+	stdout := `{"type":"tool_use","part":{"state":{"output":"Implementation complete"}}}
+{"type":"step_finish","part":{"tokens":{"input":10,"output":5,"cache":{"read":1,"write":2}}}}
 `
 	p := &OpenCodeStatsProvider{}
 	content, stats, err := p.Process("/tmp", stdout)
 	if err != nil {
 		t.Fatalf("Process error: %v", err)
 	}
-	if !strings.Contains(content, "from step finish") {
-		t.Errorf("content should contain step_finish text: %q", content)
+	if !strings.Contains(content, "Implementation complete") {
+		t.Errorf("content should contain tool_use output: %q", content)
 	}
 	if stats.InputTokens != 10 {
 		t.Errorf("InputTokens = %d, want 10", stats.InputTokens)
@@ -591,9 +572,26 @@ func TestOpenCodeStatsProvider_Process_TextFromStepFinish(t *testing.T) {
 	}
 }
 
+func TestOpenCodeStatsProvider_Process_ToolUseNoTokens(t *testing.T) {
+	stdout := `{"type":"tool_use","part":{"state":{"output":"content only"}}}`
+	p := &OpenCodeStatsProvider{}
+	content, stats, err := p.Process("/tmp", stdout)
+	if err != nil {
+		t.Fatalf("Process error: %v", err)
+	}
+	if !strings.Contains(content, "content only") {
+		t.Errorf("content should contain tool_use output: %q", content)
+	}
+	if stats.HasAny() {
+		t.Errorf("no step_finish event, stats should be zero: got %+v", stats)
+	}
+}
+
 func TestOpenCodeStatsProvider_Process_MultipleStepsAccumulate(t *testing.T) {
-	stdout := `{"type":"step_finish","step_finish":{"part":{"text":"Step 1","tokens":{"input":10,"output":5,"cache":{"read":1,"write":2}}}}}
-{"type":"step_finish","step_finish":{"part":{"text":"Step 2","tokens":{"input":20,"output":8,"cache":{"read":3,"write":4}}}}}
+	stdout := `{"type":"tool_use","part":{"state":{"output":"Step 1"}}}
+{"type":"step_finish","part":{"tokens":{"input":10,"output":5,"cache":{"read":1,"write":2}}}}
+{"type":"tool_use","part":{"state":{"output":"Step 2"}}}
+{"type":"step_finish","part":{"tokens":{"input":20,"output":8,"cache":{"read":3,"write":4}}}}
 `
 	p := &OpenCodeStatsProvider{}
 	content, stats, err := p.Process("/tmp", stdout)
@@ -618,7 +616,7 @@ func TestOpenCodeStatsProvider_Process_MultipleStepsAccumulate(t *testing.T) {
 }
 
 func TestOpenCodeStatsProvider_Process_MixedValidAndInvalid(t *testing.T) {
-	stdout := `{"type":"step_finish","step_finish":{"part":{"text":"OK"}}}
+	stdout := `{"type":"tool_use","part":{"state":{"output":"OK"}}}
 plain line
 `
 	p := &OpenCodeStatsProvider{}
@@ -628,5 +626,116 @@ plain line
 	}
 	if !strings.Contains(content, "OK") && !strings.Contains(content, "plain line") {
 		t.Error("content missing")
+	}
+}
+
+// ── Real Redis integration tests ─────────────────────────────────────────
+
+func TestPersistTokenStats_RealRedis(t *testing.T) {
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     "redis:6379",
+		Password: os.Getenv("REDIS_PASSWORD"),
+		DB:       0,
+	})
+	ctx := context.Background()
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		t.Skipf("real Redis not available: %v", err)
+	}
+
+	// Clean up any leftover keys from previous runs
+	rdb.Del(ctx, StatsTotalKey(), StatsWorkerKey("copilot"))
+	rdb.Del(ctx, TaskKey("real-task-001", "input_tokens"))
+	rdb.Del(ctx, TaskKey("real-task-001", "output_tokens"))
+	rdb.Del(ctx, TaskKey("real-task-001", "cache_read_tokens"))
+	rdb.Del(ctx, TaskKey("real-task-001", "reasoning_tokens"))
+
+	stats := TokenStats{InputTokens: 42200, OutputTokens: 574, CacheReadTokens: 27400}
+	pipe := rdb.Pipeline()
+	PersistTokenStats(ctx, pipe, "real-task-001", "copilot", stats)
+	if _, err := pipe.Exec(ctx); err != nil {
+		t.Fatalf("PersistTokenStats failed: %v", err)
+	}
+
+	// Verify global totals
+	total, err := rdb.HGetAll(ctx, StatsTotalKey()).Result()
+	if err != nil {
+		t.Fatalf("HGetAll total failed: %v", err)
+	}
+	if total["input_tokens"] != "42200" {
+		t.Errorf("total input_tokens = %q, want 42200", total["input_tokens"])
+	}
+	if total["cache_read"] != "27400" {
+		t.Errorf("total cache_read = %q, want 27400", total["cache_read"])
+	}
+	if total["output_tokens"] != "574" {
+		t.Errorf("total output_tokens = %q, want 574", total["output_tokens"])
+	}
+	if total["task_count"] != "1" {
+		t.Errorf("total task_count = %q, want 1", total["task_count"])
+	}
+
+	// Verify per-worker
+	worker, err := rdb.HGetAll(ctx, StatsWorkerKey("copilot")).Result()
+	if err != nil {
+		t.Fatalf("HGetAll worker failed: %v", err)
+	}
+	if worker["input_tokens"] != "42200" {
+		t.Errorf("worker input_tokens = %q, want 42200", worker["input_tokens"])
+	}
+
+	// Verify per-task keys
+	inputV, _ := rdb.Get(ctx, TaskKey("real-task-001", "input_tokens")).Int64()
+	if inputV != 42200 {
+		t.Errorf("task input_tokens = %d, want 42200", inputV)
+	}
+
+	// Clean up
+	rdb.Del(ctx, StatsTotalKey(), StatsWorkerKey("copilot"))
+	rdb.Del(ctx, TaskKey("real-task-001", "input_tokens"))
+	rdb.Del(ctx, TaskKey("real-task-001", "output_tokens"))
+	rdb.Del(ctx, TaskKey("real-task-001", "cache_read_tokens"))
+	rdb.Del(ctx, TaskKey("real-task-001", "reasoning_tokens"))
+}
+
+func TestParseCopilotStderr_Integration(t *testing.T) {
+	// End-to-end test: parse Copilot stderr and persist to real Redis
+	stderr := "Tokens ↑ 42.2k (27.4k cached) • ↓ 574"
+	stats := ParseCopilotStderr(stderr)
+	if !stats.HasAny() {
+		t.Fatal("expected non-zero stats from stderr")
+	}
+
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     "redis:6379",
+		Password: os.Getenv("REDIS_PASSWORD"),
+		DB:       0,
+	})
+	ctx := context.Background()
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		t.Skipf("real Redis not available: %v", err)
+	}
+
+	// Clean up
+	rdb.Del(ctx, StatsTotalKey(), StatsWorkerKey("copilot"))
+	for _, f := range []string{"input_tokens", "output_tokens", "cache_read_tokens"} {
+		rdb.Del(ctx, TaskKey("copilot-int-001", f))
+	}
+
+	pipe := rdb.Pipeline()
+	PersistTokenStats(ctx, pipe, "copilot-int-001", "copilot", stats)
+	if _, err := pipe.Exec(ctx); err != nil {
+		t.Fatalf("PersistTokenStats failed: %v", err)
+	}
+
+	// Verify stats persisted correctly from stderr parsing
+	total, _ := rdb.HGetAll(ctx, StatsTotalKey()).Result()
+	if total["input_tokens"] != "42200" || total["output_tokens"] != "574" || total["cache_read"] != "27400" {
+		t.Errorf("total = %v, want Input=42200 Output=574 CacheRead=27400", total)
+	}
+
+	// Clean up
+	rdb.Del(ctx, StatsTotalKey(), StatsWorkerKey("copilot"))
+	for _, f := range []string{"input_tokens", "output_tokens", "cache_read_tokens"} {
+		rdb.Del(ctx, TaskKey("copilot-int-001", f))
 	}
 }

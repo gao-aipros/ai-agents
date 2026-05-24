@@ -503,6 +503,12 @@ func (h *Handler) processStreamJSON(ctx context.Context, threadID string, stdout
 
 		case "result":
 			completed = true
+			if msg.Usage != nil {
+				masterStats.InputTokens += msg.Usage.InputTokens
+				masterStats.OutputTokens += msg.Usage.OutputTokens
+				masterStats.CacheReadTokens += msg.Usage.CacheReadTokens
+				masterStats.CacheWriteTokens += msg.Usage.CacheCreationTokens
+			}
 			if msg.IsError {
 				errContent := msg.Result
 				if errContent == "" {
