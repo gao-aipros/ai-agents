@@ -1,17 +1,26 @@
 ARG WORKER_BASE_IMAGE=worker-base:latest
 
-# Build stage: install Copilot CLI
-FROM debian:trixie AS copilot-build
+# Build stage: download Copilot CLI
+FROM debian:trixie AS copilot-download
+
+ARG COPILOT_VERSION=1.0.52
+ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bash \
-    ca-certificates \
-    curl \
-    git \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    ca-certificates curl tar && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL https://gh.io/copilot-install | bash
+RUN case "${TARGETARCH}" in \
+      amd64) ARCH=x64 ;; \
+      arm64) ARCH=arm64 ;; \
+      *) echo "Unsupported arch: ${TARGETARCH}"; exit 1 ;; \
+    esac && \
+    echo "Downloading copilot version ${COPILOT_VERSION} for ${ARCH}" && \
+    curl -sSL "https://github.com/github/copilot-cli/releases/download/v${COPILOT_VERSION}/copilot-linux-${ARCH}.tar.gz" \
+      -o /tmp/copilot.tar.gz && \
+    tar -xzf /tmp/copilot.tar.gz -C /tmp && \
+    mv /tmp/copilot /usr/local/bin/copilot && \
+    chmod +x /usr/local/bin/copilot
 
 # Build stage: download skills
 FROM debian:trixie AS skills-download
@@ -51,7 +60,7 @@ FROM ${WORKER_BASE_IMAGE}
 USER root
 
 # Copilot CLI
-COPY --from=copilot-build /usr/local/bin/copilot /usr/local/bin/copilot
+COPY --from=copilot-download /usr/local/bin/copilot /usr/local/bin/copilot
 
 # DeepSeek provider config for Copilot (non-sensitive defaults)
 ENV COPILOT_PROVIDER_TYPE=anthropic \

@@ -214,13 +214,26 @@ jobs:
           OWNER_LC="${OWNER_LC,,}"
           echo "PREFIX=${REGISTRY}/${OWNER_LC}" >> $GITHUB_ENV
 
+      - name: Get latest copilot version
+        id: copilot-version
+        uses: pozetroninc/github-action-get-latest-release@v0.8.0
+        with:
+          repository: github/copilot-cli
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      - name: Compute copilot version
+        run: |
+          echo "COPILOT_VERSION=$(echo "${{ steps.copilot-version.outputs.release }}" | sed 's/^v//')" >> $GITHUB_ENV
+
       - name: Build and push copilot
         run: |
           docker buildx build \
             --platform ${PLATFORMS} \
             --push \
             --build-arg WORKER_BASE_IMAGE=${PREFIX}/worker-base:latest \
+            --build-arg COPILOT_VERSION=${COPILOT_VERSION} \
             -t ${PREFIX}/copilot:latest \
+            -t ${PREFIX}/copilot:copilot-${COPILOT_VERSION} \
             -f docker/copilot/Dockerfile \
             .
 
@@ -249,13 +262,26 @@ jobs:
           OWNER_LC="${OWNER_LC,,}"
           echo "PREFIX=${REGISTRY}/${OWNER_LC}" >> $GITHUB_ENV
 
+      - name: Get latest opencode version
+        id: opencode-version
+        uses: pozetroninc/github-action-get-latest-release@v0.8.0
+        with:
+          repository: anomalyco/opencode
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      - name: Compute opencode version
+        run: |
+          echo "OPENCODE_VERSION=$(echo "${{ steps.opencode-version.outputs.release }}" | sed 's/^v//')" >> $GITHUB_ENV
+
       - name: Build and push opencode
         run: |
           docker buildx build \
             --platform ${PLATFORMS} \
             --push \
             --build-arg WORKER_BASE_IMAGE=${PREFIX}/worker-base:latest \
+            --build-arg OPENCODE_VERSION=${OPENCODE_VERSION} \
             -t ${PREFIX}/opencode:latest \
+            -t ${PREFIX}/opencode:opencode-${OPENCODE_VERSION} \
             -f docker/opencode/Dockerfile \
             .
 
@@ -284,13 +310,26 @@ jobs:
           OWNER_LC="${OWNER_LC,,}"
           echo "PREFIX=${REGISTRY}/${OWNER_LC}" >> $GITHUB_ENV
 
+      - name: Get latest claude version
+        id: claude-version
+        uses: pozetroninc/github-action-get-latest-release@v0.8.0
+        with:
+          repository: anthropics/claude-code
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      - name: Compute claude version
+        run: |
+          echo "CLAUDE_VERSION=$(echo "${{ steps.claude-version.outputs.release }}" | sed 's/^v//')" >> $GITHUB_ENV
+
       - name: Build and push worker-claude
         run: |
           docker buildx build \
             --platform ${PLATFORMS} \
             --push \
             --build-arg WORKER_BASE_IMAGE=${PREFIX}/worker-base:latest \
+            --build-arg CLAUDE_VERSION=${CLAUDE_VERSION} \
             -t ${PREFIX}/worker-claude:latest \
+            -t ${PREFIX}/worker-claude:claude-${CLAUDE_VERSION} \
             -f docker/worker-claude/Dockerfile \
             .
 
@@ -319,20 +358,25 @@ jobs:
           OWNER_LC="${OWNER_LC,,}"
           echo "PREFIX=${REGISTRY}/${OWNER_LC}" >> $GITHUB_ENV
 
-
       - name: Get latest codex version
         id: codex-version
         uses: pozetroninc/github-action-get-latest-release@v0.8.0
         with:
           repository: openai/codex
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+      - name: Compute codex version
+        run: |
+          echo "CODEX_VERSION=$(echo "${{ steps.codex-version.outputs.release }}" | sed 's/^rust-v//')" >> $GITHUB_ENV
+
       - name: Build and push codex
         run: |
           docker buildx build \
             --platform ${PLATFORMS} \
             --push \
             --build-arg WORKER_BASE_IMAGE=${PREFIX}/worker-base:latest \
-            --build-arg CODEX_VERSION=$(echo "${{ steps.codex-version.outputs.release }}" | sed 's/^rust-v//') \
+            --build-arg CODEX_VERSION=${CODEX_VERSION} \
             -t ${PREFIX}/codex:latest \
+            -t ${PREFIX}/codex:codex-${CODEX_VERSION} \
             -f docker/codex/Dockerfile \
             .
