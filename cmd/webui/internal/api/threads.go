@@ -64,13 +64,21 @@ func (tr *threadsResource) create(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/threads
 func (tr *threadsResource) list(w http.ResponseWriter, r *http.Request) {
-	threads, err := tr.client.ListThreads(r.Context())
+	q := r.URL.Query()
+	sortBy := q.Get("sort_by")
+	sortDir := q.Get("sort_dir")
+
+	threads, err := tr.client.ListThreads(r.Context(), sortBy, sortDir)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
 	}
 	if IsHTMX(r) {
-		Partial(w, tr.renderer, "thread-table", map[string]interface{}{"Threads": threads})
+		Partial(w, tr.renderer, "thread-table", map[string]interface{}{
+			"Threads": threads,
+			"SortBy":  sortBy,
+			"SortDir": sortDir,
+		})
 	} else {
 		Respond(w, r, http.StatusOK, threads)
 	}
@@ -130,7 +138,7 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Per-worker token aggregation from tasks
-	tasks, _ := tr.client.ListTasks(r.Context(), "", "", threadID, 200, 0)
+	tasks, _ := tr.client.ListTasks(r.Context(), "", "", threadID, 200, 0, "", "")
 	if tasks != nil {
 		type agentToks struct {
 			input, output, cacheRead, cacheWrite, reasoning int64
@@ -246,7 +254,7 @@ func (tr *threadsResource) deleteWorkspace(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	tasks, err := tr.client.ListTasks(r.Context(), "", "running", threadID, 1, 0)
+	tasks, err := tr.client.ListTasks(r.Context(), "", "running", threadID, 1, 0, "", "")
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -328,7 +336,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	tasks, err := tr.client.ListTasks(r.Context(), "", "", threadID, 0, 0)
+	tasks, err := tr.client.ListTasks(r.Context(), "", "", threadID, 0, 0, "", "")
 	if err != nil {
 		serverError(w, "internal error", err)
 		return

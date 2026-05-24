@@ -689,7 +689,7 @@ func cmdThreadState(cmd *cobra.Command, args []string) error {
 	}
 
 	// Task summary for this thread
-	tasks, err := c.ListTasks(ctx, "", "", tsID, 200, 0)
+	tasks, err := c.ListTasks(ctx, "", "", tsID, 200, 0, "", "")
 	if err == nil && len(tasks) > 0 {
 		counts := make(map[string]int)
 		for _, t := range tasks {
@@ -723,7 +723,7 @@ func cmdThreadList(cmd *cobra.Command, args []string) error {
 	c := getClient()
 	ctx := context.Background()
 
-	threads, err := c.ListThreads(ctx)
+	threads, err := c.ListThreads(ctx, "", "")
 	if err != nil {
 		die(err.Error())
 	}

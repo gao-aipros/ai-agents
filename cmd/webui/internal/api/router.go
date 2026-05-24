@@ -153,13 +153,18 @@ func (pr *pageResource) dashboard(w http.ResponseWriter, r *http.Request) {
 
 // GET /threads
 func (pr *pageResource) threadList(w http.ResponseWriter, r *http.Request) {
-	threads, err := pr.client.ListThreads(r.Context())
+	q := r.URL.Query()
+	sortBy := q.Get("sort_by")
+	sortDir := q.Get("sort_dir")
+	threads, err := pr.client.ListThreads(r.Context(), sortBy, sortDir)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("[webui] thread list page error: %v", err))
 		threads = nil
 	}
 	Page(w, pr.renderer, "page-thread-list", map[string]interface{}{
 		"Threads": threads,
+		"SortBy":  sortBy,
+		"SortDir": sortDir,
 	})
 }
 
@@ -199,7 +204,11 @@ func (pr *pageResource) threadDetail(w http.ResponseWriter, r *http.Request) {
 
 // GET /tasks
 func (pr *pageResource) taskList(w http.ResponseWriter, r *http.Request) {
-	Page(w, pr.renderer, "page-task-list", nil)
+	q := r.URL.Query()
+	Page(w, pr.renderer, "page-task-list", map[string]interface{}{
+		"SortBy":  q.Get("sort_by"),
+		"SortDir": q.Get("sort_dir"),
+	})
 }
 
 // GET /tasks/{task_id}

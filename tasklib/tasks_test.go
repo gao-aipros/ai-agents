@@ -219,7 +219,7 @@ func TestListTasks(t *testing.T) {
 		c.rdb.Set(ctx(), TaskKey(info.id, "enqueued_at"), "2025-01-0"+strconv.Itoa(i+1)+"T00:00:00Z", 0)
 	}
 
-	tasks, err := c.ListTasks(ctx(), "", "", "", 50, 0)
+	tasks, err := c.ListTasks(ctx(), "", "", "", 50, 0, "", "")
 	if err != nil {
 		t.Fatalf("ListTasks failed: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestListTasks(t *testing.T) {
 	}
 
 	// Filter by status
-	tasks, _ = c.ListTasks(ctx(), "", "done", "", 50, 0)
+	tasks, _ = c.ListTasks(ctx(), "", "done", "", 50, 0, "", "")
 	for _, task := range tasks {
 		if task.Status != "done" {
 			t.Errorf("status filter failed: expected only done, got %s", task.Status)
@@ -236,7 +236,7 @@ func TestListTasks(t *testing.T) {
 	}
 
 	// Filter by worker
-	tasks, _ = c.ListTasks(ctx(), "claude", "", "", 50, 0)
+	tasks, _ = c.ListTasks(ctx(), "claude", "", "", 50, 0, "", "")
 	for _, task := range tasks {
 		if task.Worker != "claude" {
 			t.Errorf("worker filter failed: expected only claude, got %s", task.Worker)
@@ -254,12 +254,12 @@ func TestListTasksLimitAndOffset(t *testing.T) {
 		c.rdb.Set(ctx(), TaskKey(id, "thread_id"), "thr1", 0)
 	}
 
-	tasks, _ := c.ListTasks(ctx(), "", "", "", 3, 0)
+	tasks, _ := c.ListTasks(ctx(), "", "", "", 3, 0, "", "")
 	if len(tasks) > 3 {
 		t.Errorf("limit failed: expected at most 3, got %d", len(tasks))
 	}
 
-	tasks, _ = c.ListTasks(ctx(), "", "", "", 50, 5)
+	tasks, _ = c.ListTasks(ctx(), "", "", "", 50, 5, "", "")
 	// offset 5 should skip the first 5
 	if len(tasks) > 5 { // 10 total - 5 offset = 5 remaining, capped at limit 50
 		// ok
@@ -342,7 +342,7 @@ func TestListTasksWithFilters(t *testing.T) {
 	// Filter for copilot tasks with limit 2. The old bug would break early
 	// at len(rows) >= limit+offset before filter checks, causing 0 results
 	// when copilot tasks appeared after claude in map iteration.
-	tasks, _ := c.ListTasks(ctx(), "copilot", "", "", 2, 0)
+	tasks, _ := c.ListTasks(ctx(), "copilot", "", "", 2, 0, "", "")
 	for _, task := range tasks {
 		if task.Worker != "copilot" {
 			t.Errorf("filter failed: expected only copilot tasks, got worker=%s", task.Worker)
@@ -443,7 +443,7 @@ func TestListThreads(t *testing.T) {
 	c.CreateThread(ctx(), "thr1", "a/b")
 	c.CreateThread(ctx(), "thr2", "c/d")
 
-	threads, err := c.ListThreads(ctx())
+	threads, err := c.ListThreads(ctx(), "", "")
 	if err != nil {
 		t.Fatalf("ListThreads failed: %v", err)
 	}
@@ -1061,5 +1061,439 @@ func TestComputeLockTTL(t *testing.T) {
 				t.Errorf("computeLockTTL() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// ── sort tests ─────────────────────────────────────────────────────────────
+
+func TestListTasksDefaultSort(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Populate tasks with different statuses
+	for i, info := range []struct{ id, status, worker, thread string }{
+		{"a", "done", "claude", "thr1"},
+		{"b", "running", "copilot", "thr1"},
+		{"c", "failed", "claude", "thr2"},
+		{"d", "pending", "codex", "thr3"},
+		{"e", "done", "copilot", "thr1"},
+		{"f", "failed", "opencode", "thr2"},
+	} {
+		c.rdb.Set(ctx(), TaskKey(info.id, "status"), info.status, 0)
+		c.rdb.Set(ctx(), TaskKey(info.id, "worker"), info.worker, 0)
+		c.rdb.Set(ctx(), TaskKey(info.id, "thread_id"), info.thread, 0)
+		c.rdb.Set(ctx(), TaskKey(info.id, "enqueued_at"), "2025-01-0"+strconv.Itoa(i+1)+"T00:00:00Z", 0)
+	}
+
+	tasks, err := c.ListTasks(ctx(), "", "", "", 50, 0, "", "")
+	if err != nil {
+		t.Fatalf("ListTasks failed: %v", err)
+	}
+
+	// Default sort: status priority (failed > running > pending > done), then task_id ASC
+	// Expected: c(failed), f(failed), b(running), d(pending), a(done), e(done)
+	expectedStatus := []string{"failed", "failed", "running", "pending", "done", "done"}
+	for i, task := range tasks {
+		if task.Status != expectedStatus[i] {
+			t.Errorf("default sort at index %d: expected status %s, got %s (task %s)", i, expectedStatus[i], task.Status, task.TaskID)
+		}
+	}
+
+	// Within same status, tasks should be sorted by task_id ASC
+	if tasks[0].TaskID > tasks[1].TaskID {
+		t.Errorf("within same status (failed), expected task_id ASC, got %s before %s", tasks[0].TaskID, tasks[1].TaskID)
+	}
+	if tasks[4].TaskID > tasks[5].TaskID {
+		t.Errorf("within same status (done), expected task_id ASC, got %s before %s", tasks[4].TaskID, tasks[5].TaskID)
+	}
+}
+
+func TestListTasksSortByColumn(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Populate tasks
+	for i, info := range []struct{ id, status, worker, thread string }{
+		{"z", "done", "claude", "thr2"},
+		{"a", "done", "copilot", "thr1"},
+		{"m", "done", "claude", "thr3"},
+	} {
+		c.rdb.Set(ctx(), TaskKey(info.id, "status"), info.status, 0)
+		c.rdb.Set(ctx(), TaskKey(info.id, "worker"), info.worker, 0)
+		c.rdb.Set(ctx(), TaskKey(info.id, "thread_id"), info.thread, 0)
+		c.rdb.Set(ctx(), TaskKey(info.id, "enqueued_at"), "2025-01-0"+strconv.Itoa(i+1)+"T00:00:00Z", 0)
+	}
+
+	// Sort by task_id ASC
+	tasks, err := c.ListTasks(ctx(), "", "", "", 50, 0, "task_id", "asc")
+	if err != nil {
+		t.Fatalf("ListTasks failed: %v", err)
+	}
+	if tasks[0].TaskID != "a" || tasks[1].TaskID != "m" || tasks[2].TaskID != "z" {
+		t.Errorf("sort by task_id ASC: expected [a, m, z], got [%s, %s, %s]", tasks[0].TaskID, tasks[1].TaskID, tasks[2].TaskID)
+	}
+
+	// Sort by task_id DESC
+	tasks, _ = c.ListTasks(ctx(), "", "", "", 50, 0, "task_id", "desc")
+	if tasks[0].TaskID != "z" || tasks[1].TaskID != "m" || tasks[2].TaskID != "a" {
+		t.Errorf("sort by task_id DESC: expected [z, m, a], got [%s, %s, %s]", tasks[0].TaskID, tasks[1].TaskID, tasks[2].TaskID)
+	}
+
+	// Sort by worker ASC
+	tasks, _ = c.ListTasks(ctx(), "", "", "", 50, 0, "worker", "asc")
+	if tasks[0].Worker != "claude" {
+		t.Errorf("sort by worker ASC: expected claude first, got %s", tasks[0].Worker)
+	}
+
+	// Sort by status ASC (uses custom sort order)
+	tasks, _ = c.ListTasks(ctx(), "", "", "", 50, 0, "status", "asc")
+	if tasks[0].Status != "done" {
+		t.Errorf("sort by status ASC: expected done first, got %s", tasks[0].Status)
+	}
+}
+
+func TestListThreadsDefaultSort(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "thr-a", "")
+	c.UpdateThread(ctx(), "thr-a", map[string]string{"status": "complete"})
+
+	c.CreateThread(ctx(), "thr-b", "")
+	c.UpdateThread(ctx(), "thr-b", map[string]string{"status": "running"})
+
+	c.CreateThread(ctx(), "thr-c", "")
+	c.UpdateThread(ctx(), "thr-c", map[string]string{"status": "error"})
+
+	c.CreateThread(ctx(), "thr-d", "")
+	c.UpdateThread(ctx(), "thr-d", map[string]string{"status": "complete"})
+
+	threads, err := c.ListThreads(ctx(), "", "")
+	if err != nil {
+		t.Fatalf("ListThreads failed: %v", err)
+	}
+
+	// Default sort: status priority (error > running > complete), then thread_id ASC
+	expected := []string{"thr-c", "thr-b", "thr-a", "thr-d"}
+	for i, th := range threads {
+		if th.ThreadID != expected[i] {
+			t.Errorf("default sort at index %d: expected %s, got %s", i, expected[i], th.ThreadID)
+		}
+	}
+}
+
+func TestListThreadsSortByColumn(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "zzz", "")
+	c.UpdateThread(ctx(), "zzz", map[string]string{"status": "complete", "gh_repo": "owner/repo-a"})
+
+	c.CreateThread(ctx(), "aaa", "")
+	c.UpdateThread(ctx(), "aaa", map[string]string{"status": "complete", "gh_repo": "owner/repo-b"})
+
+	c.CreateThread(ctx(), "mmm", "")
+	c.UpdateThread(ctx(), "mmm", map[string]string{"status": "running", "gh_repo": "owner/repo-a"})
+
+	// Sort by thread_id ASC
+	threads, err := c.ListThreads(ctx(), "thread_id", "asc")
+	if err != nil {
+		t.Fatalf("ListThreads failed: %v", err)
+	}
+	if threads[0].ThreadID != "aaa" || threads[2].ThreadID != "zzz" {
+		t.Errorf("sort by thread_id ASC: expected [aaa, mmm, zzz], got [%s, %s, %s]", threads[0].ThreadID, threads[1].ThreadID, threads[2].ThreadID)
+	}
+
+	// Sort by thread_id DESC
+	threads, _ = c.ListThreads(ctx(), "thread_id", "desc")
+	if threads[0].ThreadID != "zzz" || threads[2].ThreadID != "aaa" {
+		t.Errorf("sort by thread_id DESC: expected [zzz, mmm, aaa], got [%s, %s, %s]", threads[0].ThreadID, threads[1].ThreadID, threads[2].ThreadID)
+	}
+
+	// Sort by status ASC
+	threads, _ = c.ListThreads(ctx(), "status", "asc")
+	if threads[0].Status != "running" {
+		t.Errorf("sort by status ASC: expected running first, got %s", threads[0].Status)
+	}
+
+	// Sort by status DESC
+	threads, _ = c.ListThreads(ctx(), "status", "desc")
+	if threads[0].Status != "complete" {
+		t.Errorf("sort by status DESC: expected complete first, got %s", threads[0].Status)
+	}
+
+	// Sort by repo ASC
+	threads, _ = c.ListThreads(ctx(), "repo", "asc")
+	if threads[0].GHRepo != "owner/repo-a" {
+		t.Errorf("sort by repo ASC: expected owner/repo-a first, got %s", threads[0].GHRepo)
+	}
+}
+
+func TestGetWorkerStatsThreadCount(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Set up heartbeats for two worker types
+	c.UpdateWorkerHeartbeat(ctx(), "claude", "host1", HeartbeatData{Hostname: "host1"})
+	c.UpdateWorkerHeartbeat(ctx(), "codex", "host2", HeartbeatData{Hostname: "host2"})
+
+	// Create tasks with thread associations in active_tasks
+	c.SetActiveTask(ctx(), "t1", TaskInfo{Worker: "claude", ThreadID: "thr1", Status: "running"})
+	c.SetActiveTask(ctx(), "t2", TaskInfo{Worker: "claude", ThreadID: "thr2", Status: "running"})
+	c.SetActiveTask(ctx(), "t3", TaskInfo{Worker: "codex", ThreadID: "thr1", Status: "running"})
+
+	stats, err := c.GetWorkerStats(ctx())
+	if err != nil {
+		t.Fatalf("GetWorkerStats failed: %v", err)
+	}
+
+	// claude has tasks on thr1 and thr2 = 2 threads
+	if stats["claude"].TotalThreads != 2 {
+		t.Errorf("expected 2 threads for claude, got %d", stats["claude"].TotalThreads)
+	}
+
+	// codex has tasks on thr1 = 1 thread
+	if stats["codex"].TotalThreads != 1 {
+		t.Errorf("expected 1 thread for codex, got %d", stats["codex"].TotalThreads)
+	}
+
+	// copilot has no tasks
+	if stats["copilot"].TotalThreads != 0 {
+		t.Errorf("expected 0 threads for copilot, got %d", stats["copilot"].TotalThreads)
+	}
+}
+
+func TestGetWorkerStatsThreadCountFromTaskKeys(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.UpdateWorkerHeartbeat(ctx(), "claude", "host1", HeartbeatData{Hostname: "host1"})
+
+	// Set task keys directly (non-active tasks that still have thread info in Redis)
+	c.rdb.Set(ctx(), TaskKey("old-task", "status"), "done", 0)
+	c.rdb.Set(ctx(), TaskKey("old-task", "worker"), "claude", 0)
+	c.rdb.Set(ctx(), TaskKey("old-task", "thread_id"), "archived-thread", 0)
+
+	stats, err := c.GetWorkerStats(ctx())
+	if err != nil {
+		t.Fatalf("GetWorkerStats failed: %v", err)
+	}
+
+	// claude should have 1 thread from the task key scan
+	if stats["claude"].TotalThreads != 1 {
+		t.Errorf("expected 1 thread for claude (from task keys), got %d", stats["claude"].TotalThreads)
+	}
+}
+
+// ── expanded sort and thread-count tests ──────────────────────────────────
+
+func TestListThreadsSortByPRNumeric(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "thr-9", "")
+	c.UpdateThread(ctx(), "thr-9", map[string]string{"status": "complete", "gh_pr_number": "9"})
+
+	c.CreateThread(ctx(), "thr-100", "")
+	c.UpdateThread(ctx(), "thr-100", map[string]string{"status": "complete", "gh_pr_number": "100"})
+
+	c.CreateThread(ctx(), "thr-50", "")
+	c.UpdateThread(ctx(), "thr-50", map[string]string{"status": "complete", "gh_pr_number": "50"})
+
+	c.CreateThread(ctx(), "thr-empty", "")
+	c.UpdateThread(ctx(), "thr-empty", map[string]string{"status": "complete"})
+
+	// Sort by PR ASC — numeric order: 9, 50, 100, then empty
+	threads, err := c.ListThreads(ctx(), "pr", "asc")
+	if err != nil {
+		t.Fatalf("ListThreads failed: %v", err)
+	}
+	if threads[0].GHPRNumber != "9" {
+		t.Errorf("PR ASC: expected 9 first, got %s", threads[0].GHPRNumber)
+	}
+	if threads[1].GHPRNumber != "50" {
+		t.Errorf("PR ASC: expected 50 second, got %s", threads[1].GHPRNumber)
+	}
+	if threads[2].GHPRNumber != "100" {
+		t.Errorf("PR ASC: expected 100 third, got %s", threads[2].GHPRNumber)
+	}
+	// Empty PR (parsed as 0) should come after non-empty
+	if threads[3].GHPRNumber != "-" {
+		t.Errorf("PR ASC: expected empty last, got %s", threads[3].GHPRNumber)
+	}
+
+	// Sort by PR DESC — valid PRs last in DESC (reverse of ASC), so "-" first, then 100, 50, 9
+	threads, _ = c.ListThreads(ctx(), "pr", "desc")
+	if threads[0].GHPRNumber != "-" {
+		t.Errorf("PR DESC: expected empty first, got %s", threads[0].GHPRNumber)
+	}
+	if threads[1].GHPRNumber != "100" {
+		t.Errorf("PR DESC: expected 100 second, got %s", threads[1].GHPRNumber)
+	}
+	if threads[3].GHPRNumber != "9" {
+		t.Errorf("PR DESC: expected 9 last, got %s", threads[3].GHPRNumber)
+	}
+}
+
+func TestListThreadsSortByUpdatedAt(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "thr-a", "")
+	c.UpdateThread(ctx(), "thr-a", map[string]string{"status": "complete"})
+	// thr-a gets updated_at from the UpdateThread call
+
+	c.CreateThread(ctx(), "thr-b", "")
+	c.UpdateThread(ctx(), "thr-b", map[string]string{"status": "complete"})
+
+	threads, err := c.ListThreads(ctx(), "updated_at", "asc")
+	if err != nil {
+		t.Fatalf("ListThreads failed: %v", err)
+	}
+	if len(threads) < 2 {
+		t.Fatalf("expected at least 2 threads, got %d", len(threads))
+	}
+	// Both should have non-empty updated_at values after UpdateThread
+	if threads[0].UpdatedAt == "" || threads[1].UpdatedAt == "" {
+		t.Errorf("expected non-empty updated_at values")
+	}
+}
+
+func TestListTasksSortByThreadID(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	for i, info := range []struct{ id, status, worker, thread string }{
+		{"t1", "done", "claude", "thr-z"},
+		{"t2", "done", "copilot", "thr-a"},
+		{"t3", "done", "codex", "thr-m"},
+	} {
+		c.rdb.Set(ctx(), TaskKey(info.id, "status"), info.status, 0)
+		c.rdb.Set(ctx(), TaskKey(info.id, "worker"), info.worker, 0)
+		c.rdb.Set(ctx(), TaskKey(info.id, "thread_id"), info.thread, 0)
+		c.rdb.Set(ctx(), TaskKey(info.id, "enqueued_at"), "2025-01-0"+strconv.Itoa(i+1)+"T00:00:00Z", 0)
+	}
+
+	// Sort by thread_id ASC
+	tasks, err := c.ListTasks(ctx(), "", "", "", 50, 0, "thread_id", "asc")
+	if err != nil {
+		t.Fatalf("ListTasks failed: %v", err)
+	}
+	if tasks[0].ThreadID != "thr-a" || tasks[1].ThreadID != "thr-m" || tasks[2].ThreadID != "thr-z" {
+		t.Errorf("sort by thread_id ASC: expected [thr-a, thr-m, thr-z], got [%s, %s, %s]",
+			tasks[0].ThreadID, tasks[1].ThreadID, tasks[2].ThreadID)
+	}
+
+	// Sort by thread_id DESC
+	tasks, _ = c.ListTasks(ctx(), "", "", "", 50, 0, "thread_id", "desc")
+	if tasks[0].ThreadID != "thr-z" || tasks[2].ThreadID != "thr-a" {
+		t.Errorf("sort by thread_id DESC: expected [thr-z, thr-m, thr-a], got [%s, %s, %s]",
+			tasks[0].ThreadID, tasks[1].ThreadID, tasks[2].ThreadID)
+	}
+}
+
+func TestListTasksSortByEnqueuedAt(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	for i, info := range []struct{ id, status, worker, thread string }{
+		{"t1", "done", "claude", "thr1"},
+		{"t2", "done", "copilot", "thr1"},
+		{"t3", "done", "codex", "thr1"},
+	} {
+		c.rdb.Set(ctx(), TaskKey(info.id, "status"), info.status, 0)
+		c.rdb.Set(ctx(), TaskKey(info.id, "worker"), info.worker, 0)
+		c.rdb.Set(ctx(), TaskKey(info.id, "thread_id"), info.thread, 0)
+		// Reverse chronological order: t3 oldest, t1 newest
+		c.rdb.Set(ctx(), TaskKey(info.id, "enqueued_at"), "2025-01-0"+
+			strconv.Itoa(3-i+1)+"T00:00:00Z", 0)
+	}
+
+	// Sort by enqueued_at ASC (oldest first)
+	tasks, err := c.ListTasks(ctx(), "", "", "", 50, 0, "enqueued_at", "asc")
+	if err != nil {
+		t.Fatalf("ListTasks failed: %v", err)
+	}
+	if tasks[0].TaskID != "t3" || tasks[2].TaskID != "t1" {
+		t.Errorf("sort by enqueued_at ASC: expected [t3, t2, t1], got [%s, %s, %s]",
+			tasks[0].TaskID, tasks[1].TaskID, tasks[2].TaskID)
+	}
+
+	// Sort by enqueued_at DESC (newest first)
+	tasks, _ = c.ListTasks(ctx(), "", "", "", 50, 0, "enqueued_at", "desc")
+	if tasks[0].TaskID != "t1" || tasks[2].TaskID != "t3" {
+		t.Errorf("sort by enqueued_at DESC: expected [t1, t2, t3], got [%s, %s, %s]",
+			tasks[0].TaskID, tasks[1].TaskID, tasks[2].TaskID)
+	}
+}
+
+func TestGetWorkerStatsSharedThreadCount(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.UpdateWorkerHeartbeat(ctx(), "claude", "host1", HeartbeatData{Hostname: "host1"})
+	c.UpdateWorkerHeartbeat(ctx(), "codex", "host2", HeartbeatData{Hostname: "host2"})
+
+	// Set task keys directly (not in active_tasks) — second scan path.
+	// Both tasks share thread "shared-thr" but have different workers.
+	c.rdb.Set(ctx(), TaskKey("task-a", "status"), "done", 0)
+	c.rdb.Set(ctx(), TaskKey("task-a", "worker"), "claude", 0)
+	c.rdb.Set(ctx(), TaskKey("task-a", "thread_id"), "shared-thr", 0)
+
+	c.rdb.Set(ctx(), TaskKey("task-b", "status"), "done", 0)
+	c.rdb.Set(ctx(), TaskKey("task-b", "worker"), "codex", 0)
+	c.rdb.Set(ctx(), TaskKey("task-b", "thread_id"), "shared-thr", 0)
+
+	stats, err := c.GetWorkerStats(ctx())
+	if err != nil {
+		t.Fatalf("GetWorkerStats failed: %v", err)
+	}
+
+	// Both claude and codex should get credit for "shared-thr"
+	if stats["claude"].TotalThreads != 1 {
+		t.Errorf("expected 1 thread for claude, got %d", stats["claude"].TotalThreads)
+	}
+	if stats["codex"].TotalThreads != 1 {
+		t.Errorf("expected 1 thread for codex, got %d", stats["codex"].TotalThreads)
+	}
+}
+
+func TestListTasksDefaultSortDesc(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	for i, info := range []struct{ id, status, worker, thread string }{
+		{"a", "done", "claude", "thr1"},
+		{"b", "running", "copilot", "thr1"},
+		{"c", "failed", "claude", "thr2"},
+		{"d", "pending", "codex", "thr3"},
+	} {
+		c.rdb.Set(ctx(), TaskKey(info.id, "status"), info.status, 0)
+		c.rdb.Set(ctx(), TaskKey(info.id, "worker"), info.worker, 0)
+		c.rdb.Set(ctx(), TaskKey(info.id, "thread_id"), info.thread, 0)
+		c.rdb.Set(ctx(), TaskKey(info.id, "enqueued_at"), "2025-01-0"+strconv.Itoa(i+1)+"T00:00:00Z", 0)
+	}
+
+	// Default sort DESC — reverse status priority: done > pending > running > failed
+	tasks, err := c.ListTasks(ctx(), "", "", "", 50, 0, "", "desc")
+	if err != nil {
+		t.Fatalf("ListTasks failed: %v", err)
+	}
+	expectedStatus := []string{"done", "pending", "running", "failed"}
+	for i, task := range tasks {
+		if task.Status != expectedStatus[i] {
+			t.Errorf("default sort DESC at index %d: expected %s, got %s", i, expectedStatus[i], task.Status)
+		}
+	}
+}
+
+func TestListThreadsDefaultSortDesc(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "thr-a", "")
+	c.UpdateThread(ctx(), "thr-a", map[string]string{"status": "complete"})
+	c.CreateThread(ctx(), "thr-b", "")
+	c.UpdateThread(ctx(), "thr-b", map[string]string{"status": "error"})
+	c.CreateThread(ctx(), "thr-c", "")
+	c.UpdateThread(ctx(), "thr-c", map[string]string{"status": "running"})
+
+	// Default sort DESC — reverse status priority: complete > running > error
+	threads, err := c.ListThreads(ctx(), "", "desc")
+	if err != nil {
+		t.Fatalf("ListThreads failed: %v", err)
+	}
+	expected := []string{"thr-a", "thr-c", "thr-b"} // complete, running, error
+	for i, th := range threads {
+		if th.ThreadID != expected[i] {
+			t.Errorf("default sort DESC at index %d: expected %s, got %s", i, expected[i], th.ThreadID)
+		}
 	}
 }

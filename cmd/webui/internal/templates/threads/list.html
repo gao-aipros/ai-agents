@@ -4,23 +4,31 @@
     <h2 style="margin:0">Threads</h2>
     <span class="text-muted">{{len .Threads}} total</span>
   </div>
-  <div class="card" id="thread-list" hx-get="/api/threads" hx-trigger="every {{.PollDash}}s" hx-swap="innerHTML">
+  <div id="thread-sort-params" style="display:none">
+    <input type="hidden" name="sort_by" value="{{.SortBy}}">
+    <input type="hidden" name="sort_dir" value="{{.SortDir}}">
+  </div>
+  <div class="card" id="thread-list" hx-get="/api/threads" hx-trigger="every {{.PollDash}}s" hx-include="#thread-sort-params" hx-swap="innerHTML">
     {{template "thread-table" .}}
   </div>
 </section>
 {{end}}
 
 {{define "thread-table"}}
+{{$sortBy := ""}}{{$sortDir := ""}}
+{{with .SortBy}}{{$sortBy = .}}{{end}}
+{{with .SortDir}}{{$sortDir = .}}{{end}}
+
 {{if .Threads}}
 <table>
   <thead>
     <tr>
-      <th>Thread ID</th>
-      <th>Status</th>
-      <th>Repo</th>
-      <th>PR</th>
+      <th><a href="/threads?sort_by=thread_id&sort_dir={{if and (eq $sortBy "thread_id") (eq $sortDir "asc")}}desc{{else}}asc{{end}}">Thread ID{{if eq $sortBy "thread_id"}}{{if eq $sortDir "asc"}} ▲{{else if eq $sortDir "desc"}} ▼{{end}}{{end}}</a></th>
+      <th><a href="/threads?sort_by=status&sort_dir={{if and (eq $sortBy "status") (eq $sortDir "asc")}}desc{{else}}asc{{end}}">Status{{if eq $sortBy "status"}}{{if eq $sortDir "asc"}} ▲{{else if eq $sortDir "desc"}} ▼{{end}}{{end}}</a></th>
+      <th><a href="/threads?sort_by=repo&sort_dir={{if and (eq $sortBy "repo") (eq $sortDir "asc")}}desc{{else}}asc{{end}}">Repo{{if eq $sortBy "repo"}}{{if eq $sortDir "asc"}} ▲{{else if eq $sortDir "desc"}} ▼{{end}}{{end}}</a></th>
+      <th><a href="/threads?sort_by=pr&sort_dir={{if and (eq $sortBy "pr") (eq $sortDir "asc")}}desc{{else}}asc{{end}}">PR{{if eq $sortBy "pr"}}{{if eq $sortDir "asc"}} ▲{{else if eq $sortDir "desc"}} ▼{{end}}{{end}}</a></th>
       <th>Runtime</th>
-      <th>Updated</th>
+      <th><a href="/threads?sort_by=updated_at&sort_dir={{if and (eq $sortBy "updated_at") (eq $sortDir "asc")}}desc{{else}}asc{{end}}">Updated{{if eq $sortBy "updated_at"}}{{if eq $sortDir "asc"}} ▲{{else if eq $sortDir "desc"}} ▼{{end}}{{end}}</a></th>
       <th></th>
     </tr>
   </thead>
