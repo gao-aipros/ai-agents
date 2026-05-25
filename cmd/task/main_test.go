@@ -511,6 +511,8 @@ func TestCmdThreadCreate(t *testing.T) {
 }
 
 func TestCmdThreadCreate_WithParent(t *testing.T) {
+	os.Unsetenv("THREAD")
+
 	_, cleanup := setupTestRedis(t)
 	defer cleanup()
 

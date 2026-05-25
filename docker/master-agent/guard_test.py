@@ -334,6 +334,18 @@ class TestCheckBashTask(unittest.TestCase):
     def test_allows_task_requeue_stale(self):
         guard.check_bash("task requeue-stale --worker claude --older-than 600")
 
+    def test_allows_task_thread_create_with_parent_thread(self):
+        guard.check_bash(
+            "task thread-create --id foo --parent $THREAD"
+        )
+
+    def test_blocks_task_thread_create_without_parent(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash(
+                "task thread-create --id foo --parent root"
+            )
+        self.assertEqual(cm.exception.code, 1)
+
 
 class TestCheckBashAdditionalForbidden(unittest.TestCase):
     """Tests for forbidden patterns not covered in other test classes."""
