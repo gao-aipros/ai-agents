@@ -420,8 +420,82 @@ func (c *Client) ThreadExists(ctx context.Context, threadID string) (bool, error
 	return exists > 0, err
 }
 
-// DeleteThread removes all Redis keys for a thread.
+// DiscoverDescendants returns the set of all descendant thread IDs for the
+// given thread ID. The target thread itself is NOT included in the result.
+// Descendants are threads whose ParentThreadID equals the target or any of
+// its descendants, transitively. Uses BFS to handle cycles safely.
+func (c *Client) DiscoverDescendants(ctx context.Context, threadID string) (map[string]bool, error) {
+	threads, err := c.ListThreads(ctx, "", "")
+	if err != nil {
+		return nil, err
+	}
+
+	// Build parent → children index
+	children := make(map[string][]string)
+	for _, t := range threads {
+		if t.ParentThreadID != "" {
+			children[t.ParentThreadID] = append(children[t.ParentThreadID], t.ThreadID)
+		}
+	}
+
+	// BFS walk to collect all descendants. Use a separate visited set so
+	// the root thread is excluded from the result but still stops cycles.
+	visited := map[string]bool{threadID: true}
+	result := make(map[string]bool)
+	queue := []string{threadID}
+	for len(queue) > 0 {
+		parent := queue[0]
+		queue = queue[1:]
+		for _, child := range children[parent] {
+			if !visited[child] {
+				visited[child] = true
+				result[child] = true
+				queue = append(queue, child)
+			}
+		}
+	}
+	return result, nil
+}
+
+// DeleteThreadKnown removes all Redis keys for a thread and a pre-discovered
+// set of descendant IDs. Callers that have already called DiscoverDescendants
+// (e.g. the WebUI handler, for validation and session-ID collection) should
+// pass the result here to avoid a redundant SCAN.
+// Best-effort: attempts all DELs and returns an error with the count of failed
+// threads if any individual deletion fails.
+func (c *Client) DeleteThreadKnown(ctx context.Context, threadID string, descendants map[string]bool) error {
+	allIDs := make([]string, 0, len(descendants)+1)
+	for id := range descendants {
+		allIDs = append(allIDs, id)
+	}
+	allIDs = append(allIDs, threadID)
+
+	var errs []error
+	for _, id := range allIDs {
+		if err := c.deleteSingleThreadKeys(ctx, id); err != nil {
+			errs = append(errs, fmt.Errorf("delete thread %s: %w", id, err))
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("partial deletion: %d/%d threads failed: %w",
+			len(errs), len(allIDs), errs[0])
+	}
+	return nil
+}
+
+// DeleteThread removes all Redis keys for a thread and all its descendants.
+// Discovers descendants via BFS then delegates to DeleteThreadKnown.
 func (c *Client) DeleteThread(ctx context.Context, threadID string) error {
+	descendants, err := c.DiscoverDescendants(ctx, threadID)
+	if err != nil {
+		return fmt.Errorf("discover descendants: %w", err)
+	}
+	return c.DeleteThreadKnown(ctx, threadID, descendants)
+}
+
+// deleteSingleThreadKeys deletes the 9 Redis keys for a single thread.
+func (c *Client) deleteSingleThreadKeys(ctx context.Context, threadID string) error {
 	keys := []string{
 		ThreadStateKey(threadID),
 		ThreadMessagesKey(threadID),

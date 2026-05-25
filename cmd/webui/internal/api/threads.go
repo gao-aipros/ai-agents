@@ -346,19 +346,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	tasks, err := tr.client.ListTasks(r.Context(), "", "", threadID, 0, 0, "", "")
-	if err != nil {
-		serverError(w, "internal error", err)
-		return
-	}
-	for _, t := range tasks {
-		switch t.Status {
-		case "running", "queued", "pending":
-			Error(w, http.StatusBadRequest, "thread has active tasks")
-			return
-		}
-	}
-
+	// Acquire request lock BEFORE subtree discovery to close TOCTOU window.
 	ok, err := tr.client.AcquireRequestLock(r.Context(), threadID, "deleting", tasklib.LockTTL)
 	if err != nil {
 		serverError(w, "internal error", err)
@@ -370,45 +358,104 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 	}
 	defer tr.client.ReleaseRequestLock(cleanupContext(), threadID)
 
-	// Re-check ThreadLockKey after acquiring request lock to close the
-	// TOCTOU window between ListTasks and AcquireRequestLock. If a task
-	// was enqueued in between, ThreadLockKey will be held by Enqueue.
-	locked, err := tr.client.IsThreadLocked(r.Context(), threadID)
+	// Discover subtree for cascade deletion.
+	// The request lock on the root prevents concurrent operations on the root
+	// thread, but child threads can still be mutated independently — concurrent
+	// Enqueue or child creation during the validation→deletion window is an
+	// accepted trade-off. Acquiring locks on every descendant would be
+	// expensive and risks deadlock with other cascade operations.
+	descendants, err := tr.client.DiscoverDescendants(r.Context(), threadID)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
 	}
-	if locked {
-		Error(w, http.StatusConflict, "thread has a pending task")
+
+	// Build flat list of all threads to delete
+	allIDs := make([]string, 0, len(descendants)+1)
+	for id := range descendants {
+		allIDs = append(allIDs, id)
+	}
+	allIDs = append(allIDs, threadID)
+
+	// Validate every subtree thread before deletion.
+	for _, tid := range allIDs {
+		// Check ThreadLockKey — catches the narrow window where Enqueue has
+		// acquired the lock via Lua but hasn't persisted task status yet.
+		locked, err := tr.client.IsThreadLocked(r.Context(), tid)
+		if err != nil {
+			serverError(w, "internal error", err)
+			return
+		}
+		if locked {
+			Error(w, http.StatusConflict, fmt.Sprintf("thread %s has a pending task", tid))
+			return
+		}
+
+		// Check ThreadRunningKey on child threads (root lock is held by us).
+		// A child could have a running web UI request with zero active tasks.
+		if tid != threadID {
+			running, err := tr.client.IsRequestRunning(r.Context(), tid)
+			if err != nil {
+				serverError(w, "internal error", err)
+				return
+			}
+			if running {
+				Error(w, http.StatusConflict, fmt.Sprintf("thread %s has a running request", tid))
+				return
+			}
+		}
+	}
+
+	// Validate no active tasks in any subtree thread. Collect session IDs
+	// before DeleteThreadKnown removes the Redis keys that store them.
+	// limit=1000 is arbitrary but covers threads with large task histories;
+	// if a thread exceeds this with an active task beyond the limit, it
+	// would be missed — an accepted edge case.
+	var sessionIDs []string
+	for _, tid := range allIDs {
+		tasks, err := tr.client.ListTasks(r.Context(), "", "", tid, 1000, 0, "", "")
+		if err != nil {
+			serverError(w, "internal error", err)
+			return
+		}
+		for _, t := range tasks {
+			switch t.Status {
+			case "running", "queued", "pending":
+				Error(w, http.StatusBadRequest, fmt.Sprintf("thread %s has active tasks", tid))
+				return
+			}
+		}
+		// Collect session ID for filesystem cleanup after Redis deletion
+		sid, err := tr.client.GetThreadSessionID(r.Context(), tid)
+		if err != nil {
+			slog.Warn(fmt.Sprintf("[webui] get session id error thread=%s: %v", tid, err))
+		}
+		if sid != "" {
+			sessionIDs = append(sessionIDs, sid)
+		}
+	}
+
+	// Delete all Redis keys using pre-discovered descendant set (avoids
+	// redundant Redis SCAN vs calling DeleteThread which would re-discover).
+	if err := tr.client.DeleteThreadKnown(cleanupContext(), threadID, descendants); err != nil {
+		slog.Warn(fmt.Sprintf("[webui] partial cascade deletion thread=%s: %v", threadID, err))
+		serverError(w, fmt.Sprintf("partial deletion: %v", err), err)
 		return
 	}
 
-	// Read session ID before deleting Redis keys, since DeleteThread
-	// removes the key that GetThreadSessionID reads.
-	sessionID, err := tr.client.GetThreadSessionID(r.Context(), threadID)
-	if err != nil {
-		slog.Warn(fmt.Sprintf("[webui] get session id error thread=%s: %v", threadID, err))
+	// Clean up workspace directories and session files for all subtree threads.
+	// Best-effort: log errors and continue.
+	for _, tid := range allIDs {
+		wp := workspacePath(tid)
+		if err := removeWorkspace(wp); err != nil {
+			slog.Warn(fmt.Sprintf("[webui] workspace delete error thread=%s dir=%s: %v", tid, wp, err))
+		}
+	}
+	for _, sid := range sessionIDs {
+		removeSessionFile(sid)
 	}
 
-	// Delete thread-level Redis keys before files, so if it fails files remain intact.
-	if err := tr.client.DeleteThread(cleanupContext(), threadID); err != nil {
-		slog.Warn(fmt.Sprintf("[webui] delete thread keys error thread=%s: %v", threadID, err))
-		serverError(w, "failed to delete thread", err)
-		return
-	}
-
-	// Delete workspace files if they exist.
-	wp := workspacePath(threadID)
-	if err := removeWorkspace(wp); err != nil {
-		slog.Warn(fmt.Sprintf("[webui] workspace delete error thread=%s dir=%s: %v", threadID, wp, err))
-	}
-
-	// Delete session file.
-	if sessionID != "" {
-		removeSessionFile(sessionID)
-	}
-
-	slog.Info(fmt.Sprintf("[webui] thread deleted thread=%s", threadID))
+	slog.Info(fmt.Sprintf("[webui] thread deleted thread=%s (subtree=%d)", threadID, len(allIDs)))
 	Respond(w, r, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
