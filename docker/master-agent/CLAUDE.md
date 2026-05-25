@@ -147,7 +147,7 @@ fi
 
 ### Phase 1: Design
 
-1. **Analyze** the request. Create a thread: `task thread-create --id <thread_id> [--repo owner/repo]`
+1. **Analyze** the request. Create a thread: `task thread-create --id <thread_id> --parent $THREAD [--repo owner/repo]`
 2. **Write three design documents** in `docs/`:
    - `docs/high-level-design.md` — architecture, components, data flow, trade-offs
    - `docs/detailed-design.md` — APIs, schemas, interface contracts
