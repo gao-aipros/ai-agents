@@ -137,14 +137,14 @@ func statusBadge(status string) template.HTML {
 		class += " badge-success"
 	case "failed", "error":
 		class += " badge-danger"
-	case "running":
+	case "running", "reviewing":
 		class += " badge-warning"
 	case "pending", "initiated":
 		class += " badge-info"
 	case "cancelled":
 		class += " badge-primary"
 	default:
-		class += " badge-info"
+		class += " badge-secondary"
 	}
 	return template.HTML(`<span class="` + class + `">` + template.HTMLEscapeString(status) + `</span>`)
 }

@@ -972,6 +972,76 @@ func TestWaitTaskUpdatesThreadStatus(t *testing.T) {
 	}
 }
 
+func TestWaitTaskTimeoutUpdatesThreadStatus(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	threadID := "thr-timeout-status"
+	taskID := "t-timeout-status"
+
+	if _, err := c.CreateThread(ctx(), threadID, "", ""); err != nil {
+		t.Fatalf("CreateThread failed: %v", err)
+	}
+	c.rdb.Set(ctx(), TaskKey(taskID, "status"), "running", 0)
+	c.rdb.Set(ctx(), TaskKey(taskID, "worker"), "claude", 0)
+	c.rdb.Set(ctx(), TaskKey(taskID, "thread_id"), threadID, 0)
+
+	// Acquire the thread lock so IsThreadLocked returns true.
+	ok, err := c.LockThread(ctx(), threadID, taskID, 10*time.Second)
+	if err != nil {
+		t.Fatalf("LockThread failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("LockThread failed to acquire lock")
+	}
+
+	_, err = c.WaitTask(ctx(), taskID, threadID, 10*time.Millisecond)
+	if err == nil {
+		t.Error("expected timeout error")
+	}
+
+	// Verify thread status was updated to reflect the task's "running" status.
+	thread, err := c.GetThread(ctx(), threadID)
+	if err != nil {
+		t.Fatalf("GetThread failed: %v", err)
+	}
+	if thread.Status != "running" {
+		t.Errorf("expected thread status running after timeout, got %s", thread.Status)
+	}
+
+	// Verify lock was released after timeout.
+	locked, err := c.IsThreadLocked(ctx(), threadID)
+	if err != nil {
+		t.Fatalf("IsThreadLocked failed: %v", err)
+	}
+	if locked {
+		t.Error("expected lock to be released on timeout")
+	}
+}
+
+func TestThreadStatusFromTaskKnownMapping(t *testing.T) {
+	tests := []struct {
+		taskStatus   string
+		threadStatus string
+	}{
+		{"done", "complete"},
+		{"failed", "error"},
+		{"cancelled", "cancelled"},
+		{"running", "running"},
+		{"pending", "pending"},
+		{"queued", "queued"},
+		{"initiated", "initiated"},
+		{"reviewing", "reviewing"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.taskStatus, func(t *testing.T) {
+			got := threadStatusFromTask(tt.taskStatus)
+			if got != tt.threadStatus {
+				t.Errorf("threadStatusFromTask(%q) = %q, want %q", tt.taskStatus, got, tt.threadStatus)
+			}
+		})
+	}
+}
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 // ── computeLockTTL ─────────────────────────────────────────────────────────

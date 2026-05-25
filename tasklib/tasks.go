@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -685,6 +686,7 @@ func (c *Client) WaitTask(ctx context.Context, taskID, threadID string, timeout 
 			groupLabel, _ := c.rdb.Get(ctx, TaskKey(taskID, "group")).Result()
 			if groupLabel == "" {
 				if threadID != "" {
+					c.updateThreadStatus(ctx, threadID, status)
 					c.UnlockThread(ctx, threadID)
 				}
 			}
@@ -916,6 +918,13 @@ func threadStatusFromTask(taskStatus string) string {
 	case "cancelled":
 		return "cancelled"
 	default:
+		knownPassthrough := map[string]bool{
+			"pending": true, "running": true, "queued": true,
+			"initiated": true, "reviewing": true,
+		}
+		if !knownPassthrough[taskStatus] {
+			log.Printf("[WARN] threadStatusFromTask: unrecognized task status %q passed through to thread status", taskStatus)
+		}
 		return taskStatus
 	}
 }
