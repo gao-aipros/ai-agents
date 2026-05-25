@@ -614,7 +614,14 @@ func cmdThreadCreate(cmd *cobra.Command, args []string) error {
 	c := getClient()
 	ctx := context.Background()
 
-	_, err := c.CreateThread(ctx, tcID, tcRepo, tcParent)
+	parent := tcParent
+	if !cmd.Flags().Changed("parent") {
+		if v := os.Getenv("THREAD"); v != "" {
+			parent = v
+		}
+	}
+
+	_, err := c.CreateThread(ctx, tcID, tcRepo, parent)
 	if err != nil {
 		die(err.Error())
 	}

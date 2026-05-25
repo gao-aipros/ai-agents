@@ -115,7 +115,45 @@ def check_write(file_path: str) -> None:
         )
 
 
+def check_thread_create(command: str) -> None:
+    """Validate task thread-create commands: --parent must be $THREAD."""
+    m = re.search(r'\btask\s+thread-create\b', command)
+    if not m:
+        return  # not a thread-create command
+
+    # Match --parent VALUE or --parent=VALUE (cobra supports both forms).
+    parent_match = re.search(r'--parent[=\s]+(\S+)', command)
+
+    # If no match, or the captured "value" is actually another flag
+    # (e.g., --parent --repo bar), treat as bare --parent (missing value).
+    if not parent_match or parent_match.group(1).startswith('--'):
+        if re.search(r'--parent\s*$', command) or re.search(r'--parent\s+--', command):
+            block(
+                "task thread-create --parent requires a value. "
+                "Use --parent $THREAD so the shell expands it to the current thread ID."
+            )
+        block(
+            "task thread-create requires --parent $THREAD. "
+            "The shell will expand $THREAD to the current thread ID."
+        )
+
+    value = parent_match.group(1)
+
+    # The value as seen by the guard (before shell expansion) must be the
+    # literal string "$THREAD". We also accept "$THREAD" (double-quoted)
+    # since bash still expands variables inside double quotes.
+    if value not in ("$THREAD", '"$THREAD"'):
+        block(
+            f"task thread-create --parent value must be $THREAD, got: {value}. "
+            "Use --parent $THREAD (without quotes) so the shell expands it."
+        )
+
+
 def check_bash(command: str) -> None:
+    # First, specific thread-create validation
+    check_thread_create(command)
+
+    # Then, generic forbidden pattern checks
     for pattern in FORBIDDEN_BASH_PATTERNS:
         if re.search(pattern, command):
             block(

@@ -334,6 +334,18 @@ class TestCheckBashTask(unittest.TestCase):
     def test_allows_task_requeue_stale(self):
         guard.check_bash("task requeue-stale --worker claude --older-than 600")
 
+    def test_allows_task_thread_create_with_parent_thread(self):
+        guard.check_bash(
+            "task thread-create --id foo --parent $THREAD"
+        )
+
+    def test_blocks_task_thread_create_without_parent(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash(
+                "task thread-create --id foo --parent root"
+            )
+        self.assertEqual(cm.exception.code, 1)
+
 
 class TestCheckBashAdditionalForbidden(unittest.TestCase):
     """Tests for forbidden patterns not covered in other test classes."""
@@ -387,6 +399,79 @@ class TestCheckBashRedirectEdgeCases(unittest.TestCase):
         master should use Write/Edit tools for .md files, not shell redirects."""
         with self.assertRaises(SystemExit):
             guard.check_bash("task status > docs/summary.md")
+
+
+class TestCheckThreadCreate(unittest.TestCase):
+    """Tests for check_thread_create — --parent must be $THREAD."""
+
+    def test_allows_parent_dollar_thread(self):
+        guard.check_thread_create(
+            "task thread-create --id foo --parent $THREAD"
+        )
+
+    def test_allows_parent_equals_thread(self):
+        guard.check_thread_create(
+            "task thread-create --id foo --parent=$THREAD"
+        )
+
+    def test_blocks_parent_root(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_thread_create(
+                "task thread-create --id foo --parent root"
+            )
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_parent_equals_root(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_thread_create(
+                "task thread-create --id foo --parent=root"
+            )
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_no_parent_flag(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_thread_create(
+                "task thread-create --id foo"
+            )
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_parent_empty_string(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_thread_create(
+                'task thread-create --id foo --parent ""'
+            )
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_parent_equals_empty(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_thread_create(
+                'task thread-create --id foo --parent=""'
+            )
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_parent_single_quoted(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_thread_create(
+                "task thread-create --id foo --parent '$THREAD'"
+            )
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_allows_parent_double_quoted(self):
+        guard.check_thread_create(
+            'task thread-create --id foo --parent "$THREAD"'
+        )
+
+    def test_allows_parent_thread_with_other_flags(self):
+        guard.check_thread_create(
+            "task thread-create --id foo --parent $THREAD --repo bar"
+        )
+
+    def test_blocks_bare_parent_followed_by_flag(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_thread_create(
+                "task thread-create --id foo --parent --repo bar"
+            )
+        self.assertEqual(cm.exception.code, 1)
 
 
 class TestMainIntegration(unittest.TestCase):
