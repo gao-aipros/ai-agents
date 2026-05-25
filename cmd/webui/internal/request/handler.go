@@ -195,12 +195,21 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 	// Create a context for the subprocess lifecycle
 	procCtx, cancel := context.WithTimeout(context.Background(), h.cfg.RequestTimeout)
 
-	// Clear previous completion state and mark thread as running.
+	// Clear previous completion state.
 	if err := h.client.ClearThreadComplete(ctx, threadID); err != nil {
 		h.logger.Info(fmt.Sprintf("thread=%s ClearThreadComplete error: %v", threadID, err))
 	}
-	if err := h.client.UpdateThread(ctx, threadID, map[string]string{"status": "running"}); err != nil {
-		h.logger.Info(fmt.Sprintf("thread=%s UpdateThread error: %v", threadID, err))
+	// Only set status to "running" if no sequential task holds the thread lock.
+	// When a task is actively running on this thread, the task lifecycle
+	// (WaitTask/updateThreadStatus) owns the status field.
+	locked, err := h.client.IsThreadLocked(ctx, threadID)
+	if err != nil {
+		h.logger.Info(fmt.Sprintf("thread=%s IsThreadLocked error: %v", threadID, err))
+	}
+	if !locked {
+		if err := h.client.UpdateThread(ctx, threadID, map[string]string{"status": "running"}); err != nil {
+			h.logger.Info(fmt.Sprintf("thread=%s UpdateThread error: %v", threadID, err))
+		}
 	}
 
 	// Register the cancel function for external cancellation
@@ -577,9 +586,15 @@ func (h *Handler) writeResponseMessage(ctx context.Context, threadID, content st
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 	})
 
-	h.client.UpdateThread(cleanCtx, threadID, map[string]string{
-		"status": "complete",
-	})
+	locked, err := h.client.IsThreadLocked(cleanCtx, threadID)
+	if err != nil {
+		h.logger.Info(fmt.Sprintf("thread=%s IsThreadLocked error: %v", threadID, err))
+	}
+	if err == nil && !locked {
+		h.client.UpdateThread(cleanCtx, threadID, map[string]string{
+			"status": "complete",
+		})
+	}
 }
 
 func (h *Handler) writeErrorMessage(ctx context.Context, threadID, content string) {
@@ -597,9 +612,15 @@ func (h *Handler) writeErrorMessage(ctx context.Context, threadID, content strin
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 	})
 
-	h.client.UpdateThread(cleanCtx, threadID, map[string]string{
-		"status": "error",
-	})
+	locked, err := h.client.IsThreadLocked(cleanCtx, threadID)
+	if err != nil {
+		h.logger.Info(fmt.Sprintf("thread=%s IsThreadLocked error: %v", threadID, err))
+	}
+	if err == nil && !locked {
+		h.client.UpdateThread(cleanCtx, threadID, map[string]string{
+			"status": "error",
+		})
+	}
 }
 
 // completeThread marks the thread complete without appending a message.
@@ -610,9 +631,15 @@ func (h *Handler) completeThread(ctx context.Context, threadID string) {
 	defer cleanCancel()
 
 	h.client.SetThreadComplete(cleanCtx, threadID)
-	h.client.UpdateThread(cleanCtx, threadID, map[string]string{
-		"status": "complete",
-	})
+	locked, err := h.client.IsThreadLocked(cleanCtx, threadID)
+	if err != nil {
+		h.logger.Info(fmt.Sprintf("thread=%s IsThreadLocked error: %v", threadID, err))
+	}
+	if err == nil && !locked {
+		h.client.UpdateThread(cleanCtx, threadID, map[string]string{
+			"status": "complete",
+		})
+	}
 }
 
 func (h *Handler) isCancelled(ctx context.Context) bool {

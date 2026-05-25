@@ -979,3 +979,29 @@ func TestRuntimeForStatus_Negative(t *testing.T) {
 		t.Errorf("runtimeForStatus(negative duration) = %q, want \"-\"", got)
 	}
 }
+
+// ── statusBadge ────────────────────────────────────────────────────────────
+
+func TestStatusBadgeReviewing(t *testing.T) {
+	got := statusBadge("reviewing")
+	if !strings.Contains(string(got), "badge-warning") {
+		t.Errorf("statusBadge(reviewing) should contain badge-warning, got: %s", got)
+	}
+}
+
+func TestStatusBadgeUnknown(t *testing.T) {
+	got := statusBadge("some-future-status")
+	if strings.Contains(string(got), "badge-info") {
+		t.Errorf("statusBadge(unknown) should not contain badge-info, got: %s", got)
+	}
+	if !strings.Contains(string(got), "badge-secondary") {
+		t.Errorf("statusBadge(unknown) should contain badge-secondary, got: %s", got)
+	}
+}
+
+func TestStatusBadgeReviewingWarningNotInfo(t *testing.T) {
+	got := statusBadge("reviewing")
+	if strings.Contains(string(got), "badge-info") {
+		t.Errorf("statusBadge(reviewing) should not contain badge-info, got: %s", got)
+	}
+}
