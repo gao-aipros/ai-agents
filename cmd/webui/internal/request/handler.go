@@ -314,6 +314,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 
 	cmd := exec.CommandContext(ctx, h.cfg.ClaudePath, args...)
 	cmd.Dir = filepath.Join(h.cfg.WorkspaceDir, threadID)
+	cmd.Env = append(os.Environ(), "THREAD="+threadID)
 	if err := os.MkdirAll(cmd.Dir, 0755); err != nil {
 		h.writeErrorMessage(ctx, threadID, fmt.Sprintf("failed to create workspace dir: %v", err))
 		return
