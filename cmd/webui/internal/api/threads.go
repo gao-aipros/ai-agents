@@ -346,19 +346,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	tasks, err := tr.client.ListTasks(r.Context(), "", "", threadID, 0, 0, "", "")
-	if err != nil {
-		serverError(w, "internal error", err)
-		return
-	}
-	for _, t := range tasks {
-		switch t.Status {
-		case "running", "queued", "pending":
-			Error(w, http.StatusBadRequest, "thread has active tasks")
-			return
-		}
-	}
-
+	// Acquire request lock BEFORE subtree discovery to close TOCTOU window.
 	ok, err := tr.client.AcquireRequestLock(r.Context(), threadID, "deleting", tasklib.LockTTL)
 	if err != nil {
 		serverError(w, "internal error", err)
@@ -371,8 +359,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 	defer tr.client.ReleaseRequestLock(cleanupContext(), threadID)
 
 	// Re-check ThreadLockKey after acquiring request lock to close the
-	// TOCTOU window between ListTasks and AcquireRequestLock. If a task
-	// was enqueued in between, ThreadLockKey will be held by Enqueue.
+	// TOCTOU window between any prior ListTasks and lock acquisition.
 	locked, err := tr.client.IsThreadLocked(r.Context(), threadID)
 	if err != nil {
 		serverError(w, "internal error", err)
@@ -383,32 +370,66 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Read session ID before deleting Redis keys, since DeleteThread
-	// removes the key that GetThreadSessionID reads.
-	sessionID, err := tr.client.GetThreadSessionID(r.Context(), threadID)
+	// Discover subtree for cascade deletion (after lock, so no TOCTOU).
+	descendants, err := tr.client.DiscoverDescendants(r.Context(), threadID)
 	if err != nil {
-		slog.Warn(fmt.Sprintf("[webui] get session id error thread=%s: %v", threadID, err))
-	}
-
-	// Delete thread-level Redis keys before files, so if it fails files remain intact.
-	if err := tr.client.DeleteThread(cleanupContext(), threadID); err != nil {
-		slog.Warn(fmt.Sprintf("[webui] delete thread keys error thread=%s: %v", threadID, err))
-		serverError(w, "failed to delete thread", err)
+		serverError(w, "internal error", err)
 		return
 	}
 
-	// Delete workspace files if they exist.
-	wp := workspacePath(threadID)
-	if err := removeWorkspace(wp); err != nil {
-		slog.Warn(fmt.Sprintf("[webui] workspace delete error thread=%s dir=%s: %v", threadID, wp, err))
+	// Build flat list of all threads to delete
+	allIDs := make([]string, 0, len(descendants)+1)
+	for id := range descendants {
+		allIDs = append(allIDs, id)
+	}
+	allIDs = append(allIDs, threadID)
+
+	// Validate no active tasks in any subtree thread. Collect session IDs
+	// before DeleteThread removes the Redis keys that store them.
+	var sessionIDs []string
+	for _, tid := range allIDs {
+		tasks, err := tr.client.ListTasks(r.Context(), "", "", tid, 1000, 0, "", "")
+		if err != nil {
+			serverError(w, "internal error", err)
+			return
+		}
+		for _, t := range tasks {
+			switch t.Status {
+			case "running", "queued", "pending":
+				Error(w, http.StatusBadRequest, fmt.Sprintf("thread %s has active tasks", tid))
+				return
+			}
+		}
+		// Collect session ID for filesystem cleanup after Redis deletion
+		sid, err := tr.client.GetThreadSessionID(r.Context(), tid)
+		if err != nil {
+			slog.Warn(fmt.Sprintf("[webui] get session id error thread=%s: %v", tid, err))
+		}
+		if sid != "" {
+			sessionIDs = append(sessionIDs, sid)
+		}
 	}
 
-	// Delete session file.
-	if sessionID != "" {
-		removeSessionFile(sessionID)
+	// Delete all Redis keys (cascade happens inside tasklib).
+	if err := tr.client.DeleteThread(cleanupContext(), threadID); err != nil {
+		slog.Warn(fmt.Sprintf("[webui] partial cascade deletion thread=%s: %v", threadID, err))
+		serverError(w, fmt.Sprintf("partial deletion: %v", err), err)
+		return
 	}
 
-	slog.Info(fmt.Sprintf("[webui] thread deleted thread=%s", threadID))
+	// Clean up workspace directories and session files for all subtree threads.
+	// Best-effort: log errors and continue.
+	for _, tid := range allIDs {
+		wp := workspacePath(tid)
+		if err := removeWorkspace(wp); err != nil {
+			slog.Warn(fmt.Sprintf("[webui] workspace delete error thread=%s dir=%s: %v", tid, wp, err))
+		}
+	}
+	for _, sid := range sessionIDs {
+		removeSessionFile(sid)
+	}
+
+	slog.Info(fmt.Sprintf("[webui] thread deleted thread=%s (subtree=%d)", threadID, len(allIDs)))
 	Respond(w, r, http.StatusOK, map[string]string{"status": "deleted"})
 }
 

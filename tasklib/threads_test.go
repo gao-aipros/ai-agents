@@ -293,6 +293,254 @@ func TestUpdateThread_ParentThreadIDPassedThrough(t *testing.T) {
 	}
 }
 
+// ── DiscoverDescendants tests ────────────────────────────────────────────
+
+func TestDiscoverDescendants_NoChildren(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "root-no-kids", "", "")
+
+	desc, err := c.DiscoverDescendants(ctx(), "root-no-kids")
+	if err != nil {
+		t.Fatalf("DiscoverDescendants failed: %v", err)
+	}
+	if len(desc) != 0 {
+		t.Errorf("expected 0 descendants, got %d", len(desc))
+	}
+}
+
+func TestDiscoverDescendants_SingleChild(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "parent", "", "")
+	c.CreateThread(ctx(), "child", "", "parent")
+
+	desc, err := c.DiscoverDescendants(ctx(), "parent")
+	if err != nil {
+		t.Fatalf("DiscoverDescendants failed: %v", err)
+	}
+	if len(desc) != 1 {
+		t.Errorf("expected 1 descendant, got %d", len(desc))
+	}
+	if !desc["child"] {
+		t.Error("expected child in descendants")
+	}
+	if desc["parent"] {
+		t.Error("parent should not be in its own descendants")
+	}
+}
+
+func TestDiscoverDescendants_MultipleChildren(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "parent-2", "", "")
+	c.CreateThread(ctx(), "child-a", "", "parent-2")
+	c.CreateThread(ctx(), "child-b", "", "parent-2")
+
+	desc, err := c.DiscoverDescendants(ctx(), "parent-2")
+	if err != nil {
+		t.Fatalf("DiscoverDescendants failed: %v", err)
+	}
+	if len(desc) != 2 {
+		t.Errorf("expected 2 descendants, got %d", len(desc))
+	}
+	if !desc["child-a"] {
+		t.Error("expected child-a in descendants")
+	}
+	if !desc["child-b"] {
+		t.Error("expected child-b in descendants")
+	}
+}
+
+func TestDiscoverDescendants_DeepChain(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "grandparent", "", "")
+	c.CreateThread(ctx(), "parent-d", "", "grandparent")
+	c.CreateThread(ctx(), "child-d", "", "parent-d")
+
+	desc, err := c.DiscoverDescendants(ctx(), "grandparent")
+	if err != nil {
+		t.Fatalf("DiscoverDescendants failed: %v", err)
+	}
+	if len(desc) != 2 {
+		t.Errorf("expected 2 descendants (parent-d + child-d), got %d", len(desc))
+	}
+	if !desc["parent-d"] {
+		t.Error("expected parent-d in descendants")
+	}
+	if !desc["child-d"] {
+		t.Error("expected child-d in descendants")
+	}
+}
+
+func TestDiscoverDescendants_MultipleBranches(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "root-b", "", "")
+	c.CreateThread(ctx(), "b-child-1", "", "root-b")
+	c.CreateThread(ctx(), "b-child-2", "", "root-b")
+	c.CreateThread(ctx(), "b-grandchild", "", "b-child-1")
+
+	desc, err := c.DiscoverDescendants(ctx(), "root-b")
+	if err != nil {
+		t.Fatalf("DiscoverDescendants failed: %v", err)
+	}
+	if len(desc) != 3 {
+		t.Errorf("expected 3 descendants, got %d", len(desc))
+	}
+}
+
+func TestDiscoverDescendants_Cycle(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Create threads with a cycle: A→B, B→A
+	c.CreateThread(ctx(), "cycle-a", "", "")
+	c.CreateThread(ctx(), "cycle-b", "", "cycle-a")
+
+	// Manually set cycle-b's parent back to create the cycle
+	// Thread A has child B via parent_thread_id, now make B the parent of A
+	c.UpdateThread(ctx(), "cycle-a", map[string]string{"parent_thread_id": "cycle-b"})
+
+	// Should not loop infinitely
+	desc, err := c.DiscoverDescendants(ctx(), "cycle-a")
+	if err != nil {
+		t.Fatalf("DiscoverDescendants with cycle failed: %v", err)
+	}
+	// B is child of A (via B's parent_thread_id="cycle-a")
+	// A is child of B (via A's parent_thread_id="cycle-b")
+	// BFS: start with cycle-a → visits cycle-b → visits cycle-a (already visited, skip)
+	if !desc["cycle-b"] {
+		t.Error("expected cycle-b in descendants")
+	}
+	// cycle-a should NOT be in its own descendants even though B→A
+	if desc["cycle-a"] {
+		t.Error("cycle-a should not be in its own descendants")
+	}
+}
+
+func TestDiscoverDescendants_ThreadWithNoThreadsAtAll(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// No threads exist at all — should return empty
+	desc, err := c.DiscoverDescendants(ctx(), "nonexistent")
+	if err != nil {
+		t.Fatalf("DiscoverDescendants failed: %v", err)
+	}
+	if len(desc) != 0 {
+		t.Errorf("expected 0 descendants for nonexistent thread, got %d", len(desc))
+	}
+}
+
+// ── DeleteThread cascade tests ──────────────────────────────────────────
+
+func TestDeleteThread_Cascade(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	// Create thread A with children B, C. B has child D.
+	c.CreateThread(ctx(), "cascade-a", "", "")
+	c.CreateThread(ctx(), "cascade-b", "", "cascade-a")
+	c.CreateThread(ctx(), "cascade-c", "", "cascade-a")
+	c.CreateThread(ctx(), "cascade-d", "", "cascade-b")
+
+	// Set session IDs and messages on children to verify their keys are removed
+	c.SetThreadSessionID(ctx(), "cascade-b", "session-b")
+	c.SetThreadSessionID(ctx(), "cascade-c", "session-c")
+	c.SetThreadSessionID(ctx(), "cascade-d", "session-d")
+	c.AppendMessage(ctx(), "cascade-b", Message{Role: "user", Content: "hello"})
+	c.AppendMessage(ctx(), "cascade-d", Message{Role: "user", Content: "hi"})
+
+	// Verify all 4 threads exist before delete
+	for _, id := range []string{"cascade-a", "cascade-b", "cascade-c", "cascade-d"} {
+		exists, err := c.ThreadExists(ctx(), id)
+		if err != nil {
+			t.Fatalf("ThreadExists(%s): %v", id, err)
+		}
+		if !exists {
+			t.Fatalf("thread %s should exist before delete", id)
+		}
+	}
+
+	// Delete root thread A — cascade should delete B, C, D too
+	if err := c.DeleteThread(ctx(), "cascade-a"); err != nil {
+		t.Fatalf("DeleteThread cascade failed: %v", err)
+	}
+
+	// Verify none of A, B, C, D exist
+	for _, id := range []string{"cascade-a", "cascade-b", "cascade-c", "cascade-d"} {
+		exists, err := c.ThreadExists(ctx(), id)
+		if err != nil {
+			t.Fatalf("ThreadExists(%s) after delete: %v", id, err)
+		}
+		if exists {
+			t.Errorf("thread %s should not exist after cascade delete", id)
+		}
+	}
+
+	// Verify session IDs for children are cleared
+	for _, id := range []string{"cascade-b", "cascade-c", "cascade-d"} {
+		sid, _ := c.GetThreadSessionID(ctx(), id)
+		if sid != "" {
+			t.Errorf("session_id for %s should be empty after delete, got %q", id, sid)
+		}
+	}
+}
+
+func TestDeleteThread_NoChildren(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "no-kids", "", "")
+	c.SetThreadSessionID(ctx(), "no-kids", "session-x")
+
+	exists, _ := c.ThreadExists(ctx(), "no-kids")
+	if !exists {
+		t.Fatal("thread should exist before delete")
+	}
+
+	if err := c.DeleteThread(ctx(), "no-kids"); err != nil {
+		t.Fatalf("DeleteThread no-children failed: %v", err)
+	}
+
+	exists, _ = c.ThreadExists(ctx(), "no-kids")
+	if exists {
+		t.Error("thread should not exist after delete")
+	}
+
+	sid, _ := c.GetThreadSessionID(ctx(), "no-kids")
+	if sid != "" {
+		t.Errorf("session_id should be empty after delete, got %q", sid)
+	}
+}
+
+func TestDeleteThread_PartialRedisFailure(t *testing.T) {
+	c, mr := setupTestClient(t)
+
+	// Create parent + child
+	c.CreateThread(ctx(), "partial-root", "", "")
+	c.CreateThread(ctx(), "partial-child", "", "partial-root")
+
+	// Verify both exist
+	exists, _ := c.ThreadExists(ctx(), "partial-root")
+	if !exists {
+		t.Fatal("root should exist")
+	}
+	exists, _ = c.ThreadExists(ctx(), "partial-child")
+	if !exists {
+		t.Fatal("child should exist")
+	}
+
+	// Close miniredis to simulate Redis failure during deletion
+	mr.Close()
+
+	err := c.DeleteThread(ctx(), "partial-root")
+	if err == nil {
+		t.Error("expected error when Redis is down")
+	}
+
+	// The error should be about discovering descendants (ListThreads fails first)
+	// This tests that the failure path is handled without panics.
+}
+
 func TestUpdateThread_UnrelatedFieldsDoNotWipeParent(t *testing.T) {
 	c, _ := setupTestClient(t)
 
