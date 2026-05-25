@@ -457,23 +457,19 @@ func (c *Client) DiscoverDescendants(ctx context.Context, threadID string) (map[
 	return result, nil
 }
 
-// DeleteThread removes all Redis keys for a thread and all its descendants.
-// Best-effort: attempts all DEL operations and returns an error with the
-// count of failed threads if any individual deletion fails.
-func (c *Client) DeleteThread(ctx context.Context, threadID string) error {
-	descendants, err := c.DiscoverDescendants(ctx, threadID)
-	if err != nil {
-		return fmt.Errorf("discover descendants: %w", err)
-	}
-
-	// Collect all thread IDs: descendants + the target itself
+// DeleteThreadKnown removes all Redis keys for a thread and a pre-discovered
+// set of descendant IDs. Callers that have already called DiscoverDescendants
+// (e.g. the WebUI handler, for validation and session-ID collection) should
+// pass the result here to avoid a redundant SCAN.
+// Best-effort: attempts all DELs and returns an error with the count of failed
+// threads if any individual deletion fails.
+func (c *Client) DeleteThreadKnown(ctx context.Context, threadID string, descendants map[string]bool) error {
 	allIDs := make([]string, 0, len(descendants)+1)
 	for id := range descendants {
 		allIDs = append(allIDs, id)
 	}
 	allIDs = append(allIDs, threadID)
 
-	// Delete keys for each thread. Best-effort: attempt all DELs, collect errors.
 	var errs []error
 	for _, id := range allIDs {
 		if err := c.deleteSingleThreadKeys(ctx, id); err != nil {
@@ -482,10 +478,20 @@ func (c *Client) DeleteThread(ctx context.Context, threadID string) error {
 	}
 
 	if len(errs) > 0 {
-		return fmt.Errorf("partial deletion: %d/%d threads failed (first: %w)",
+		return fmt.Errorf("partial deletion: %d/%d threads failed: %w",
 			len(errs), len(allIDs), errs[0])
 	}
 	return nil
+}
+
+// DeleteThread removes all Redis keys for a thread and all its descendants.
+// Discovers descendants via BFS then delegates to DeleteThreadKnown.
+func (c *Client) DeleteThread(ctx context.Context, threadID string) error {
+	descendants, err := c.DiscoverDescendants(ctx, threadID)
+	if err != nil {
+		return fmt.Errorf("discover descendants: %w", err)
+	}
+	return c.DeleteThreadKnown(ctx, threadID, descendants)
 }
 
 // deleteSingleThreadKeys deletes the 9 Redis keys for a single thread.

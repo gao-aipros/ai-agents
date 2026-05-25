@@ -1520,10 +1520,11 @@ func TestHandleDeleteThread_Cascade(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Create parent + 2 children
+	// Create parent + 2 children + 1 unrelated thread
 	th.Client.CreateThread(ctx, "del-parent", "", "")
 	th.Client.CreateThread(ctx, "del-child-1", "", "del-parent")
 	th.Client.CreateThread(ctx, "del-child-2", "", "del-parent")
+	th.Client.CreateThread(ctx, "del-unrelated", "", "") // should survive
 
 	// Set session IDs on all 3
 	th.Client.SetThreadSessionID(ctx, "del-parent", "sess-parent")
@@ -1585,6 +1586,15 @@ func TestHandleDeleteThread_Cascade(t *testing.T) {
 			t.Errorf("session file %s should be removed", sf)
 		}
 	}
+
+	// Verify unrelated thread survived
+	exists, err := th.Client.ThreadExists(ctx, "del-unrelated")
+	if err != nil {
+		t.Fatalf("ThreadExists(unrelated): %v", err)
+	}
+	if !exists {
+		t.Error("unrelated thread should still exist after cascade delete")
+	}
 }
 
 func TestHandleDeleteThread_CascadeChildHasActiveTask(t *testing.T) {
@@ -1608,8 +1618,8 @@ func TestHandleDeleteThread_CascadeChildHasActiveTask(t *testing.T) {
 	r := httptest.NewRequest("DELETE", "/api/threads/active-parent?confirm=true", nil)
 	th.Router.ServeHTTP(w, r)
 
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusBadRequest, w.Body.String())
+	if w.Code != http.StatusConflict {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusConflict, w.Body.String())
 	}
 
 	// Verify parent still exists (was not deleted)
@@ -1658,6 +1668,9 @@ func TestHandleDeleteThread_CascadeMoreThan50Tasks(t *testing.T) {
 		t.Fatalf("Enqueue active task failed: %v", err)
 	}
 	th.Client.RDB().Set(ctx, tasklib.TaskKey(task.TaskID, "status"), "running", 0)
+	// Release the thread lock so IsThreadLocked doesn't catch this first —
+	// we want ListTasks to detect the "running" task at position 60.
+	th.Client.UnlockThread(ctx, "bulk-child")
 
 	// Delete parent — should be rejected because child has active task at position 60
 	w := httptest.NewRecorder()
@@ -1672,6 +1685,89 @@ func TestHandleDeleteThread_CascadeMoreThan50Tasks(t *testing.T) {
 	exists, _ := th.Client.ThreadExists(ctx, "bulk-parent")
 	if !exists {
 		t.Error("parent should still exist after rejected delete")
+	}
+}
+
+func TestHandleDeleteThread_DeepCascade(t *testing.T) {
+	th := newTestRouter(t)
+	defer th.Cleanup()
+
+	// Override package-level vars so workspace/session paths point to temp dirs
+	oldWorkspace := workspaceDir
+	oldSessions := claudeSessionsDir
+	workspaceDir = th.WorkspaceDir
+	claudeSessionsDir = th.SessionsDir
+	defer func() {
+		workspaceDir = oldWorkspace
+		claudeSessionsDir = oldSessions
+	}()
+
+	ctx := context.Background()
+
+	// Three-level tree: grandparent → parent → child
+	th.Client.CreateThread(ctx, "deep-grand", "", "")
+	th.Client.CreateThread(ctx, "deep-parent", "", "deep-grand")
+	th.Client.CreateThread(ctx, "deep-child", "", "deep-parent")
+
+	// Set session IDs on all 3
+	th.Client.SetThreadSessionID(ctx, "deep-grand", "sess-grand")
+	th.Client.SetThreadSessionID(ctx, "deep-parent", "sess-parent-2")
+	th.Client.SetThreadSessionID(ctx, "deep-child", "sess-child-3")
+
+	// Create workspace directories for all 3
+	for _, id := range []string{"deep-grand", "deep-parent", "deep-child"} {
+		wp := filepath.Join(th.WorkspaceDir, id)
+		if err := os.MkdirAll(wp, 0755); err != nil {
+			t.Fatalf("MkdirAll workspace %s: %v", wp, err)
+		}
+	}
+
+	// Create session files for all 3
+	projectDir := filepath.Join(th.SessionsDir, "projects", "-workspace-")
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		t.Fatalf("MkdirAll projects: %v", err)
+	}
+	for _, sid := range []string{"sess-grand", "sess-parent-2", "sess-child-3"} {
+		sf := filepath.Join(projectDir, sid+".json")
+		if err := os.WriteFile(sf, []byte("{}"), 0644); err != nil {
+			t.Fatalf("WriteFile session %s: %v", sf, err)
+		}
+	}
+
+	// Delete grandparent — cascade should reach parent and child
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("DELETE", "/api/threads/deep-grand?confirm=true", nil)
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	// Verify all 3 threads' Redis keys are gone
+	for _, id := range []string{"deep-grand", "deep-parent", "deep-child"} {
+		exists, err := th.Client.ThreadExists(ctx, id)
+		if err != nil {
+			t.Fatalf("ThreadExists(%s): %v", id, err)
+		}
+		if exists {
+			t.Errorf("thread %s should not exist in Redis after cascade delete", id)
+		}
+	}
+
+	// Verify workspace dirs are gone for all 3 levels
+	for _, id := range []string{"deep-grand", "deep-parent", "deep-child"} {
+		wp := filepath.Join(th.WorkspaceDir, id)
+		if _, err := os.Stat(wp); err == nil {
+			t.Errorf("workspace dir %s should be removed", wp)
+		}
+	}
+
+	// Verify session files are gone for all 3 levels
+	for _, sid := range []string{"sess-grand", "sess-parent-2", "sess-child-3"} {
+		sf := filepath.Join(projectDir, sid+".json")
+		if _, err := os.Stat(sf); err == nil {
+			t.Errorf("session file %s should be removed", sf)
+		}
 	}
 }
 

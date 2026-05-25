@@ -541,6 +541,74 @@ func TestDeleteThread_PartialRedisFailure(t *testing.T) {
 	// This tests that the failure path is handled without panics.
 }
 
+// ── DeleteThreadKnown tests ─────────────────────────────────────────────
+
+func TestDeleteThreadKnown_Cascade(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "dtn-a", "", "")
+	c.CreateThread(ctx(), "dtn-b", "", "dtn-a")
+	c.CreateThread(ctx(), "dtn-c", "", "dtn-a")
+	c.CreateThread(ctx(), "dtn-d", "", "dtn-b")
+
+	c.SetThreadSessionID(ctx(), "dtn-b", "session-b")
+	c.SetThreadSessionID(ctx(), "dtn-c", "session-c")
+	c.AppendMessage(ctx(), "dtn-b", Message{Role: "user", Content: "hello"})
+
+	// Pre-discover descendants
+	desc, err := c.DiscoverDescendants(ctx(), "dtn-a")
+	if err != nil {
+		t.Fatalf("DiscoverDescendants: %v", err)
+	}
+
+	// Delete via DeleteThreadKnown
+	if err := c.DeleteThreadKnown(ctx(), "dtn-a", desc); err != nil {
+		t.Fatalf("DeleteThreadKnown: %v", err)
+	}
+
+	// All 4 threads gone
+	for _, id := range []string{"dtn-a", "dtn-b", "dtn-c", "dtn-d"} {
+		exists, _ := c.ThreadExists(ctx(), id)
+		if exists {
+			t.Errorf("thread %s should not exist after cascade delete", id)
+		}
+	}
+}
+
+func TestDeleteThreadKnown_NoChildren(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "dtn-nokids", "", "")
+	c.SetThreadSessionID(ctx(), "dtn-nokids", "session-x")
+
+	desc, _ := c.DiscoverDescendants(ctx(), "dtn-nokids")
+
+	if err := c.DeleteThreadKnown(ctx(), "dtn-nokids", desc); err != nil {
+		t.Fatalf("DeleteThreadKnown: %v", err)
+	}
+
+	exists, _ := c.ThreadExists(ctx(), "dtn-nokids")
+	if exists {
+		t.Error("thread should not exist after delete")
+	}
+}
+
+func TestDeleteThreadKnown_EmptyDescendantsMap(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "dtn-empty", "", "")
+
+	// Pass nil descendants — should still delete the root
+	if err := c.DeleteThreadKnown(ctx(), "dtn-empty", nil); err != nil {
+		t.Fatalf("DeleteThreadKnown with nil descendants: %v", err)
+	}
+
+	exists, _ := c.ThreadExists(ctx(), "dtn-empty")
+	if exists {
+		t.Error("thread should not exist after delete")
+	}
+}
+
 func TestUpdateThread_UnrelatedFieldsDoNotWipeParent(t *testing.T) {
 	c, _ := setupTestClient(t)
 
