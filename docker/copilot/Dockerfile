@@ -3,7 +3,7 @@ ARG WORKER_BASE_IMAGE=worker-base:latest
 # Build stage: download Copilot CLI
 FROM debian:trixie AS copilot-download
 
-ARG COPILOT_VERSION=1.0.52
+ARG COPILOT_VERSION=1.0.54
 ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
