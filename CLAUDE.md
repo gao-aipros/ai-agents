@@ -56,6 +56,14 @@ Each agent gets its own GitHub token (`MASTER_GH_TOKEN`, `WORKER_CLAUDE_GH_TOKEN
 
 **No self-review**: No worker may review their own PR. The master routes reviews only to workers who did not write the code.
 
+**Thread parent-child tracking**: When the master creates a new thread for sub-work (e.g., per-issue implementation, delegation to a worker group), it MUST pass `--parent $THREAD` so the web UI can display the lineage:
+
+```bash
+task thread-create --id <child-id> --parent $THREAD --repo <owner/repo>
+```
+
+The `$THREAD` env var is set to the master's current thread ID. This populates `parent_thread_id` in Redis and allows the web UI to render an indented tree view. Do NOT create threads without `--parent` when they are spawned from an existing thread.
+
 ### Parallel task execution (task groups)
 
 Review phases (design review, code review) fan out independent tasks to multiple workers in parallel. The thread lock serializes sequential phases (implement → revise → merge). For parallel review phases, workers operate on read-only copies and write to separate review files — no conflicts.
