@@ -139,7 +139,7 @@ func statusBadge(status string) template.HTML {
 		class += " badge-danger"
 	case "running", "reviewing":
 		class += " badge-warning"
-	case "pending", "initiated":
+	case "pending", "initiated", "queued":
 		class += " badge-info"
 	case "cancelled":
 		class += " badge-primary"

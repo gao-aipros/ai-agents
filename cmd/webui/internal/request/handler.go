@@ -586,8 +586,11 @@ func (h *Handler) writeResponseMessage(ctx context.Context, threadID, content st
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 	})
 
-	locked, _ := h.client.IsThreadLocked(cleanCtx, threadID)
-	if !locked {
+	locked, err := h.client.IsThreadLocked(cleanCtx, threadID)
+	if err != nil {
+		h.logger.Info(fmt.Sprintf("thread=%s IsThreadLocked error: %v", threadID, err))
+	}
+	if err == nil && !locked {
 		h.client.UpdateThread(cleanCtx, threadID, map[string]string{
 			"status": "complete",
 		})
@@ -609,8 +612,11 @@ func (h *Handler) writeErrorMessage(ctx context.Context, threadID, content strin
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 	})
 
-	locked, _ := h.client.IsThreadLocked(cleanCtx, threadID)
-	if !locked {
+	locked, err := h.client.IsThreadLocked(cleanCtx, threadID)
+	if err != nil {
+		h.logger.Info(fmt.Sprintf("thread=%s IsThreadLocked error: %v", threadID, err))
+	}
+	if err == nil && !locked {
 		h.client.UpdateThread(cleanCtx, threadID, map[string]string{
 			"status": "error",
 		})
@@ -625,8 +631,11 @@ func (h *Handler) completeThread(ctx context.Context, threadID string) {
 	defer cleanCancel()
 
 	h.client.SetThreadComplete(cleanCtx, threadID)
-	locked, _ := h.client.IsThreadLocked(cleanCtx, threadID)
-	if !locked {
+	locked, err := h.client.IsThreadLocked(cleanCtx, threadID)
+	if err != nil {
+		h.logger.Info(fmt.Sprintf("thread=%s IsThreadLocked error: %v", threadID, err))
+	}
+	if err == nil && !locked {
 		h.client.UpdateThread(cleanCtx, threadID, map[string]string{
 			"status": "complete",
 		})

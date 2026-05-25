@@ -698,6 +698,7 @@ func (c *Client) WaitTask(ctx context.Context, taskID, threadID string, timeout 
 			groupLabel, _ := c.rdb.Get(ctx, TaskKey(taskID, "group")).Result()
 			if groupLabel == "" {
 				if threadID != "" {
+					c.updateThreadStatus(ctx, threadID, status)
 					c.UnlockThread(ctx, threadID)
 				}
 			}
@@ -909,6 +910,11 @@ func (c *Client) updateThreadStatus(ctx context.Context, threadID, taskStatus st
 	})
 }
 
+var knownPassthrough = map[string]bool{
+	"pending": true, "running": true, "queued": true,
+	"initiated": true, "reviewing": true,
+}
+
 func threadStatusFromTask(taskStatus string) string {
 	switch taskStatus {
 	case "done":
@@ -918,10 +924,6 @@ func threadStatusFromTask(taskStatus string) string {
 	case "cancelled":
 		return "cancelled"
 	default:
-		knownPassthrough := map[string]bool{
-			"pending": true, "running": true, "queued": true,
-			"initiated": true, "reviewing": true,
-		}
 		if !knownPassthrough[taskStatus] {
 			log.Printf("[WARN] threadStatusFromTask: unrecognized task status %q passed through to thread status", taskStatus)
 		}

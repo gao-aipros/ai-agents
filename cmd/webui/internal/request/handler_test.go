@@ -800,6 +800,55 @@ func TestDefaultConfig_OutputFormat(t *testing.T) {
 }
 
 
+func TestSubmitDoesNotOverwriteTaskStatus(t *testing.T) {
+	handler, _, notify := newTestHandler(t)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, []string{"done"}, 0)
+
+	ctx := context.Background()
+	threadID := "locked-status-thread"
+
+	// Create the thread with a first request.
+	_, err := handler.Submit(ctx, threadID, "First request", "")
+	if err != nil {
+		t.Fatalf("Submit failed: %v", err)
+	}
+	_, ok := waitForNotification(notify, 5*time.Second)
+	if !ok {
+		t.Fatal("timeout waiting for first subprocess")
+	}
+
+	// Set a known status and lock the thread (simulates a task holding the lock).
+	handler.client.UpdateThread(ctx, threadID, map[string]string{"status": "reviewing"})
+	locked, err := handler.client.LockThread(ctx, threadID, "test-task", tasklib.LockTTL)
+	if err != nil {
+		t.Fatalf("LockThread: %v", err)
+	}
+	if !locked {
+		t.Fatal("expected to acquire thread lock")
+	}
+
+	// Submit a second request — must not overwrite "reviewing" with "running".
+	_, err = handler.Submit(ctx, threadID, "Second request", "")
+	if err != nil {
+		t.Fatalf("Submit failed: %v", err)
+	}
+	_, ok = waitForNotification(notify, 5*time.Second)
+	if !ok {
+		t.Fatal("timeout waiting for second subprocess")
+	}
+
+	thread, err := handler.client.GetThread(ctx, threadID)
+	if err != nil {
+		t.Fatalf("GetThread: %v", err)
+	}
+	if thread.Status == "running" {
+		t.Error("thread status was overwritten to 'running' while lock was held")
+	}
+	if thread.Status == "complete" {
+		t.Error("thread status was overwritten to 'complete' while lock was held")
+	}
+}
+
 func TestSubmit_StderrWithSuccess(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
