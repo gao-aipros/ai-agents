@@ -804,6 +804,8 @@ func TestRunSubprocess_SetsThreadEnvVar(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
 	// Fake claude script echoes $THREAD so we can verify it was set.
+	// Using inline script instead of writeFakeClaude helper: the helper
+	// uses single-quoted echo which would prevent $THREAD expansion.
 	script := filepath.Join(handler.cfg.WorkspaceDir, "fake-claude-env")
 	scriptContent := `#!/bin/bash
 echo "THREAD=$THREAD"
