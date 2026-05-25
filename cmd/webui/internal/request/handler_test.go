@@ -800,6 +800,48 @@ func TestDefaultConfig_OutputFormat(t *testing.T) {
 }
 
 
+func TestRunSubprocess_SetsThreadEnvVar(t *testing.T) {
+	handler, _, notify := newTestHandler(t)
+
+	// Fake claude script echoes $THREAD so we can verify it was set.
+	// Using inline script instead of writeFakeClaude helper: the helper
+	// uses single-quoted echo which would prevent $THREAD expansion.
+	script := filepath.Join(handler.cfg.WorkspaceDir, "fake-claude-env")
+	scriptContent := `#!/bin/bash
+echo "THREAD=$THREAD"
+`
+	os.WriteFile(script, []byte(scriptContent), 0755)
+	handler.cfg.ClaudePath = script
+
+	ctx := context.Background()
+	_, err := handler.Submit(ctx, "env-thread", "Check env", "")
+	if err != nil {
+		t.Fatalf("Submit failed: %v", err)
+	}
+
+	_, ok := waitForNotification(notify, 5*time.Second)
+	if !ok {
+		t.Fatal("timeout waiting for subprocess")
+	}
+
+	msgs, err := handler.client.GetThreadHistory(ctx, "env-thread", 0, 0)
+	if err != nil {
+		t.Fatalf("GetThreadHistory: %v", err)
+	}
+
+	// The "THREAD=env-thread" line should appear as a plan message.
+	var found bool
+	for _, m := range msgs {
+		if m.Type == "plan" && strings.Contains(m.Content, "THREAD=env-thread") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected plan message containing THREAD=env-thread, env var not set in subprocess")
+	}
+}
+
 func TestSubmitDoesNotOverwriteTaskStatus(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, []string{"done"}, 0)
