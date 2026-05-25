@@ -539,6 +539,135 @@ func TestCmdThreadCreate_WithParent(t *testing.T) {
 	}
 }
 
+func TestCmdThreadCreate_ParentFromEnv(t *testing.T) {
+	_, cleanup := setupTestRedis(t)
+	defer cleanup()
+
+	os.Setenv("THREAD", "env-thread-id")
+	defer os.Unsetenv("THREAD")
+
+	cmd := &cobra.Command{}
+	cmd.Flags().StringVar(&tcID, "id", "", "")
+	cmd.Flags().StringVar(&tcRepo, "repo", "", "")
+	cmd.Flags().StringVar(&tcParent, "parent", "", "")
+	tcID = "my-thread"
+	tcRepo = "owner/repo"
+	// tcParent stays "" (cobra default) — simulates --parent not provided
+
+	output := captureOutput(func() {
+		if err := cmdThreadCreate(cmd, nil); err != nil {
+			t.Fatalf("cmdThreadCreate: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "Thread 'my-thread' created") {
+		t.Errorf("expected 'Thread created', got: %s", output)
+	}
+
+	c := getClient()
+	state, _ := c.RDB().HGetAll(context.Background(), tasklib.ThreadStateKey("my-thread")).Result()
+	if state["parent_thread_id"] != "env-thread-id" {
+		t.Errorf("expected parent_thread_id=env-thread-id, got %s", state["parent_thread_id"])
+	}
+}
+
+func TestCmdThreadCreate_ParentExplicitEmpty(t *testing.T) {
+	_, cleanup := setupTestRedis(t)
+	defer cleanup()
+
+	os.Setenv("THREAD", "env-thread-id")
+	defer os.Unsetenv("THREAD")
+
+	cmd := &cobra.Command{}
+	cmd.Flags().StringVar(&tcID, "id", "", "")
+	cmd.Flags().StringVar(&tcRepo, "repo", "", "")
+	cmd.Flags().StringVar(&tcParent, "parent", "", "")
+	tcID = "my-thread"
+	tcRepo = "owner/repo"
+	tcParent = ""
+	// Mark the flag as explicitly set via Set() so Changed() returns true
+	cmd.Flags().Set("parent", "")
+
+	output := captureOutput(func() {
+		if err := cmdThreadCreate(cmd, nil); err != nil {
+			t.Fatalf("cmdThreadCreate: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "Thread 'my-thread' created") {
+		t.Errorf("expected 'Thread created', got: %s", output)
+	}
+
+	c := getClient()
+	state, _ := c.RDB().HGetAll(context.Background(), tasklib.ThreadStateKey("my-thread")).Result()
+	if _, exists := state["parent_thread_id"]; exists {
+		t.Errorf("expected no parent_thread_id, got %s", state["parent_thread_id"])
+	}
+}
+
+func TestCmdThreadCreate_ParentExplicitValue(t *testing.T) {
+	_, cleanup := setupTestRedis(t)
+	defer cleanup()
+
+	os.Setenv("THREAD", "env-thread-id")
+	defer os.Unsetenv("THREAD")
+
+	cmd := &cobra.Command{}
+	cmd.Flags().StringVar(&tcID, "id", "", "")
+	cmd.Flags().StringVar(&tcRepo, "repo", "", "")
+	cmd.Flags().StringVar(&tcParent, "parent", "", "")
+	tcID = "my-thread"
+	tcRepo = "owner/repo"
+	cmd.Flags().Set("parent", "custom-parent")
+
+	output := captureOutput(func() {
+		if err := cmdThreadCreate(cmd, nil); err != nil {
+			t.Fatalf("cmdThreadCreate: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "Thread 'my-thread' created") {
+		t.Errorf("expected 'Thread created', got: %s", output)
+	}
+
+	c := getClient()
+	state, _ := c.RDB().HGetAll(context.Background(), tasklib.ThreadStateKey("my-thread")).Result()
+	if state["parent_thread_id"] != "custom-parent" {
+		t.Errorf("expected parent_thread_id=custom-parent, got %s", state["parent_thread_id"])
+	}
+}
+
+func TestCmdThreadCreate_ParentFromEnvWhenEnvEmpty(t *testing.T) {
+	_, cleanup := setupTestRedis(t)
+	defer cleanup()
+
+	// Ensure THREAD is not set
+	os.Unsetenv("THREAD")
+
+	cmd := &cobra.Command{}
+	cmd.Flags().StringVar(&tcID, "id", "", "")
+	cmd.Flags().StringVar(&tcRepo, "repo", "", "")
+	cmd.Flags().StringVar(&tcParent, "parent", "", "")
+	tcID = "my-thread"
+	tcRepo = "owner/repo"
+
+	output := captureOutput(func() {
+		if err := cmdThreadCreate(cmd, nil); err != nil {
+			t.Fatalf("cmdThreadCreate: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "Thread 'my-thread' created") {
+		t.Errorf("expected 'Thread created', got: %s", output)
+	}
+
+	c := getClient()
+	state, _ := c.RDB().HGetAll(context.Background(), tasklib.ThreadStateKey("my-thread")).Result()
+	if _, exists := state["parent_thread_id"]; exists {
+		t.Errorf("expected no parent_thread_id, got %s", state["parent_thread_id"])
+	}
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // thread-history
 // ═══════════════════════════════════════════════════════════════════════════════
