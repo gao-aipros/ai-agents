@@ -57,6 +57,7 @@ func New() (*Renderer, error) {
 		"formatRuntime":   formatRuntime,
 		"runtime":         runtimeForStatus,
 		"formatTokenCount": tasklib.FormatTokenCount,
+		"add":             func(a, b int) int { return a + b },
 	})
 
 	err := fs.WalkDir(templateFS, ".", func(path string, d fs.DirEntry, err error) error {

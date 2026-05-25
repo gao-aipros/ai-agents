@@ -34,7 +34,7 @@
   </thead>
   <tbody>
   {{range .Threads}}
-    {{template "thread-row" dict "Thread" . "Children" $.Children "Indent" ""}}
+    {{template "thread-row" dict "Thread" . "Children" $.Children "Depth" 0}}
   {{end}}
   </tbody>
 </table>
@@ -46,9 +46,9 @@
 {{define "thread-row"}}
 {{$thread := .Thread}}
 {{$children := .Children}}
-{{$indent := .Indent}}
+{{$depth := .Depth}}
 <tr>
-  <td>{{$indent}}<a href="/threads/{{$thread.ThreadID}}" class="mono">{{$thread.ThreadID}}</a></td>
+  <td>{{if gt $depth 0}}<span style="padding-left:{{$depth}}em">└ </span>{{end}}<a href="/threads/{{$thread.ThreadID}}" class="mono">{{$thread.ThreadID}}</a></td>
   <td>{{statusBadge $thread.Status}}</td>
   <td class="text-muted">{{or $thread.GHRepo "-"}}</td>
   <td class="text-muted">{{or $thread.GHPRNumber "-"}}</td>
@@ -67,6 +67,6 @@
 </tr>
 {{$childList := index $children $thread.ThreadID}}
 {{range $childList}}
-  {{template "thread-row" dict "Thread" . "Children" $children "Indent" (printf "%s&nbsp;&nbsp;&nbsp;&nbsp;" $indent)}}
+  {{template "thread-row" dict "Thread" . "Children" $children "Depth" (add $depth 1)}}
 {{end}}
 {{end}}
