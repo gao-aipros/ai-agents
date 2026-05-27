@@ -14,26 +14,26 @@ import (
 	"github.com/noodle05/ai-agents/tasklib"
 )
 
-func newTestRDB(t *testing.T) (*redis.Client, *miniredis.Miniredis) {
+func newTestRDB(t *testing.T) (*redis.Client, tasklib.SystemOps, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	return rdb, mr
+	return rdb, tasklib.NewClient(rdb), mr
 }
 
 func TestCheckStuckTasks_Empty(t *testing.T) {
-	rdb, _ := newTestRDB(t)
+	_, sysOps, _ := newTestRDB(t)
 	cfg := tasklib.AlertConfig{
 		StuckThreshold: 30 * time.Minute,
 		OnStuckThread:  true,
 	}
 
 	// Should not panic on empty active_tasks
-	checkStuckTasks(context.Background(), rdb, cfg, nil, 5*time.Minute)
+	checkStuckTasks(context.Background(), sysOps, cfg, nil, 5*time.Minute)
 }
 
 func TestCheckStuckTasks_DetectsStuck(t *testing.T) {
-	rdb, _ := newTestRDB(t)
+	rdb, sysOps, _ := newTestRDB(t)
 
 	// Register a task that started 60 minutes ago
 	taskInfo := tasklib.TaskInfo{
@@ -54,11 +54,11 @@ func TestCheckStuckTasks_DetectsStuck(t *testing.T) {
 
 	// Smoke test — verifies checkStuckTasks doesn't panic on active_tasks traversal.
 	// SendAlert is fire-and-forget; we just confirm the function completes.
-	checkStuckTasks(context.Background(), rdb, cfg, make(map[string]time.Time), 5*time.Minute)
+	checkStuckTasks(context.Background(), sysOps, cfg, make(map[string]time.Time), 5*time.Minute)
 }
 
 func TestCheckStuckTasks_SkipsNonRunning(t *testing.T) {
-	rdb, _ := newTestRDB(t)
+	rdb, sysOps, _ := newTestRDB(t)
 
 	tests := []struct {
 		status    string
@@ -91,13 +91,13 @@ func TestCheckStuckTasks_SkipsNonRunning(t *testing.T) {
 			lastAlert := make(map[string]time.Time)
 
 			// Should not panic regardless
-			checkStuckTasks(context.Background(), rdb, cfg, lastAlert, 5*time.Minute)
+			checkStuckTasks(context.Background(), sysOps, cfg, lastAlert, 5*time.Minute)
 		})
 	}
 }
 
 func TestCheckStuckTasks_DedupRespected(t *testing.T) {
-	rdb, _ := newTestRDB(t)
+	rdb, sysOps, _ := newTestRDB(t)
 
 	taskInfo := tasklib.TaskInfo{
 		Status:    "running",
@@ -116,7 +116,7 @@ func TestCheckStuckTasks_DedupRespected(t *testing.T) {
 
 	// First call should process
 	lastAlert := make(map[string]time.Time)
-	checkStuckTasks(context.Background(), rdb, cfg, lastAlert, 5*time.Minute)
+	checkStuckTasks(context.Background(), sysOps, cfg, lastAlert, 5*time.Minute)
 
 	// Second call within cooldown should skip (dedup)
 	// We can't easily observe whether SendAlert was skipped, but we can verify
@@ -127,18 +127,18 @@ func TestCheckStuckTasks_DedupRespected(t *testing.T) {
 }
 
 func TestCheckLostHeartbeats_NoHeartbeats(t *testing.T) {
-	rdb, _ := newTestRDB(t)
+	_, sysOps, _ := newTestRDB(t)
 	cfg := tasklib.AlertConfig{
 		WorkerLostThreshold: 60 * time.Second,
 		OnWorkerLost:        true,
 	}
 	lastCheck := time.Now().Add(-61 * time.Second) // force a check this cycle
 
-	_ = checkLostHeartbeats(context.Background(), rdb, cfg, lastCheck, nil, 5*time.Minute)
+	_ = checkLostHeartbeats(context.Background(), sysOps, cfg, lastCheck, nil, 5*time.Minute)
 }
 
 func TestCheckLostHeartbeats_HealthyWorker(t *testing.T) {
-	rdb, _ := newTestRDB(t)
+	rdb, sysOps, _ := newTestRDB(t)
 
 	// Write a recent heartbeat
 	hb := tasklib.HeartbeatData{
@@ -154,14 +154,14 @@ func TestCheckLostHeartbeats_HealthyWorker(t *testing.T) {
 	}
 	lastCheck := time.Now().Add(-61 * time.Second)
 
-	result := checkLostHeartbeats(context.Background(), rdb, cfg, lastCheck, nil, 5*time.Minute)
+	result := checkLostHeartbeats(context.Background(), sysOps, cfg, lastCheck, nil, 5*time.Minute)
 	if result.Equal(lastCheck) {
 		t.Error("checkLostHeartbeats should update lastCheck timestamp")
 	}
 }
 
 func TestCheckLostHeartbeats_LostWorker(t *testing.T) {
-	rdb, _ := newTestRDB(t)
+	rdb, sysOps, _ := newTestRDB(t)
 
 	// Write a stale heartbeat (2 minutes ago)
 	hb := tasklib.HeartbeatData{
@@ -179,12 +179,12 @@ func TestCheckLostHeartbeats_LostWorker(t *testing.T) {
 	lastCheck := time.Now().Add(-61 * time.Second)
 
 	// Should not panic — alert dispatch is best-effort
-	result := checkLostHeartbeats(context.Background(), rdb, cfg, lastCheck, nil, 5*time.Minute)
+	result := checkLostHeartbeats(context.Background(), sysOps, cfg, lastCheck, nil, 5*time.Minute)
 	_ = result
 }
 
 func TestCheckLostHeartbeats_BackwardCompat(t *testing.T) {
-	rdb, _ := newTestRDB(t)
+	rdb, sysOps, _ := newTestRDB(t)
 
 	// Old-format heartbeat without LastHeartbeatAt field
 	hb := tasklib.HeartbeatData{
@@ -200,12 +200,12 @@ func TestCheckLostHeartbeats_BackwardCompat(t *testing.T) {
 	lastCheck := time.Now().Add(-61 * time.Second)
 
 	// Should skip silently (no LastHeartbeatAt = can't determine staleness)
-	result := checkLostHeartbeats(context.Background(), rdb, cfg, lastCheck, nil, 5*time.Minute)
+	result := checkLostHeartbeats(context.Background(), sysOps, cfg, lastCheck, nil, 5*time.Minute)
 	_ = result
 }
 
 func TestRunAlertMonitor_ContextCancellation(t *testing.T) {
-	rdb, _ := newTestRDB(t)
+	_, sysOps, _ := newTestRDB(t)
 	cfg := tasklib.AlertConfig{
 		WebhookURL:    "https://hooks.example.com/alert",
 		OnStuckThread: true,
@@ -216,7 +216,7 @@ func TestRunAlertMonitor_ContextCancellation(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runAlertMonitor(ctx, rdb, cfg)
+		runAlertMonitor(ctx, sysOps, cfg)
 		done <- struct{}{}
 	}()
 
@@ -229,14 +229,14 @@ func TestRunAlertMonitor_ContextCancellation(t *testing.T) {
 }
 
 func TestRunAlertMonitor_DisabledConfig(t *testing.T) {
-	rdb, _ := newTestRDB(t)
+	_, sysOps, _ := newTestRDB(t)
 
 	// Disabled: no webhook URL
 	cfg := tasklib.AlertConfig{}
 
 	done := make(chan struct{})
 	go func() {
-		runAlertMonitor(context.Background(), rdb, cfg)
+		runAlertMonitor(context.Background(), sysOps, cfg)
 		done <- struct{}{}
 	}()
 
@@ -250,7 +250,7 @@ func TestRunAlertMonitor_DisabledConfig(t *testing.T) {
 
 // TestRunAlertMonitor_Recover ensures the defer recover() catches panics.
 func TestRunAlertMonitor_Recover(t *testing.T) {
-	rdb, _ := newTestRDB(t)
+	_, sysOps, _ := newTestRDB(t)
 	cfg := tasklib.AlertConfig{
 		WebhookURL:    "https://hooks.example.com/alert",
 		OnStuckThread: true,
@@ -267,7 +267,7 @@ func TestRunAlertMonitor_Recover(t *testing.T) {
 	// This should exit cleanly when context is cancelled (not panic)
 	done := make(chan struct{})
 	go func() {
-		runAlertMonitor(ctx, rdb, cfg)
+		runAlertMonitor(ctx, sysOps, cfg)
 		done <- struct{}{}
 	}()
 

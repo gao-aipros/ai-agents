@@ -81,7 +81,7 @@ func NewClient(rdb *redis.Client) *Client {
 	return &Client{rdb: rdb}
 }
 
-// Services composes all 6 role interfaces for consumers that need the full
+// Services composes all role interfaces for consumers that need the full
 // surface area (CLI tools, DI composition roots).
 type Services struct {
 	Tasks   TaskStore
@@ -90,14 +90,10 @@ type Services struct {
 	Workers WorkerRegistry
 	Tokens  TokenLedger
 	Scanner ThreadScanner
-
-	rdb *redis.Client
+	SysOps  SystemOps
 }
 
-// RDB returns the underlying redis client.
-func (s *Services) RDB() *redis.Client { return s.rdb }
-
-// NewServices creates a Services that composes all 6 role interfaces.
+// NewServices creates a Services that composes all role interfaces.
 // The single *Client under the hood satisfies every interface, so all
 // fields share the same underlying Redis connection.
 func NewServices(rdb *redis.Client) *Services {
@@ -109,12 +105,9 @@ func NewServices(rdb *redis.Client) *Services {
 		Workers: c,
 		Tokens:  c,
 		Scanner: c,
-		rdb:     rdb,
+		SysOps:  c,
 	}
 }
-
-// RDB returns the underlying redis client (useful for testing / raw ops).
-func (c *Client) RDB() *redis.Client { return c.rdb }
 
 // Ping checks Redis connectivity.
 func (c *Client) Ping(ctx context.Context) error {

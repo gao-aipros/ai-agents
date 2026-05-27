@@ -96,6 +96,22 @@ type TokenLedger interface {
 	GetTaskTokenStats(ctx context.Context, taskID string) (TokenStats, error)
 }
 
+// SystemOps defines infrastructure/observability operations that don't fit
+// into the domain-specific role interfaces (TaskStore, ThreadStore, etc.).
+// It replaces the raw *redis.Client escape hatch previously exposed by
+// Services.RDB().
+type SystemOps interface {
+	Ping(ctx context.Context) error
+	ScanKeys(ctx context.Context, pattern string, count int64) ([]string, error)
+	GetKey(ctx context.Context, key string) (string, error)
+	ActiveTaskCount(ctx context.Context) (int64, error)
+	GetAllActiveTasks(ctx context.Context) (map[string]string, error)
+	QueueDepth(ctx context.Context, queueKey string) (int64, error)
+	GetCounters(ctx context.Context, keys ...string) ([]any, error)
+	Info(ctx context.Context, section string) (string, error)
+	PersistMasterTokenStats(ctx context.Context, threadID string, stats TokenStats) error
+}
+
 // Compile-time assertions: *Client satisfies all interfaces.
 var (
 	_ TaskStore      = (*Client)(nil)
@@ -104,4 +120,5 @@ var (
 	_ WorkerRegistry = (*Client)(nil)
 	_ TokenLedger    = (*Client)(nil)
 	_ ThreadScanner  = (*Client)(nil)
+	_ SystemOps      = (*Client)(nil)
 )

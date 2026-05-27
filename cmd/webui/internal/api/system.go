@@ -8,18 +8,17 @@ import (
 
 	"github.com/noodle05/ai-agents/cmd/webui/internal/request"
 	"github.com/noodle05/ai-agents/tasklib"
-	"github.com/redis/go-redis/v9"
 )
 
 type systemResource struct {
-	rdb     *redis.Client
+	sysOps  tasklib.SystemOps
 	workers tasklib.WorkerRegistry
 	handler *request.Handler
 }
 
 // GET /api/health
 func (sr *systemResource) health(w http.ResponseWriter, r *http.Request) {
-	err := sr.rdb.Ping(r.Context()).Err()
+	err := sr.sysOps.Ping(r.Context())
 	if err != nil {
 		Respond(w, r, http.StatusServiceUnavailable, map[string]string{
 			"redis":  "error",
@@ -43,11 +42,10 @@ func (sr *systemResource) health(w http.ResponseWriter, r *http.Request) {
 // GET /api/stats — reads atomic counters for O(1) performance (no task scan).
 func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	rdb := sr.rdb
 
 	// Read atomic counters via MGET
 	counterKeys := []string{"stats:task_total", "stats:task_done", "stats:task_failed", "stats:task_cancelled"}
-	vals, err := rdb.MGet(ctx, counterKeys...).Result()
+	vals, err := sr.sysOps.GetCounters(ctx, counterKeys...)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("[webui] stats counters error: %v", err))
 		Error(w, http.StatusInternalServerError, "internal error")
@@ -77,7 +75,7 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 	countersOK := totalOK && doneOK && failedOK && cancelledOK
 
 	// running = size of active_tasks hash
-	running, err := rdb.HLen(ctx, "active_tasks").Result()
+	running, err := sr.sysOps.ActiveTaskCount(ctx)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("[webui] stats: active_tasks HLen error: %v", err))
 		running = 0
@@ -87,7 +85,7 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 	queueDepths := make(map[string]int64)
 	var pending int64
 	for _, workerType := range tasklib.WorkerTypes {
-		dep, err := rdb.LLen(ctx, tasklib.QueueKey(workerType)).Result()
+		dep, err := sr.sysOps.QueueDepth(ctx, tasklib.QueueKey(workerType))
 		if err != nil {
 			dep = -1
 		}
