@@ -27,8 +27,11 @@ THREAD_MODIFY_PATTERNS = [
     r'\bdeclare\s+.*THREAD\s*=',
     # typeset THREAD=value (with or without -x flag)
     r'\btypeset\s+.*THREAD\s*=',
-    # Inline env var: THREAD=value cmd (preceded by word boundary or line start)
-    r'(?:^|[\s;&|])\s*THREAD\s*=\s*\S',
+    # Inline env var: THREAD=value cmd (preceded by word boundary, line start,
+    # semicolon, pipe, or subshell/group-command grouping operators)
+    r'(?:^|[\s;&|(){}])\s*THREAD\s*=\s*\S',
+    # readonly THREAD=value (sets THREAD and makes it read-only)
+    r'\breadonly\s+THREAD\s*=',
     # env THREAD=value cmd
     r'\benv\s+.*\bTHREAD\s*=',
 ]

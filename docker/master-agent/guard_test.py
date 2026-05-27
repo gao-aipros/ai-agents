@@ -687,6 +687,21 @@ class TestCheckThreadModify(unittest.TestCase):
             guard.check_bash("echo hello; THREAD=bad task list")
         self.assertEqual(cm.exception.code, 1)
 
+    def test_blocks_inline_thread_env_in_subshell(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash("(THREAD=root task thread-create --id $THREAD-192 --parent $THREAD)")
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_inline_thread_env_in_group_command(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash("{ THREAD=root task list; }")
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_inline_thread_env_in_subshell_with_space(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash("( THREAD=root echo hi )")
+        self.assertEqual(cm.exception.code, 1)
+
     # --- env THREAD= ---
 
     def test_blocks_env_thread_command(self):
@@ -697,6 +712,13 @@ class TestCheckThreadModify(unittest.TestCase):
     def test_blocks_env_multi_var_thread(self):
         with self.assertRaises(SystemExit) as cm:
             guard.check_bash("env FOO=bar THREAD=bad task list")
+        self.assertEqual(cm.exception.code, 1)
+
+    # --- readonly THREAD= ---
+
+    def test_blocks_readonly_thread(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash("readonly THREAD=root")
         self.assertEqual(cm.exception.code, 1)
 
     # --- false positives: these should NOT be blocked ---
