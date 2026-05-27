@@ -131,7 +131,7 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 	// Acquire request lock (SET NX thread:<id>:running) BEFORE writing
 	// the user message so a failed lock acquisition doesn't leave an
 	// orphaned message that would duplicate on retry.
-	acquired, err := h.threads.AcquireRequestLock(ctx, threadID, requestID, tasklib.LockTTL)
+	acquired, err := h.rdb.SetNX(ctx, tasklib.ThreadRunningKey(threadID), requestID, tasklib.LockTTL).Result()
 	if err != nil {
 		<-h.sem
 		return nil, fmt.Errorf("acquire request lock: %w", err)
@@ -149,15 +149,18 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 	}
 	if err := h.threads.AppendMessage(ctx, threadID, userMsg); err != nil {
-		h.threads.ReleaseRequestLock(ctx, threadID)
+		h.rdb.Del(ctx, tasklib.ThreadRunningKey(threadID))
 		<-h.sem
 		return nil, fmt.Errorf("append user message: %w", err)
 	}
 
 	// Determine session approach: --session-id (new) or --resume (existing)
-	sessionID, err := h.threads.GetThreadSessionID(ctx, threadID)
+	sessionID, err := h.rdb.Get(ctx, tasklib.ThreadSessionIDKey(threadID)).Result()
+	if err == redis.Nil {
+		sessionID, err = "", nil
+	}
 	if err != nil {
-		h.threads.ReleaseRequestLock(ctx, threadID)
+		h.rdb.Del(ctx, tasklib.ThreadRunningKey(threadID))
 		<-h.sem
 		return nil, fmt.Errorf("get session id: %w", err)
 	}
@@ -174,8 +177,8 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 
 	if sessionID == "" {
 		sessionID = mustUUID()
-		if err := h.threads.SetThreadSessionID(ctx, threadID, sessionID); err != nil {
-			h.threads.ReleaseRequestLock(ctx, threadID)
+		if err := h.rdb.Set(ctx, tasklib.ThreadSessionIDKey(threadID), sessionID, tasklib.TTLThread).Err(); err != nil {
+			h.rdb.Del(ctx, tasklib.ThreadRunningKey(threadID))
 			<-h.sem
 			return nil, fmt.Errorf("set session id: %w", err)
 		}
@@ -199,7 +202,7 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 	procCtx, cancel := context.WithTimeout(context.Background(), h.cfg.RequestTimeout)
 
 	// Clear previous completion state.
-	if err := h.threads.ClearThreadComplete(ctx, threadID); err != nil {
+	if err := h.rdb.Del(ctx, tasklib.ThreadCompleteKey(threadID)).Err(); err != nil {
 		h.logger.Info(fmt.Sprintf("thread=%s ClearThreadComplete error: %v", threadID, err))
 	}
 	// Only set status to "running" if no sequential task holds the thread lock.
@@ -223,7 +226,7 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 	h.wg.Add(1)
 	go h.runSubprocess(procCtx, cancel, threadID, requestID, args)
 
-	h.threads.UpdateThreadLastActivity(ctx, threadID)
+	h.rdb.Set(ctx, tasklib.ThreadLastActivityKey(threadID), ts(), tasklib.TTLThread)
 
 	return &SubmitResult{
 		ThreadID:  threadID,
@@ -301,8 +304,8 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		<-h.sem
 		cleanCtx, cleanCancel := cleanupCtx()
 		defer cleanCancel()
-		h.threads.ReleaseRequestLock(cleanCtx, threadID)
-		h.threads.UpdateThreadLastActivity(cleanCtx, threadID)
+		h.rdb.Del(cleanCtx, tasklib.ThreadRunningKey(threadID))
+		h.rdb.Set(cleanCtx, tasklib.ThreadLastActivityKey(threadID), ts(), tasklib.TTLThread)
 
 		h.mu.Lock()
 		delete(h.cancels, threadID)
@@ -587,7 +590,7 @@ func (h *Handler) writeResponseMessage(ctx context.Context, threadID, content st
 	cleanCtx, cleanCancel := cleanupCtx()
 	defer cleanCancel()
 
-	h.threads.SetThreadComplete(cleanCtx, threadID)
+	h.rdb.Set(cleanCtx, tasklib.ThreadCompleteKey(threadID), "1", tasklib.TTLThread)
 
 	h.threads.AppendMessage(cleanCtx, threadID, tasklib.Message{
 		Role:      "master",
@@ -613,7 +616,7 @@ func (h *Handler) writeErrorMessage(ctx context.Context, threadID, content strin
 	cleanCtx, cleanCancel := cleanupCtx()
 	defer cleanCancel()
 
-	h.threads.SetThreadComplete(cleanCtx, threadID)
+	h.rdb.Set(cleanCtx, tasklib.ThreadCompleteKey(threadID), "1", tasklib.TTLThread)
 
 	h.threads.AppendMessage(cleanCtx, threadID, tasklib.Message{
 		Role:      "master",
@@ -640,7 +643,7 @@ func (h *Handler) completeThread(ctx context.Context, threadID string) {
 	cleanCtx, cleanCancel := cleanupCtx()
 	defer cleanCancel()
 
-	h.threads.SetThreadComplete(cleanCtx, threadID)
+	h.rdb.Set(cleanCtx, tasklib.ThreadCompleteKey(threadID), "1", tasklib.TTLThread)
 	locked, err := h.threads.IsThreadLocked(cleanCtx, threadID)
 	if err != nil {
 		h.logger.Info(fmt.Sprintf("thread=%s IsThreadLocked error: %v", threadID, err))
@@ -750,6 +753,10 @@ type RequestError struct {
 func (e *RequestError) Error() string { return e.Message }
 
 // ── helpers ────────────────────────────────────────────────────────────────
+
+func ts() string {
+	return time.Now().UTC().Format("2006-01-02T15:04:05Z")
+}
 
 func mustUUID() string {
 	id, err := tasklib.NewUUID()
