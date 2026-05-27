@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,16 +16,20 @@ import (
 
 const apiKeyCookieName = "webui_api_key"
 
-// ── auth ──────────────────────────────────────────────────────────────────
-
-var apiKey string
-
-func init() {
-	apiKey = os.Getenv("WEBUI_API_KEY")
-	if apiKey == "" {
-		slog.Warn(fmt.Sprintf("[webui] WARNING: WEBUI_API_KEY is not set — all /api/ endpoints are open (no auth)"))
-	}
+// MiddlewareConfig holds all configuration for API middleware.
+// All fields are required; there are no defaults at this level —
+// defaults belong to the caller (main.go).
+type MiddlewareConfig struct {
+	AuthKey           string
+	AdminKey          string
+	RequestsLimiter   *rateLimiter
+	ThreadsLimiter    *rateLimiter
+	DefaultLimiter    *rateLimiter
+	WorkspaceDir      string
+	ClaudeSessionsDir string
 }
+
+// ── auth ──────────────────────────────────────────────────────────────────
 
 type contextKey string
 
@@ -60,60 +63,62 @@ func sanitizeQueryMiddleware(next http.Handler) http.Handler {
 // cookie so subsequent navigation (links, HTMX requests) stays authenticated.
 // Admin endpoints (/api/admin/*) are skipped — they have their own auth via
 // adminAuthMiddleware.
-func authMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Static assets and admin endpoints don't use this auth middleware
-		if strings.HasPrefix(r.URL.Path, "/static/") || strings.HasPrefix(r.URL.Path, "/api/admin/") {
-			next.ServeHTTP(w, r)
-			return
-		}
-		// Docker healthcheck calls /api/health from localhost; allow without auth
-		if r.URL.Path == "/api/health" {
-			host, _, err := net.SplitHostPort(r.RemoteAddr)
-			if err == nil && net.ParseIP(host).IsLoopback() {
+func authMiddleware(apiKey string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Static assets and admin endpoints don't use this auth middleware
+			if strings.HasPrefix(r.URL.Path, "/static/") || strings.HasPrefix(r.URL.Path, "/api/admin/") {
 				next.ServeHTTP(w, r)
 				return
 			}
-		}
-		if apiKey == "" {
+			// Docker healthcheck calls /api/health from localhost; allow without auth
+			if r.URL.Path == "/api/health" {
+				host, _, err := net.SplitHostPort(r.RemoteAddr)
+				if err == nil && net.ParseIP(host).IsLoopback() {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			if apiKey == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			token := ""
+			sourceIsQueryOrHeader := false
+			if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+				token = strings.TrimPrefix(auth, "Bearer ")
+				sourceIsQueryOrHeader = true
+			} else if v := r.Context().Value(ctxQueryAPIKey); v != nil {
+				token = v.(string)
+				sourceIsQueryOrHeader = true
+			} else if q := r.URL.Query().Get("api_key"); q != "" {
+				token = q
+				sourceIsQueryOrHeader = true
+			} else if ck, err := r.Cookie(apiKeyCookieName); err == nil && ck.Value != "" {
+				token = ck.Value
+			}
+			if token == "" {
+				Error(w, http.StatusUnauthorized, "missing API key (provide Authorization: Bearer header, ?api_key= query parameter, or webui_api_key cookie)")
+				return
+			}
+			if token != apiKey {
+				Error(w, http.StatusUnauthorized, "invalid API key")
+				return
+			}
+			// Persist the API key as a session cookie so subsequent navigation works
+			// without re-sending ?api_key= on every link.
+			if sourceIsQueryOrHeader {
+				http.SetCookie(w, &http.Cookie{
+					Name:     apiKeyCookieName,
+					Value:    token,
+					Path:     "/",
+					HttpOnly: true,
+					SameSite: http.SameSiteStrictMode,
+				})
+			}
 			next.ServeHTTP(w, r)
-			return
-		}
-		token := ""
-		sourceIsQueryOrHeader := false
-		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
-			token = strings.TrimPrefix(auth, "Bearer ")
-			sourceIsQueryOrHeader = true
-		} else if v := r.Context().Value(ctxQueryAPIKey); v != nil {
-			token = v.(string)
-			sourceIsQueryOrHeader = true
-		} else if q := r.URL.Query().Get("api_key"); q != "" {
-			token = q
-			sourceIsQueryOrHeader = true
-		} else if ck, err := r.Cookie(apiKeyCookieName); err == nil && ck.Value != "" {
-			token = ck.Value
-		}
-		if token == "" {
-			Error(w, http.StatusUnauthorized, "missing API key (provide Authorization: Bearer header, ?api_key= query parameter, or webui_api_key cookie)")
-			return
-		}
-		if token != apiKey {
-			Error(w, http.StatusUnauthorized, "invalid API key")
-			return
-		}
-		// Persist the API key as a session cookie so subsequent navigation works
-		// without re-sending ?api_key= on every link.
-		if sourceIsQueryOrHeader {
-			http.SetCookie(w, &http.Cookie{
-				Name:     apiKeyCookieName,
-				Value:    token,
-				Path:     "/",
-				HttpOnly: true,
-				SameSite: http.SameSiteStrictMode,
-			})
-		}
-		next.ServeHTTP(w, r)
-	})
+		})
+	}
 }
 
 // ── recovery ──────────────────────────────────────────────────────────────
@@ -189,14 +194,14 @@ type rateLimiter struct {
 	interval time.Duration
 }
 
-// defaultLimiter is a moderate rate limit applied to all mutation endpoints
-// that don't have a more specific limit (cancel, keep, reset-session, workspace).
-var defaultLimiter = &rateLimiter{limit: 60, interval: time.Minute, windows: make(map[string][]time.Time)}
-
-var (
-	requestsLimiter = &rateLimiter{limit: 10, interval: time.Minute, windows: make(map[string][]time.Time)}
-	threadsLimiter  = &rateLimiter{limit: 30, interval: time.Minute, windows: make(map[string][]time.Time)}
-)
+// NewRateLimiter creates a new rate limiter with the given limit and interval.
+func NewRateLimiter(limit int, interval time.Duration) *rateLimiter {
+	return &rateLimiter{
+		limit:    limit,
+		interval: interval,
+		windows:  make(map[string][]time.Time),
+	}
+}
 
 func (rl *rateLimiter) allow(ip string) bool {
 	rl.mu.Lock()

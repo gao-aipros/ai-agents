@@ -9,24 +9,16 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/noodle05/ai-agents/cmd/webui/internal/env"
 	"github.com/noodle05/ai-agents/cmd/webui/internal/request"
 )
 
 // ── filesystem helpers ────────────────────────────────────────────────────
 
-// These must stay in sync with request.DefaultConfig() defaults.
-// See cmd/webui/internal/request/handler.go for the canonical values.
-var (
-	workspaceDir      = env.String("WORKSPACE_DIR", "/workspace")
-	claudeSessionsDir = env.String("CLAUDE_SESSIONS_DIR", "/home/agent/.claude")
-)
-
 // workspacePath returns the workspace directory path for a thread.
 // Rejects thread IDs containing path traversal sequences or colons
 // (colons break Redis key parsing in ListThreads).
 // Uses request.ValidThreadID which is the single source of truth for ID validation.
-func workspacePath(threadID string) string {
+func workspacePath(workspaceDir, threadID string) string {
 	if !request.ValidThreadID(threadID) {
 		return ""
 	}
@@ -34,8 +26,8 @@ func workspacePath(threadID string) string {
 }
 
 // removeWorkspace removes the workspace directory for a thread.
-func removeWorkspace(path string) error {
-	if path == "" || !strings.HasPrefix(path, workspaceDir) {
+func removeWorkspace(workspaceDir, path string) error {
+	if path == "" || !strings.HasPrefix(path, workspaceDir+"/") && path != workspaceDir {
 		return fmt.Errorf("invalid workspace path: %s", path)
 	}
 	return os.RemoveAll(path)
@@ -43,7 +35,7 @@ func removeWorkspace(path string) error {
 
 // removeSessionFile deletes the Claude session file for the given session UUID.
 // It scans the projects directory for the session JSON file and removes it.
-func removeSessionFile(sessionID string) {
+func removeSessionFile(claudeSessionsDir, sessionID string) {
 	projectsDir := filepath.Join(claudeSessionsDir, "projects")
 	entries, err := os.ReadDir(projectsDir)
 	if err != nil {

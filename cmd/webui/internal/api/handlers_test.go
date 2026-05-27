@@ -41,7 +41,7 @@ func (th *testHarness) Cleanup() {
 	th.cleanup()
 }
 
-func newTestRouter(t *testing.T) *testHarness {
+func newTestRouter(t *testing.T, mwCfg MiddlewareConfig) *testHarness {
 	t.Helper()
 
 	mr := miniredis.RunT(t)
@@ -67,7 +67,7 @@ func newTestRouter(t *testing.T) *testHarness {
 		MaxConcurrent:     5,
 		ShutdownGrace:     5 * time.Second,
 		WorkspaceDir:      workspaceDir,
-			OutputFormat:      "text",
+		OutputFormat:      "text",
 		TestNotify:        notify,
 	}
 
@@ -79,7 +79,25 @@ func newTestRouter(t *testing.T) *testHarness {
 	}
 	var accessLog atomic.Pointer[slog.Logger]
 	newAccessLogger := func() *slog.Logger { return nil }
-	router := NewRouter(services, handler, renderer, bgCtx, &accessLog, "", newAccessLogger)
+
+	// Fill in defaults for MiddlewareConfig fields that aren't set.
+	if mwCfg.RequestsLimiter == nil {
+		mwCfg.RequestsLimiter = NewRateLimiter(10, time.Minute)
+	}
+	if mwCfg.ThreadsLimiter == nil {
+		mwCfg.ThreadsLimiter = NewRateLimiter(30, time.Minute)
+	}
+	if mwCfg.DefaultLimiter == nil {
+		mwCfg.DefaultLimiter = NewRateLimiter(60, time.Minute)
+	}
+	if mwCfg.WorkspaceDir == "" {
+		mwCfg.WorkspaceDir = workspaceDir
+	}
+	if mwCfg.ClaudeSessionsDir == "" {
+		mwCfg.ClaudeSessionsDir = sessionsDir
+	}
+
+	router := NewRouter(services, handler, renderer, bgCtx, &accessLog, newAccessLogger, mwCfg)
 
 	return &testHarness{
 		Router:       router,
@@ -110,9 +128,9 @@ func (th *testHarness) setSlowFakeClaude(t *testing.T) {
 	// CommandContext kills the process, the stdout pipe write end is closed
 	// and scanner.Scan() unblocks with EOF.
 	script := `#!/bin/bash
-echo '{"type":"system","subtype":"init"}'
-echo '{"type":"assistant","message":{"content":[{"type":"text","text":"working..."}]}}'
-exec sleep 30
+	echo '{"type":"system","subtype":"init"}'
+	echo '{"type":"assistant","message":{"content":[{"type":"text","text":"working..."}]}}'
+	exec sleep 30
 `
 	path := filepath.Join(th.WorkspaceDir, "fake-claude-slow")
 	os.WriteFile(path, []byte(script), 0755)
@@ -149,7 +167,7 @@ func readJSON(r *httptest.ResponseRecorder, v interface{}) {
 // ── health / stats ────────────────────────────────────────────────────────
 
 func TestHandleHealth(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	w := httptest.NewRecorder()
@@ -168,7 +186,7 @@ func TestHandleHealth(t *testing.T) {
 }
 
 func TestHandleStats(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	ctx := context.Background()
@@ -195,7 +213,7 @@ func TestHandleStats(t *testing.T) {
 // ── workers ────────────────────────────────────────────────────────────────
 
 func TestHandleListWorkers(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	w := httptest.NewRecorder()
@@ -208,7 +226,7 @@ func TestHandleListWorkers(t *testing.T) {
 }
 
 func TestHandleGetWorker(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	w := httptest.NewRecorder()
@@ -221,7 +239,7 @@ func TestHandleGetWorker(t *testing.T) {
 }
 
 func TestHandleGetWorker_Unknown(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	w := httptest.NewRecorder()
@@ -236,7 +254,7 @@ func TestHandleGetWorker_Unknown(t *testing.T) {
 // ── threads ────────────────────────────────────────────────────────────────
 
 func TestHandleCreateThread(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	body := strings.NewReader(`{"thread_id":"my-thread","repo":"owner/repo"}`)
@@ -259,7 +277,7 @@ func TestHandleCreateThread(t *testing.T) {
 }
 
 func TestHandleCreateThread_AutoID(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	body := strings.NewReader(`{}`)
@@ -286,7 +304,7 @@ func TestHandleCreateThread_AutoID(t *testing.T) {
 }
 
 func TestHandleCreateThread_Conflict(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	th.Client.CreateThread(context.Background(), "dup-thread", "", "")
@@ -303,7 +321,7 @@ func TestHandleCreateThread_Conflict(t *testing.T) {
 }
 
 func TestHandleListThreads(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	th.Client.CreateThread(context.Background(), "list-thread-1", "", "")
@@ -325,7 +343,7 @@ func TestHandleListThreads(t *testing.T) {
 }
 
 func TestHandleGetThread(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	th.Client.CreateThread(context.Background(), "detail-thread", "repo/test", "")
@@ -350,7 +368,7 @@ func TestHandleGetThread(t *testing.T) {
 }
 
 func TestHandleGetThread_NotFound(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	w := httptest.NewRecorder()
@@ -363,7 +381,7 @@ func TestHandleGetThread_NotFound(t *testing.T) {
 }
 
 func TestHandleThreadHistory(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	ctx := context.Background()
@@ -393,7 +411,7 @@ func TestHandleThreadHistory(t *testing.T) {
 }
 
 func TestHandleThreadHistory_Tail(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	ctx := context.Background()
@@ -421,7 +439,7 @@ func TestHandleThreadHistory_Tail(t *testing.T) {
 }
 
 func TestHandleDeleteWorkspace_NoConfirm(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	th.Client.CreateThread(context.Background(), "ws-thread", "", "")
@@ -437,7 +455,7 @@ func TestHandleDeleteWorkspace_NoConfirm(t *testing.T) {
 }
 
 func TestHandleDeleteWorkspace_Confirm(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	th.Client.CreateThread(context.Background(), "ws-delete-thread", "", "")
@@ -453,7 +471,7 @@ func TestHandleDeleteWorkspace_Confirm(t *testing.T) {
 }
 
 func TestHandleKeepThread(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	th.Client.CreateThread(context.Background(), "keep-thread", "", "")
@@ -469,7 +487,7 @@ func TestHandleKeepThread(t *testing.T) {
 }
 
 func TestHandleResetSession(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	ctx := context.Background()
@@ -492,7 +510,7 @@ func TestHandleResetSession(t *testing.T) {
 }
 
 func TestHandleDeleteThread_NoConfirm(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	th.Client.CreateThread(context.Background(), "del-noconfirm", "", "")
@@ -507,7 +525,7 @@ func TestHandleDeleteThread_NoConfirm(t *testing.T) {
 }
 
 func TestHandleDeleteThread_NotFound(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	w := httptest.NewRecorder()
@@ -520,7 +538,7 @@ func TestHandleDeleteThread_NotFound(t *testing.T) {
 }
 
 func TestHandleDeleteThread_InvalidID(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	w := httptest.NewRecorder()
@@ -533,7 +551,7 @@ func TestHandleDeleteThread_InvalidID(t *testing.T) {
 }
 
 func TestHandleDeleteThread_Success(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	ctx := context.Background()
@@ -565,7 +583,7 @@ func TestHandleDeleteThread_Success(t *testing.T) {
 }
 
 func TestHandleDeleteThread_LockHeld(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	threadID := "delete-locked"
@@ -591,7 +609,7 @@ func TestHandleDeleteThread_LockHeld(t *testing.T) {
 }
 
 func TestHandleDeleteThread_ThreadLockHeld(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	threadID := "delete-thread-locked"
@@ -619,7 +637,7 @@ func TestHandleDeleteThread_ThreadLockHeld(t *testing.T) {
 // ── tasks ──────────────────────────────────────────────────────────────────
 
 func TestHandleListTasks(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	w := httptest.NewRecorder()
@@ -632,7 +650,7 @@ func TestHandleListTasks(t *testing.T) {
 }
 
 func TestHandleGetTask_NotFound(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	w := httptest.NewRecorder()
@@ -645,7 +663,7 @@ func TestHandleGetTask_NotFound(t *testing.T) {
 }
 
 func TestHandleGetTaskResult_NotFound(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	w := httptest.NewRecorder()
@@ -660,7 +678,7 @@ func TestHandleGetTaskResult_NotFound(t *testing.T) {
 // ── requests ───────────────────────────────────────────────────────────────
 
 func TestHandleSubmitRequest_Success(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	th.setFakeClaude(t, []string{
@@ -709,7 +727,7 @@ func TestHandleSubmitRequest_Success(t *testing.T) {
 }
 
 func TestHandleSubmitRequest_MissingRequest(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	body := strings.NewReader(`{"request":""}`)
@@ -724,7 +742,7 @@ func TestHandleSubmitRequest_MissingRequest(t *testing.T) {
 }
 
 func TestHandleSubmitRequest_InvalidJSON(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	body := strings.NewReader(`not json`)
@@ -739,7 +757,7 @@ func TestHandleSubmitRequest_InvalidJSON(t *testing.T) {
 }
 
 func TestHandleSubmitRequest_ThreadBusy(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	th.setFakeClaude(t, []string{
@@ -773,7 +791,7 @@ func TestHandleSubmitRequest_ThreadBusy(t *testing.T) {
 }
 
 func TestHandleCancelRequest(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	th.setSlowFakeClaude(t)
@@ -815,7 +833,7 @@ func TestHandleCancelRequest(t *testing.T) {
 }
 
 func TestHandleCancelRequest_NoRunning(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	th.Client.CreateThread(context.Background(), "idle-thread", "", "")
@@ -833,7 +851,7 @@ func TestHandleCancelRequest_NoRunning(t *testing.T) {
 // ── HTMX content negotiation ───────────────────────────────────────────────
 
 func TestHandleSubmitRequest_HTMXFormEncoded(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	th.setFakeClaude(t, []string{
@@ -865,7 +883,7 @@ func TestHandleSubmitRequest_HTMXFormEncoded(t *testing.T) {
 }
 
 func TestHandleGetThread_HTMXReturnsPartial(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	ctx := context.Background()
@@ -891,7 +909,7 @@ func TestHandleGetThread_HTMXReturnsPartial(t *testing.T) {
 }
 
 func TestHandleGetThread_NonHTMXReturnsJSON(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	ctx := context.Background()
@@ -918,7 +936,7 @@ func TestHandleGetThread_NonHTMXReturnsJSON(t *testing.T) {
 }
 
 func TestHandleGetThread_InvalidID(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	// Use an ID with a colon, which is rejected by ValidThreadID but
@@ -933,7 +951,7 @@ func TestHandleGetThread_InvalidID(t *testing.T) {
 }
 
 func TestHandleGetThread_InvalidID_HTMX(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	// Use a colon in the ID — it's rejected by ValidThreadID but doesn't
@@ -949,7 +967,7 @@ func TestHandleGetThread_InvalidID_HTMX(t *testing.T) {
 }
 
 func TestPageThreadDetail_InvalidID(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	w := httptest.NewRecorder()
@@ -974,11 +992,7 @@ func TestPageThreadDetail_InvalidID(t *testing.T) {
 // ── auth (endpoint-level) ─────────────────────────────────────────────────
 
 func TestAuthRequired_NoAuth(t *testing.T) {
-	oldKey := apiKey
-	apiKey = "test-secret"
-	defer func() { apiKey = oldKey }()
-
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{AuthKey: "test-secret"})
 	defer th.Cleanup()
 
 	w := httptest.NewRecorder()
@@ -991,11 +1005,7 @@ func TestAuthRequired_NoAuth(t *testing.T) {
 }
 
 func TestAuthRequired_ValidAuth(t *testing.T) {
-	oldKey := apiKey
-	apiKey = "test-secret"
-	defer func() { apiKey = oldKey }()
-
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{AuthKey: "test-secret"})
 	defer th.Cleanup()
 
 	w := httptest.NewRecorder()
@@ -1009,11 +1019,7 @@ func TestAuthRequired_ValidAuth(t *testing.T) {
 }
 
 func TestAuthRequired_ValidQueryParamAuth(t *testing.T) {
-	oldKey := apiKey
-	apiKey = "test-secret"
-	defer func() { apiKey = oldKey }()
-
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{AuthKey: "test-secret"})
 	defer th.Cleanup()
 
 	// Query param auth must survive sanitizeQueryMiddleware stripping api_key
@@ -1030,7 +1036,7 @@ func TestAuthRequired_ValidQueryParamAuth(t *testing.T) {
 // ── history poll (incremental message loading) ─────────────────────────────
 
 func TestHandleThreadHistory_Poll(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	ctx := context.Background()
@@ -1062,7 +1068,7 @@ func TestHandleThreadHistory_Poll(t *testing.T) {
 }
 
 func TestHandleThreadHistory_PollRunning(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	ctx := context.Background()
@@ -1091,7 +1097,7 @@ func TestHandleThreadHistory_PollRunning(t *testing.T) {
 }
 
 func TestHandleThreadHistory_PollPreservesMsgCSSClasses(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	ctx := context.Background()
@@ -1144,7 +1150,7 @@ func TestHandleThreadHistory_PollPreservesMsgCSSClasses(t *testing.T) {
 // the followup-section. Swapping it on every poll would wipe any text the
 // user is typing into the follow-up form.
 func TestHandleGetThread_StatePollDoesNotReplaceFollowupForm(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	ctx := context.Background()
@@ -1175,7 +1181,7 @@ func TestHandleGetThread_StatePollDoesNotReplaceFollowupForm(t *testing.T) {
 // from running to complete), it injects the follow-up form via OOB swap.
 // This fires exactly once because the history poller stops after completion.
 func TestHandleThreadHistory_PollCompleteInjectsFollowupForm(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	ctx := context.Background()
@@ -1207,7 +1213,7 @@ func TestHandleThreadHistory_PollCompleteInjectsFollowupForm(t *testing.T) {
 // ── follow-up request clears complete flag ─────────────────────────────────
 
 func TestHandleSubmitRequest_FollowUpClearsComplete(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	th.setFakeClaude(t, []string{
@@ -1270,7 +1276,7 @@ func TestHandleSubmitRequest_FollowUpClearsComplete(t *testing.T) {
 }
 
 func TestHandleSubmitRequest_FollowUpHTMXReplyConfirmed(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	th.setFakeClaude(t, []string{
@@ -1306,7 +1312,7 @@ func TestHandleSubmitRequest_FollowUpHTMXReplyConfirmed(t *testing.T) {
 // ── /api/metrics tests ─────────────────────────────────────────────────────
 
 func TestMetricsEndpoint_Returns200(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	rdb := th.Client.RDB()
@@ -1348,7 +1354,7 @@ func TestMetricsEndpoint_Returns200(t *testing.T) {
 }
 
 func TestMetricsEndpoint_StatusLabels(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	rdb := th.Client.RDB()
@@ -1370,7 +1376,7 @@ func TestMetricsEndpoint_StatusLabels(t *testing.T) {
 }
 
 func TestMetricsEndpoint_QueueDepthLabels(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	rdb := th.Client.RDB()
@@ -1393,7 +1399,7 @@ func TestMetricsEndpoint_QueueDepthLabels(t *testing.T) {
 // ── parent-child thread tests ────────────────────────────────────────────
 
 func TestHandleCreateThread_WithParentThreadID(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	body := strings.NewReader(`{"thread_id":"child","repo":"owner/repo","parent_thread_id":"parent"}`)
@@ -1420,7 +1426,7 @@ func TestHandleCreateThread_WithParentThreadID(t *testing.T) {
 }
 
 func TestHandleGetThread_ReturnsChildren(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	ctx := context.Background()
@@ -1506,18 +1512,8 @@ func TestFilterChildren(t *testing.T) {
 // ── cascade delete tests ────────────────────────────────────────────────
 
 func TestHandleDeleteThread_Cascade(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
-
-	// Override package-level vars so workspace/session paths point to temp dirs
-	oldWorkspace := workspaceDir
-	oldSessions := claudeSessionsDir
-	workspaceDir = th.WorkspaceDir
-	claudeSessionsDir = th.SessionsDir
-	defer func() {
-		workspaceDir = oldWorkspace
-		claudeSessionsDir = oldSessions
-	}()
 
 	ctx := context.Background()
 
@@ -1599,7 +1595,7 @@ func TestHandleDeleteThread_Cascade(t *testing.T) {
 }
 
 func TestHandleDeleteThread_CascadeChildHasActiveTask(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	ctx := context.Background()
@@ -1643,7 +1639,7 @@ func TestHandleDeleteThread_CascadeChildHasActiveTask(t *testing.T) {
 }
 
 func TestHandleDeleteThread_CascadeMoreThan50Tasks(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	ctx := context.Background()
@@ -1690,18 +1686,8 @@ func TestHandleDeleteThread_CascadeMoreThan50Tasks(t *testing.T) {
 }
 
 func TestHandleDeleteThread_DeepCascade(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
-
-	// Override package-level vars so workspace/session paths point to temp dirs
-	oldWorkspace := workspaceDir
-	oldSessions := claudeSessionsDir
-	workspaceDir = th.WorkspaceDir
-	claudeSessionsDir = th.SessionsDir
-	defer func() {
-		workspaceDir = oldWorkspace
-		claudeSessionsDir = oldSessions
-	}()
 
 	ctx := context.Background()
 
@@ -1773,7 +1759,7 @@ func TestHandleDeleteThread_DeepCascade(t *testing.T) {
 }
 
 func TestHandleDeleteThread_NoChildren(t *testing.T) {
-	th := newTestRouter(t)
+	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
 	ctx := context.Background()

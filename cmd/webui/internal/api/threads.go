@@ -13,10 +13,12 @@ import (
 )
 
 type threadsResource struct {
-	threads  tasklib.ThreadStore
-	tasks    tasklib.TaskStore
-	tokens   tasklib.TokenLedger
-	renderer *templates.Renderer
+	threads           tasklib.ThreadStore
+	tasks             tasklib.TaskStore
+	tokens            tasklib.TokenLedger
+	renderer          *templates.Renderer
+	workspaceDir      string
+	claudeSessionsDir string
 }
 
 // POST /api/threads
@@ -287,8 +289,8 @@ func (tr *threadsResource) deleteWorkspace(w http.ResponseWriter, r *http.Reques
 	}
 	defer tr.threads.ReleaseRequestLock(cleanupContext(), threadID)
 
-	wp := workspacePath(threadID)
-	if err := removeWorkspace(wp); err != nil {
+	wp := workspacePath(tr.workspaceDir, threadID)
+	if err := removeWorkspace(tr.workspaceDir, wp); err != nil {
 		slog.Warn(fmt.Sprintf("[webui] workspace delete error thread=%s dir=%s: %v", threadID, wp, err))
 		serverError(w, "failed to delete workspace", err)
 		return
@@ -448,13 +450,13 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 	// Clean up workspace directories and session files for all subtree threads.
 	// Best-effort: log errors and continue.
 	for _, tid := range allIDs {
-		wp := workspacePath(tid)
-		if err := removeWorkspace(wp); err != nil {
+		wp := workspacePath(tr.workspaceDir, tid)
+		if err := removeWorkspace(tr.workspaceDir, wp); err != nil {
 			slog.Warn(fmt.Sprintf("[webui] workspace delete error thread=%s dir=%s: %v", tid, wp, err))
 		}
 	}
 	for _, sid := range sessionIDs {
-		removeSessionFile(sid)
+		removeSessionFile(tr.claudeSessionsDir, sid)
 	}
 
 	slog.Info(fmt.Sprintf("[webui] thread deleted thread=%s (subtree=%d)", threadID, len(allIDs)))
@@ -476,7 +478,7 @@ func (tr *threadsResource) resetSession(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if sessionID != "" {
-		removeSessionFile(sessionID)
+		removeSessionFile(tr.claudeSessionsDir, sessionID)
 	}
 
 	if err := tr.threads.SetThreadSessionID(r.Context(), threadID, ""); err != nil {
