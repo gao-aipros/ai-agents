@@ -181,7 +181,7 @@ func main() {
 			continue
 		}
 
-		processOneTask(log, client.Threads, client.Events, rdb, result, workerType, agentCmd,
+		processOneTask(log, client.Threads, client.History, client.Events, rdb, result, workerType, agentCmd,
 			taskTimeout, historyWindow, workspaceDir, processingKey, hostname, &tasksProcessed, alertCfg)
 	}
 
@@ -200,6 +200,7 @@ func main() {
 func processOneTask(
 	log *slog.Logger,
 	threads tasklib.ThreadStore,
+	history tasklib.ThreadHistory,
 	events tasklib.EventBus,
 	rdb *redis.Client,
 	taskJSON, workerType, agentCmd string,
@@ -290,9 +291,9 @@ func processOneTask(
 	}
 	var msgs []tasklib.Message
 	if groupLabel != "" {
-		msgs, _ = threads.GetThreadHistoryTailForWorker(context.Background(), threadID, window, workerType)
+		msgs, _ = history.GetThreadHistoryTailForWorker(context.Background(), threadID, window, workerType)
 	} else {
-		msgs, _ = threads.GetThreadHistoryTail(context.Background(), threadID, window)
+		msgs, _ = history.GetThreadHistoryTail(context.Background(), threadID, window)
 	}
 	var contextBuilder strings.Builder
 	if len(msgs) > 0 {

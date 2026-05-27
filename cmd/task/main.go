@@ -524,9 +524,9 @@ func cmdThreadHistory(cmd *cobra.Command, args []string) error {
 			fmt.Println("(no messages)")
 			return nil
 		}
-		msgs, err = s.Threads.GetThreadHistoryTail(ctx, thID, thTail)
+		msgs, err = s.History.GetThreadHistoryTail(ctx, thID, thTail)
 	} else {
-		msgs, err = s.Threads.GetThreadHistory(ctx, thID, 0, 0)
+		msgs, err = s.History.GetThreadHistory(ctx, thID, 0, 0)
 	}
 	if err != nil {
 		die(err.Error())

@@ -72,7 +72,7 @@ func newTestRouter(t *testing.T, mwCfg MiddlewareConfig) *testHarness {
 		TestNotify:        notify,
 	}
 
-	handler := request.New(services.Threads, services.SysOps, cfg)
+	handler := request.New(services.Threads, services.Requests, services.History, services.SysOps, cfg)
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	renderer, err := templates.New()
 	if err != nil {
