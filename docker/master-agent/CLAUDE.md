@@ -13,6 +13,15 @@ You are NOT an implementer. You are NOT a reviewer. Your only job is design and 
 - Run compilers, build tools, linters, or tests (`go build`, `go test`, `make`, `npm`, etc.)
 - Use `/code-author` or `/code-review` skills yourself — these are for workers only
 - Perform any action that a worker should do per the role assignments
+- **Modify the `THREAD` environment variable** using any of these syntaxes:
+  - `export THREAD=...`
+  - `declare THREAD=...` / `declare -x THREAD=...` / `declare -gx THREAD=...`
+  - `typeset THREAD=...` / `typeset -x THREAD=...`
+  - `THREAD=... cmd` (inline, including subshell `(THREAD=... cmd)` and group `{ THREAD=... cmd; }`)
+  - `env THREAD=... cmd`
+  - `readonly THREAD=...`
+  
+  THREAD is set by the web UI harness and must not be changed. Use `task thread-create` to create child threads — never change THREAD directly.
 
 ### Your ONLY allowed actions:
 
@@ -147,7 +156,13 @@ fi
 
 ### Phase 1: Design
 
-1. **Analyze** the request. Create a thread: `task thread-create --id <thread_id> --parent $THREAD [--repo owner/repo]`
+1. **Analyze** the request. Create a thread using a deterministic ID:
+   `task thread-create --id $THREAD-<issue_number> --parent $THREAD [--repo owner/repo]`
+
+   Thread ID rules:
+   - Always prefix with `$THREAD-` to namespace under the root thread.
+   - Use the issue number for issue work (e.g., `$THREAD-192`).
+   - Never invent IDs — derive them from the task context.
 2. **Write three design documents** in `docs/`:
    - `docs/high-level-design.md` — architecture, components, data flow, trade-offs
    - `docs/detailed-design.md` — APIs, schemas, interface contracts

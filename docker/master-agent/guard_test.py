@@ -336,13 +336,13 @@ class TestCheckBashTask(unittest.TestCase):
 
     def test_allows_task_thread_create_with_parent_thread(self):
         guard.check_bash(
-            "task thread-create --id foo --parent $THREAD"
+            "task thread-create --id $THREAD-192 --parent $THREAD"
         )
 
     def test_blocks_task_thread_create_without_parent(self):
         with self.assertRaises(SystemExit) as cm:
             guard.check_bash(
-                "task thread-create --id foo --parent root"
+                "task thread-create --id $THREAD-192 --parent root"
             )
         self.assertEqual(cm.exception.code, 1)
 
@@ -402,74 +402,142 @@ class TestCheckBashRedirectEdgeCases(unittest.TestCase):
 
 
 class TestCheckThreadCreate(unittest.TestCase):
-    """Tests for check_thread_create — --parent must be $THREAD."""
+    """Tests for check_thread_create — --id must be valid, --parent must be $THREAD."""
 
     def test_allows_parent_dollar_thread(self):
         guard.check_thread_create(
-            "task thread-create --id foo --parent $THREAD"
+            "task thread-create --id $THREAD-192 --parent $THREAD"
         )
 
     def test_allows_parent_equals_thread(self):
         guard.check_thread_create(
-            "task thread-create --id foo --parent=$THREAD"
+            "task thread-create --id $THREAD-192 --parent=$THREAD"
         )
 
     def test_blocks_parent_root(self):
         with self.assertRaises(SystemExit) as cm:
             guard.check_thread_create(
-                "task thread-create --id foo --parent root"
+                "task thread-create --id $THREAD-192 --parent root"
             )
         self.assertEqual(cm.exception.code, 1)
 
     def test_blocks_parent_equals_root(self):
         with self.assertRaises(SystemExit) as cm:
             guard.check_thread_create(
-                "task thread-create --id foo --parent=root"
+                "task thread-create --id $THREAD-192 --parent=root"
             )
         self.assertEqual(cm.exception.code, 1)
 
     def test_blocks_no_parent_flag(self):
         with self.assertRaises(SystemExit) as cm:
             guard.check_thread_create(
-                "task thread-create --id foo"
+                "task thread-create --id $THREAD-192"
             )
         self.assertEqual(cm.exception.code, 1)
 
     def test_blocks_parent_empty_string(self):
         with self.assertRaises(SystemExit) as cm:
             guard.check_thread_create(
-                'task thread-create --id foo --parent ""'
+                'task thread-create --id $THREAD-192 --parent ""'
             )
         self.assertEqual(cm.exception.code, 1)
 
     def test_blocks_parent_equals_empty(self):
         with self.assertRaises(SystemExit) as cm:
             guard.check_thread_create(
-                'task thread-create --id foo --parent=""'
+                'task thread-create --id $THREAD-192 --parent=""'
             )
         self.assertEqual(cm.exception.code, 1)
 
     def test_blocks_parent_single_quoted(self):
         with self.assertRaises(SystemExit) as cm:
             guard.check_thread_create(
-                "task thread-create --id foo --parent '$THREAD'"
+                "task thread-create --id $THREAD-192 --parent '$THREAD'"
             )
         self.assertEqual(cm.exception.code, 1)
 
     def test_allows_parent_double_quoted(self):
         guard.check_thread_create(
-            'task thread-create --id foo --parent "$THREAD"'
+            'task thread-create --id $THREAD-192 --parent "$THREAD"'
         )
 
     def test_allows_parent_thread_with_other_flags(self):
         guard.check_thread_create(
-            "task thread-create --id foo --parent $THREAD --repo bar"
+            "task thread-create --id $THREAD-192 --parent $THREAD --repo bar"
         )
 
     def test_blocks_bare_parent_followed_by_flag(self):
         with self.assertRaises(SystemExit) as cm:
             guard.check_thread_create(
-                "task thread-create --id foo --parent --repo bar"
+                "task thread-create --id $THREAD-192 --parent --repo bar"
+            )
+        self.assertEqual(cm.exception.code, 1)
+
+    # --- New tests for --id validation ---
+
+    def test_blocks_id_root(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_thread_create(
+                "task thread-create --id root --parent $THREAD"
+            )
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_id_bare_word(self):
+        """Any bare word (non-$THREAD- prefix) should be blocked."""
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_thread_create(
+                "task thread-create --id design --parent $THREAD"
+            )
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_id_zero(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_thread_create(
+                "task thread-create --id 0 --parent $THREAD"
+            )
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_id_missing(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_thread_create(
+                "task thread-create --parent $THREAD"
+            )
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_id_empty_string(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_thread_create(
+                'task thread-create --id "" --parent $THREAD'
+            )
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_id_equals_empty(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_thread_create(
+                'task thread-create --id="" --parent $THREAD'
+            )
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_allows_id_dollar_thread_issue(self):
+        guard.check_thread_create(
+            "task thread-create --id $THREAD-192 --parent $THREAD"
+        )
+
+    def test_allows_id_dollar_thread_design(self):
+        guard.check_thread_create(
+            "task thread-create --id $THREAD-design --parent $THREAD"
+        )
+
+    def test_allows_id_double_quoted_thread(self):
+        guard.check_thread_create(
+            'task thread-create --id "$THREAD-192" --parent $THREAD'
+        )
+
+    def test_blocks_id_master(self):
+        """'master' is also a potentially confusing bare word."""
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_thread_create(
+                "task thread-create --id master --parent $THREAD"
             )
         self.assertEqual(cm.exception.code, 1)
 
@@ -544,6 +612,175 @@ class TestMainIntegration(unittest.TestCase):
         with self.assertRaises(SystemExit) as cm:
             guard.main()
         self.assertEqual(cm.exception.code, 0)
+
+
+class TestCheckThreadModify(unittest.TestCase):
+    """Tests for check_thread_modify — blocks all THREAD modification syntaxes."""
+
+    def setUp(self):
+        # Ensure clean env for THREAD checks (no THREAD mismatch false positives)
+        self._saved_thread = os.environ.pop("THREAD", None)
+        self._saved_original = os.environ.pop("ORIGINAL_THREAD", None)
+
+    def tearDown(self):
+        for key, saved in [("THREAD", self._saved_thread), ("ORIGINAL_THREAD", self._saved_original)]:
+            if saved is not None:
+                os.environ[key] = saved
+            elif key in os.environ:
+                del os.environ[key]
+
+    # --- export THREAD= ---
+
+    def test_blocks_export_thread_equals(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash("export THREAD=root")
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_export_thread_equals_quoted(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash('export THREAD="some-value"')
+        self.assertEqual(cm.exception.code, 1)
+
+    # --- declare THREAD= ---
+
+    def test_blocks_declare_thread(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash("declare THREAD=foo")
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_declare_x_thread(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash("declare -x THREAD=foo")
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_declare_gx_thread(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash("declare -gx THREAD=foo")
+        self.assertEqual(cm.exception.code, 1)
+
+    # --- typeset THREAD= ---
+
+    def test_blocks_typeset_thread(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash("typeset THREAD=foo")
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_typeset_x_thread(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash("typeset -x THREAD=foo")
+        self.assertEqual(cm.exception.code, 1)
+
+    # --- inline THREAD= ---
+
+    def test_blocks_inline_thread_env(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash("THREAD=root task thread-create --id $THREAD-192 --parent $THREAD")
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_inline_thread_env_at_pipe_start(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash("THREAD=root task status --id abc123 | jq .")
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_inline_thread_env_after_semicolon(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash("echo hello; THREAD=bad task list")
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_inline_thread_env_in_subshell(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash("(THREAD=root task thread-create --id $THREAD-192 --parent $THREAD)")
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_inline_thread_env_in_group_command(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash("{ THREAD=root task list; }")
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_inline_thread_env_in_subshell_with_space(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash("( THREAD=root echo hi )")
+        self.assertEqual(cm.exception.code, 1)
+
+    # --- env THREAD= ---
+
+    def test_blocks_env_thread_command(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash("env THREAD=root task thread-create --id $THREAD-192 --parent $THREAD")
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_blocks_env_multi_var_thread(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash("env FOO=bar THREAD=bad task list")
+        self.assertEqual(cm.exception.code, 1)
+
+    # --- readonly THREAD= ---
+
+    def test_blocks_readonly_thread(self):
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash("readonly THREAD=root")
+        self.assertEqual(cm.exception.code, 1)
+
+    # --- false positives: these should NOT be blocked ---
+
+    def test_allows_thread_in_other_context(self):
+        """'export' of a different variable whose name contains 'thread' should be fine."""
+        guard.check_bash("export MY_THREAD_NAME=hello")
+
+    def test_allows_thread_create_with_thread_id(self):
+        """--id $THREAD-192 should not be blocked."""
+        guard.check_bash("task thread-create --id $THREAD-192 --parent $THREAD")
+
+    def test_allows_echo_thread_value(self):
+        """echo with THREAD reference should not be blocked."""
+        guard.check_bash("echo Thread is $THREAD")
+
+    def test_allows_export_of_other_var(self):
+        """Normal export of non-THREAD variables should work."""
+        guard.check_bash("export FOO=bar")
+
+    def test_allows_declare_of_other_var(self):
+        """Normal declare of non-THREAD variables should work."""
+        guard.check_bash("declare FOO=bar")
+
+    def test_allows_inline_of_other_var(self):
+        """Inline env var that is not THREAD should work."""
+        guard.check_bash("FOO=bar task list")
+
+
+class TestCheckBashThreadMismatch(unittest.TestCase):
+    """Tests for THREAD mismatch detection via ORIGINAL_THREAD."""
+
+    def setUp(self):
+        self._saved_thread = os.environ.get("THREAD")
+        self._saved_original = os.environ.get("ORIGINAL_THREAD")
+        os.environ.pop("THREAD", None)
+        os.environ.pop("ORIGINAL_THREAD", None)
+
+    def tearDown(self):
+        for key, saved in [("THREAD", self._saved_thread), ("ORIGINAL_THREAD", self._saved_original)]:
+            if saved is not None:
+                os.environ[key] = saved
+            elif key in os.environ:
+                del os.environ[key]
+
+    def test_blocks_when_thread_mismatched(self):
+        os.environ["ORIGINAL_THREAD"] = "abc123-root"
+        os.environ["THREAD"] = "root"
+        with self.assertRaises(SystemExit) as cm:
+            guard.check_bash("task list")
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_allows_when_thread_matches(self):
+        os.environ["ORIGINAL_THREAD"] = "abc123-root"
+        os.environ["THREAD"] = "abc123-root"
+        guard.check_bash("task list")
+
+    def test_allows_when_no_original_thread_set(self):
+        """If ORIGINAL_THREAD is not set, no mismatch check is performed."""
+        os.environ["THREAD"] = "some-value"
+        # should not raise
+        guard.check_bash("task list")
 
 
 if __name__ == "__main__":

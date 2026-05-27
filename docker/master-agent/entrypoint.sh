@@ -63,4 +63,8 @@ if ! jq -e '.hooks.PreToolUse[]?.hooks[]?.command == "python3 /home/agent/guard.
         && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
 fi
 
+# Save original THREAD for guard defense-in-depth.
+# The guard uses this to detect and block any attempt to overwrite THREAD.
+export ORIGINAL_THREAD="${THREAD:-}"
+
 exec webui "$@"
