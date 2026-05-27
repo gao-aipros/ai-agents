@@ -19,6 +19,7 @@ import (
 
 	"github.com/noodle05/ai-agents/cmd/webui/internal/env"
 	"github.com/noodle05/ai-agents/tasklib"
+	"github.com/redis/go-redis/v9"
 )
 
 // Config holds configuration for the request handler.
@@ -54,10 +55,11 @@ func DefaultConfig() Config {
 // invocations per user request, reads stdout, and writes results to Redis via
 // the tasklib client.
 type Handler struct {
-	client *tasklib.Client
-	cfg    Config
-	sem    chan struct{}
-	logger *slog.Logger
+	threads tasklib.ThreadStore
+	rdb     *redis.Client
+	cfg     Config
+	sem     chan struct{}
+	logger  *slog.Logger
 
 	mu      sync.Mutex
 	cancels map[string]context.CancelFunc // threadID -> cancel
@@ -65,12 +67,13 @@ type Handler struct {
 }
 
 // New creates a new Handler.
-func New(client *tasklib.Client, cfg Config) *Handler {
+func New(threads tasklib.ThreadStore, rdb *redis.Client, cfg Config) *Handler {
 	if cfg.MaxConcurrent <= 0 {
 		cfg.MaxConcurrent = 5
 	}
 	return &Handler{
-		client:  client,
+		threads: threads,
+		rdb:     rdb,
 		cfg:     cfg,
 		sem:     make(chan struct{}, cfg.MaxConcurrent),
 		logger:  slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})).With("component", "request"),
@@ -113,13 +116,13 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 	}
 
 	// Create thread if it doesn't exist.
-	exists, err := h.client.ThreadExists(ctx, threadID)
+	exists, err := h.threads.ThreadExists(ctx, threadID)
 	if err != nil {
 		<-h.sem
 		return nil, fmt.Errorf("check thread exists: %w", err)
 	}
 	if !exists {
-		if _, err := h.client.CreateThread(ctx, threadID, repo, ""); err != nil {
+		if _, err := h.threads.CreateThread(ctx, threadID, repo, ""); err != nil {
 			<-h.sem
 			return nil, fmt.Errorf("create thread: %w", err)
 		}
@@ -128,7 +131,7 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 	// Acquire request lock (SET NX thread:<id>:running) BEFORE writing
 	// the user message so a failed lock acquisition doesn't leave an
 	// orphaned message that would duplicate on retry.
-	acquired, err := h.client.AcquireRequestLock(ctx, threadID, requestID, tasklib.LockTTL)
+	acquired, err := h.threads.AcquireRequestLock(ctx, threadID, requestID, tasklib.LockTTL)
 	if err != nil {
 		<-h.sem
 		return nil, fmt.Errorf("acquire request lock: %w", err)
@@ -145,16 +148,16 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 		Content:   userRequest,
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 	}
-	if err := h.client.AppendMessage(ctx, threadID, userMsg); err != nil {
-		h.client.ReleaseRequestLock(ctx, threadID)
+	if err := h.threads.AppendMessage(ctx, threadID, userMsg); err != nil {
+		h.threads.ReleaseRequestLock(ctx, threadID)
 		<-h.sem
 		return nil, fmt.Errorf("append user message: %w", err)
 	}
 
 	// Determine session approach: --session-id (new) or --resume (existing)
-	sessionID, err := h.client.GetThreadSessionID(ctx, threadID)
+	sessionID, err := h.threads.GetThreadSessionID(ctx, threadID)
 	if err != nil {
-		h.client.ReleaseRequestLock(ctx, threadID)
+		h.threads.ReleaseRequestLock(ctx, threadID)
 		<-h.sem
 		return nil, fmt.Errorf("get session id: %w", err)
 	}
@@ -171,8 +174,8 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 
 	if sessionID == "" {
 		sessionID = mustUUID()
-		if err := h.client.SetThreadSessionID(ctx, threadID, sessionID); err != nil {
-			h.client.ReleaseRequestLock(ctx, threadID)
+		if err := h.threads.SetThreadSessionID(ctx, threadID, sessionID); err != nil {
+			h.threads.ReleaseRequestLock(ctx, threadID)
 			<-h.sem
 			return nil, fmt.Errorf("set session id: %w", err)
 		}
@@ -196,18 +199,18 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 	procCtx, cancel := context.WithTimeout(context.Background(), h.cfg.RequestTimeout)
 
 	// Clear previous completion state.
-	if err := h.client.ClearThreadComplete(ctx, threadID); err != nil {
+	if err := h.threads.ClearThreadComplete(ctx, threadID); err != nil {
 		h.logger.Info(fmt.Sprintf("thread=%s ClearThreadComplete error: %v", threadID, err))
 	}
 	// Only set status to "running" if no sequential task holds the thread lock.
 	// When a task is actively running on this thread, the task lifecycle
 	// (WaitTask/updateThreadStatus) owns the status field.
-	locked, err := h.client.IsThreadLocked(ctx, threadID)
+	locked, err := h.threads.IsThreadLocked(ctx, threadID)
 	if err != nil {
 		h.logger.Info(fmt.Sprintf("thread=%s IsThreadLocked error: %v", threadID, err))
 	}
 	if !locked {
-		if err := h.client.UpdateThread(ctx, threadID, map[string]string{"status": "running"}); err != nil {
+		if err := h.threads.UpdateThread(ctx, threadID, map[string]string{"status": "running"}); err != nil {
 			h.logger.Info(fmt.Sprintf("thread=%s UpdateThread error: %v", threadID, err))
 		}
 	}
@@ -220,7 +223,7 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 	h.wg.Add(1)
 	go h.runSubprocess(procCtx, cancel, threadID, requestID, args)
 
-	h.client.UpdateThreadLastActivity(ctx, threadID)
+	h.threads.UpdateThreadLastActivity(ctx, threadID)
 
 	return &SubmitResult{
 		ThreadID:  threadID,
@@ -298,8 +301,8 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		<-h.sem
 		cleanCtx, cleanCancel := cleanupCtx()
 		defer cleanCancel()
-		h.client.ReleaseRequestLock(cleanCtx, threadID)
-		h.client.UpdateThreadLastActivity(cleanCtx, threadID)
+		h.threads.ReleaseRequestLock(cleanCtx, threadID)
+		h.threads.UpdateThreadLastActivity(cleanCtx, threadID)
 
 		h.mu.Lock()
 		delete(h.cancels, threadID)
@@ -355,7 +358,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 
 		// Persist master token stats to thread and global counters
 		persistCtx, persistCancel := cleanupCtx()
-		pipe := h.client.RDB().Pipeline()
+		pipe := h.rdb.Pipeline()
 		tasklib.PersistMasterTokenStats(persistCtx, pipe, threadID, masterStats)
 		pipe.Exec(persistCtx)
 		persistCancel()
@@ -533,7 +536,7 @@ func (h *Handler) processPlainText(ctx context.Context, threadID string, stdout 
 			}
 
 			cleanCtx, cleanCancel := cleanupCtx()
-			if err := h.client.AppendMessage(cleanCtx, threadID, tasklib.Message{
+			if err := h.threads.AppendMessage(cleanCtx, threadID, tasklib.Message{
 				Role:      "master",
 				Type:      "plan",
 				Content:   rawLine,
@@ -569,7 +572,7 @@ func (h *Handler) handleAssistantMessage(ctx context.Context, threadID string, m
 
 	cleanCtx, cleanCancel := cleanupCtx()
 	defer cleanCancel()
-	h.client.AppendMessage(cleanCtx, threadID, tasklib.Message{
+	h.threads.AppendMessage(cleanCtx, threadID, tasklib.Message{
 		Role:      "master",
 		Type:      msgType,
 		Content:   text,
@@ -584,21 +587,21 @@ func (h *Handler) writeResponseMessage(ctx context.Context, threadID, content st
 	cleanCtx, cleanCancel := cleanupCtx()
 	defer cleanCancel()
 
-	h.client.SetThreadComplete(cleanCtx, threadID)
+	h.threads.SetThreadComplete(cleanCtx, threadID)
 
-	h.client.AppendMessage(cleanCtx, threadID, tasklib.Message{
+	h.threads.AppendMessage(cleanCtx, threadID, tasklib.Message{
 		Role:      "master",
 		Type:      "response",
 		Content:   content,
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 	})
 
-	locked, err := h.client.IsThreadLocked(cleanCtx, threadID)
+	locked, err := h.threads.IsThreadLocked(cleanCtx, threadID)
 	if err != nil {
 		h.logger.Info(fmt.Sprintf("thread=%s IsThreadLocked error: %v", threadID, err))
 	}
 	if err == nil && !locked {
-		h.client.UpdateThread(cleanCtx, threadID, map[string]string{
+		h.threads.UpdateThread(cleanCtx, threadID, map[string]string{
 			"status": "complete",
 		})
 	}
@@ -610,21 +613,21 @@ func (h *Handler) writeErrorMessage(ctx context.Context, threadID, content strin
 	cleanCtx, cleanCancel := cleanupCtx()
 	defer cleanCancel()
 
-	h.client.SetThreadComplete(cleanCtx, threadID)
+	h.threads.SetThreadComplete(cleanCtx, threadID)
 
-	h.client.AppendMessage(cleanCtx, threadID, tasklib.Message{
+	h.threads.AppendMessage(cleanCtx, threadID, tasklib.Message{
 		Role:      "master",
 		Type:      "error",
 		Content:   content,
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 	})
 
-	locked, err := h.client.IsThreadLocked(cleanCtx, threadID)
+	locked, err := h.threads.IsThreadLocked(cleanCtx, threadID)
 	if err != nil {
 		h.logger.Info(fmt.Sprintf("thread=%s IsThreadLocked error: %v", threadID, err))
 	}
 	if err == nil && !locked {
-		h.client.UpdateThread(cleanCtx, threadID, map[string]string{
+		h.threads.UpdateThread(cleanCtx, threadID, map[string]string{
 			"status": "error",
 		})
 	}
@@ -637,13 +640,13 @@ func (h *Handler) completeThread(ctx context.Context, threadID string) {
 	cleanCtx, cleanCancel := cleanupCtx()
 	defer cleanCancel()
 
-	h.client.SetThreadComplete(cleanCtx, threadID)
-	locked, err := h.client.IsThreadLocked(cleanCtx, threadID)
+	h.threads.SetThreadComplete(cleanCtx, threadID)
+	locked, err := h.threads.IsThreadLocked(cleanCtx, threadID)
 	if err != nil {
 		h.logger.Info(fmt.Sprintf("thread=%s IsThreadLocked error: %v", threadID, err))
 	}
 	if err == nil && !locked {
-		h.client.UpdateThread(cleanCtx, threadID, map[string]string{
+		h.threads.UpdateThread(cleanCtx, threadID, map[string]string{
 			"status": "complete",
 		})
 	}

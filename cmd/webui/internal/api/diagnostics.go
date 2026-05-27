@@ -15,13 +15,13 @@ import (
 )
 
 type diagnosticsResource struct {
-	client *tasklib.Client
+	rdb *redis.Client
 }
 
 // GET /api/diagnostics
 func (dr *diagnosticsResource) get(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	rdb := dr.client.RDB()
+	rdb := dr.rdb
 
 	staleThreshold := 30 // minutes
 	if s := r.URL.Query().Get("stale_threshold"); s != "" {

@@ -19,6 +19,7 @@ import (
 
 // NewRouter creates a chi router with all /api/ endpoints and page routes.
 func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templates.Renderer, shutdownCtx context.Context, accessLog *atomic.Pointer[slog.Logger], adminKey string, newAccessLogger func() *slog.Logger) chi.Router {
+	rdb := client.RDB()
 	r := chi.NewRouter()
 
 	// Middleware stack (all middleware must be registered before any routes in chi)
@@ -35,7 +36,7 @@ func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templ
 	r.Handle("/static/*", http.StripPrefix("/static/", fileServer))
 
 	// Page resources
-	pages := &pageResource{client: client, handler: handler, renderer: renderer}
+	pages := &pageResource{tasks: client, threads: client, tokens: client, handler: handler, renderer: renderer}
 
 	// Page routes (full HTML pages)
 	r.Get("/", pages.dashboard)
@@ -48,20 +49,20 @@ func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templ
 	r.Get("/api/requests/_form", pages.requestForm)
 
 	r.Route("/api", func(r chi.Router) {
-		sys := &systemResource{client: client, handler: handler}
-		diag := &diagnosticsResource{client: client}
-		evt := &eventsResource{client: client}
-		wrk := &workersResource{client: client, renderer: renderer}
-		req := &requestsResource{client: client, handler: handler, renderer: renderer}
-		thr := &threadsResource{client: client, renderer: renderer}
-		tsk := &tasksResource{client: client, renderer: renderer}
+		sys := &systemResource{rdb: rdb, workers: client, handler: handler}
+		diag := &diagnosticsResource{rdb: rdb}
+		evt := &eventsResource{events: client}
+		wrk := &workersResource{workers: client, renderer: renderer}
+		req := &requestsResource{threads: client, handler: handler, renderer: renderer}
+		thr := &threadsResource{threads: client, tasks: client, tokens: client, renderer: renderer}
+		tsk := &tasksResource{tasks: client, renderer: renderer}
 
 		// Health / stats / diagnostics / events / metrics
 		r.Get("/health", sys.health)
 		r.Get("/stats", sys.stats)
 		r.Get("/diagnostics", diag.get)
 		r.Get("/events", evt.systemEvents)
-		r.Get("/metrics", newMetricsHandler(client).ServeHTTP)
+		r.Get("/metrics", newMetricsHandler(rdb, client).ServeHTTP)
 
 		// Workers
 		r.Get("/workers", wrk.list)
@@ -111,7 +112,9 @@ func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templ
 // ── page resource (full HTML pages) ───────────────────────────────────────
 
 type pageResource struct {
-	client   *tasklib.Client
+	tasks    tasklib.TaskStore
+	threads  tasklib.ThreadStore
+	tokens   tasklib.TokenLedger
 	handler  *request.Handler
 	renderer *templates.Renderer
 }
@@ -119,8 +122,8 @@ type pageResource struct {
 // GET /
 func (pr *pageResource) dashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	tokens, _ := pr.client.GetTokenStats(ctx, tasklib.StatsTotalKey())
-	taskCount, _ := pr.client.GetTokenStatsTaskCount(ctx, tasklib.StatsTotalKey())
+	tokens, _ := pr.tokens.GetTokenStats(ctx, tasklib.StatsTotalKey())
+	taskCount, _ := pr.tokens.GetTokenStatsTaskCount(ctx, tasklib.StatsTotalKey())
 
 	data := map[string]interface{}{}
 	if tokens != nil && tokens.HasAny() {
@@ -131,7 +134,7 @@ func (pr *pageResource) dashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		var rows []statsRow
 		for _, wt := range []string{"master", "claude", "codex", "copilot", "opencode"} {
-			wtTokens, err := pr.client.GetTokenStats(ctx, tasklib.StatsWorkerKey(wt))
+			wtTokens, err := pr.tokens.GetTokenStats(ctx, tasklib.StatsWorkerKey(wt))
 			if err != nil || wtTokens == nil || !wtTokens.HasAny() {
 				continue
 			}
@@ -156,7 +159,7 @@ func (pr *pageResource) threadList(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	sortBy := q.Get("sort_by")
 	sortDir := q.Get("sort_dir")
-	threads, err := pr.client.ListThreads(r.Context(), sortBy, sortDir)
+	threads, err := pr.threads.ListThreads(r.Context(), sortBy, sortDir)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("[webui] thread list page error: %v", err))
 		threads = nil
@@ -180,7 +183,7 @@ func (pr *pageResource) threadDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	exists, err := pr.client.ThreadExists(r.Context(), threadID)
+	exists, err := pr.threads.ThreadExists(r.Context(), threadID)
 	if err != nil || !exists {
 		Page(w, pr.renderer, "page-thread-detail", map[string]interface{}{
 			"Thread": nil,
@@ -188,18 +191,18 @@ func (pr *pageResource) threadDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	thread, err := pr.client.GetThread(r.Context(), threadID)
+	thread, err := pr.threads.GetThread(r.Context(), threadID)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("[webui] thread detail page error: %v", err))
 		Page(w, pr.renderer, "page-thread-detail", map[string]interface{}{"Thread": nil})
 		return
 	}
 
-	running, _ := pr.client.IsRequestRunning(r.Context(), threadID)
-	complete, _ := pr.client.IsThreadComplete(r.Context(), threadID)
+	running, _ := pr.threads.IsRequestRunning(r.Context(), threadID)
+	complete, _ := pr.threads.IsThreadComplete(r.Context(), threadID)
 
 	// Find child threads
-	allThreads, _ := pr.client.ListThreads(r.Context(), "", "")
+	allThreads, _ := pr.threads.ListThreads(r.Context(), "", "")
 	var children []*tasklib.Thread
 	for _, t := range allThreads {
 		if t.ParentThreadID == threadID {
@@ -228,7 +231,7 @@ func (pr *pageResource) taskList(w http.ResponseWriter, r *http.Request) {
 func (pr *pageResource) taskDetail(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("task_id")
 
-	task, err := pr.client.GetTask(r.Context(), taskID)
+	task, err := pr.tasks.GetTask(r.Context(), taskID)
 	if err != nil || task.Status == "" {
 		Page(w, pr.renderer, "page-task-detail", map[string]interface{}{
 			"Task": nil,
@@ -244,7 +247,7 @@ func (pr *pageResource) taskDetail(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch result if task is done
 	if task.Result == "" && (task.Status == "done" || task.Status == "failed") {
-		result, err := pr.client.GetTaskResult(r.Context(), taskID, tail)
+		result, err := pr.tasks.GetTaskResult(r.Context(), taskID, tail)
 		if err == nil {
 			task.Result = result
 		}

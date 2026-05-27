@@ -94,7 +94,7 @@ func main() {
 	log.Info("connected to redis", "host", redisHost, "port", redisPort)
 
 	client := tasklib.NewClient(rdb)
-	reqHandler := request.New(client, cfg)
+	reqHandler := request.New(client, rdb, cfg)
 
 	// Template renderer
 	renderer, err := templates.New()

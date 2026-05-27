@@ -525,59 +525,22 @@ func cmdRequeueStale(cmd *cobra.Command, args []string) error {
 		workers = []string{requeueWorker}
 	}
 
+	olderThan := time.Duration(requeueOlderThan) * time.Second
+
+	var errs []error
 	for _, worker := range workers {
-		processingKey := tasklib.ProcessingKey(worker)
-		queueKey := tasklib.QueueKey(worker)
-
-		items, err := c.RDB().LRange(ctx, processingKey, 0, -1).Result()
+		requeued, err := c.RequeueStale(ctx, worker, olderThan)
 		if err != nil {
-			die(err.Error())
+			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			errs = append(errs, err)
+			continue
 		}
-
-		for _, itemJSON := range items {
-			var task struct {
-				TaskID   string `json:"task_id"`
-				ThreadID string `json:"thread_id"`
-			}
-			if err := json.Unmarshal([]byte(itemJSON), &task); err != nil {
-				c.RDB().LRem(ctx, processingKey, 0, itemJSON)
-				continue
-			}
-
-			status, _ := c.RDB().Get(ctx, tasklib.TaskKey(task.TaskID, "status")).Result()
-			lastStartedAt, _ := c.RDB().Get(ctx, tasklib.TaskKey(task.TaskID, "last_started_at")).Result()
-
-			requeue := false
-			oldStatus := status
-
-			if status == "" || status == "pending" {
-				requeue = true
-			} else if status == "running" && lastStartedAt != "" {
-				started, parseErr := time.Parse("2006-01-02T15:04:05Z", lastStartedAt)
-				if parseErr == nil && time.Since(started) > time.Duration(requeueOlderThan)*time.Second {
-					requeue = true
-				}
-			} else if status == "done" || status == "failed" || status == "cancelled" {
-				c.RDB().LRem(ctx, processingKey, 0, itemJSON)
-				continue
-			}
-
-			if requeue {
-				c.RDB().LPush(ctx, queueKey, itemJSON)
-				c.RDB().LRem(ctx, processingKey, 0, itemJSON)
-				c.RDB().Set(ctx, tasklib.TaskKey(task.TaskID, "status"), "pending", tasklib.TTLTask)
-				pipe := c.RDB().Pipeline()
-				pipe.Incr(ctx, tasklib.TaskKey(task.TaskID, "retry_count"))
-				pipe.Expire(ctx, tasklib.TaskKey(task.TaskID, "retry_count"), tasklib.TTLTask)
-				pipe.Exec(ctx)
-
-				displayStatus := oldStatus
-				if displayStatus == "" {
-					displayStatus = "missing"
-				}
-				fmt.Printf("Requeued: %s (worker=%s, was status=%s)\n", task.TaskID, worker, displayStatus)
-			}
+		for _, taskID := range requeued {
+			fmt.Printf("Requeued: %s (worker=%s)\n", taskID, worker)
 		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%d worker(s) had errors during requeue-stale", len(errs))
 	}
 	return nil
 }

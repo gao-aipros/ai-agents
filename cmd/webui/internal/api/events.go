@@ -10,7 +10,7 @@ import (
 )
 
 type eventsResource struct {
-	client *tasklib.Client
+	events tasklib.EventBus
 }
 
 // GET /api/events?limit=50&type=worker_online
@@ -29,7 +29,7 @@ func (er *eventsResource) systemEvents(w http.ResponseWriter, r *http.Request) {
 			fetchLimit = 1000
 		}
 	}
-	events, err := er.client.GetSystemEvents(r.Context(), fetchLimit)
+	events, err := er.events.GetSystemEvents(r.Context(), fetchLimit)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("[webui] system events error: %v", err))
 		Error(w, http.StatusInternalServerError, "internal error")
@@ -61,7 +61,7 @@ func (er *eventsResource) threadEvents(w http.ResponseWriter, r *http.Request) {
 		limit = 50
 	}
 
-	events, err := er.client.GetThreadEvents(r.Context(), threadID, limit)
+	events, err := er.events.GetThreadEvents(r.Context(), threadID, limit)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("[webui] thread events error: %v", err))
 		Error(w, http.StatusInternalServerError, "internal error")

@@ -70,7 +70,7 @@ func newTestRouter(t *testing.T) *testHarness {
 		TestNotify:        notify,
 	}
 
-	handler := request.New(client, cfg)
+	handler := request.New(client, rdb, cfg)
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	renderer, err := templates.New()
 	if err != nil {

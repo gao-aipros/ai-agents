@@ -181,7 +181,7 @@ func main() {
 			continue
 		}
 
-		processOneTask(log, client, rdb, result, workerType, agentCmd,
+		processOneTask(log, client, client, rdb, result, workerType, agentCmd,
 			taskTimeout, historyWindow, workspaceDir, processingKey, hostname, &tasksProcessed, alertCfg)
 	}
 
@@ -199,7 +199,8 @@ func main() {
 
 func processOneTask(
 	log *slog.Logger,
-	client *tasklib.Client,
+	threads tasklib.ThreadStore,
+	events tasklib.EventBus,
 	rdb *redis.Client,
 	taskJSON, workerType, agentCmd string,
 	defaultTimeout, defaultHistoryWindow int,
@@ -233,14 +234,14 @@ func processOneTask(
 
 	// Read correlation_id from thread state
 	correlationID := ""
-	if threadState, err := client.GetThread(context.Background(), threadID); err != nil {
+	if threadState, err := threads.GetThread(context.Background(), threadID); err != nil {
 		log.Debug("correlation_id lookup failed", "error", err.Error())
 	} else if threadState != nil {
 		correlationID = threadState.CorrelationID
 	}
 
 	// Best-effort event: task_started
-	client.PushThreadEvent(context.Background(), threadID, &tasklib.Event{
+	events.PushThreadEvent(context.Background(), threadID, &tasklib.Event{
 		Type:           tasklib.EventTaskStarted,
 		TaskID:         taskID,
 		WorkerType:     workerType,
@@ -249,7 +250,7 @@ func processOneTask(
 	})
 
 	// Register in active_tasks
-	client.SetActiveTask(context.Background(), taskID, tasklib.TaskInfo{
+	threads.SetActiveTask(context.Background(), taskID, tasklib.TaskInfo{
 		Status:     "running",
 		Worker:     workerType,
 		ThreadID:   threadID,
@@ -289,9 +290,9 @@ func processOneTask(
 	}
 	var msgs []tasklib.Message
 	if groupLabel != "" {
-		msgs, _ = client.GetThreadHistoryTailForWorker(context.Background(), threadID, window, workerType)
+		msgs, _ = threads.GetThreadHistoryTailForWorker(context.Background(), threadID, window, workerType)
 	} else {
-		msgs, _ = client.GetThreadHistoryTail(context.Background(), threadID, window)
+		msgs, _ = threads.GetThreadHistoryTail(context.Background(), threadID, window)
 	}
 	var contextBuilder strings.Builder
 	if len(msgs) > 0 {
@@ -306,7 +307,7 @@ func processOneTask(
 	}
 
 	// Read thread state
-	thread, _ := client.GetThread(context.Background(), threadID)
+	thread, _ := threads.GetThread(context.Background(), threadID)
 	if thread != nil {
 		contextBuilder.WriteString("\n## Current State\n")
 		fmt.Fprintf(&contextBuilder, "status: %s\n", thread.Status)
@@ -350,7 +351,7 @@ func processOneTask(
 		pipe.Exec(context.Background())
 
 		// Best-effort event: task_cancelled
-		client.PushThreadEvent(context.Background(), threadID, &tasklib.Event{
+		events.PushThreadEvent(context.Background(), threadID, &tasklib.Event{
 			Type:           tasklib.EventTaskCancelled,
 			TaskID:         taskID,
 			WorkerType:     workerType,
@@ -372,7 +373,7 @@ func processOneTask(
 		rdb.Expire(context.Background(), tasklib.ThreadMessagesKey(threadID), tasklib.TTLThread)
 
 		rdb.LRem(context.Background(), processingKey, 0, taskJSON)
-		client.RemoveActiveTask(context.Background(), taskID)
+		threads.RemoveActiveTask(context.Background(), taskID)
 		tasksProcessed.Add(1)
 		return
 	}
@@ -489,7 +490,7 @@ func processOneTask(
 	durationMs := int(time.Since(startTime).Milliseconds())
 	switch status {
 	case "done":
-		client.PushThreadEvent(context.Background(), threadID, &tasklib.Event{
+		events.PushThreadEvent(context.Background(), threadID, &tasklib.Event{
 			Type:           tasklib.EventTaskCompleted,
 			TaskID:         taskID,
 			WorkerType:     workerType,
@@ -502,7 +503,7 @@ func processOneTask(
 		if len(cappedStderr) > 10000 {
 			cappedStderr = cappedStderr[:10000]
 		}
-		client.PushThreadEvent(context.Background(), threadID, &tasklib.Event{
+		events.PushThreadEvent(context.Background(), threadID, &tasklib.Event{
 			Type:           tasklib.EventTaskFailed,
 			TaskID:         taskID,
 			WorkerType:     workerType,
@@ -546,7 +547,7 @@ func processOneTask(
 
 	// Cleanup
 	rdb.LRem(context.Background(), processingKey, 0, taskJSON)
-	client.RemoveActiveTask(context.Background(), taskID)
+	threads.RemoveActiveTask(context.Background(), taskID)
 	tasksProcessed.Add(1)
 	log.Info("task complete", "task_id", taskID, "thread_id", threadID, "status", status)
 }

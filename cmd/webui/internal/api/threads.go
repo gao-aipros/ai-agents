@@ -13,7 +13,9 @@ import (
 )
 
 type threadsResource struct {
-	client   *tasklib.Client
+	threads  tasklib.ThreadStore
+	tasks    tasklib.TaskStore
+	tokens   tasklib.TokenLedger
 	renderer *templates.Renderer
 }
 
@@ -44,7 +46,7 @@ func (tr *threadsResource) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	exists, err := tr.client.ThreadExists(r.Context(), threadID)
+	exists, err := tr.threads.ThreadExists(r.Context(), threadID)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -54,7 +56,7 @@ func (tr *threadsResource) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	thread, err := tr.client.CreateThread(r.Context(), threadID, b.Repo, b.ParentThreadID)
+	thread, err := tr.threads.CreateThread(r.Context(), threadID, b.Repo, b.ParentThreadID)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -69,7 +71,7 @@ func (tr *threadsResource) list(w http.ResponseWriter, r *http.Request) {
 	sortBy := q.Get("sort_by")
 	sortDir := q.Get("sort_dir")
 
-	threads, err := tr.client.ListThreads(r.Context(), sortBy, sortDir)
+	threads, err := tr.threads.ListThreads(r.Context(), sortBy, sortDir)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -95,7 +97,7 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusBadRequest, "invalid thread_id")
 		return
 	}
-	exists, err := tr.client.ThreadExists(r.Context(), threadID)
+	exists, err := tr.threads.ThreadExists(r.Context(), threadID)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -104,17 +106,17 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 		Error(w, http.StatusNotFound, "thread not found")
 		return
 	}
-	thread, err := tr.client.GetThread(r.Context(), threadID)
+	thread, err := tr.threads.GetThread(r.Context(), threadID)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
 	}
 
-	running, err := tr.client.IsRequestRunning(r.Context(), threadID)
+	running, err := tr.threads.IsRequestRunning(r.Context(), threadID)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("[webui] IsRequestRunning error thread=%s: %v", threadID, err))
 	}
-	complete, err := tr.client.IsThreadComplete(r.Context(), threadID)
+	complete, err := tr.threads.IsThreadComplete(r.Context(), threadID)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("[webui] IsThreadComplete error thread=%s: %v", threadID, err))
 	}
@@ -130,7 +132,7 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 	var tokenRows []tokenRow
 
 	// Master agent tokens
-	masterTokens, _ := tr.client.GetMasterTokenStats(r.Context(), threadID)
+	masterTokens, _ := tr.tokens.GetMasterTokenStats(r.Context(), threadID)
 	if masterTokens.HasAny() {
 		tokenRows = append(tokenRows, tokenRow{
 			Agent:     "master",
@@ -142,7 +144,7 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Per-worker token aggregation from tasks
-	tasks, _ := tr.client.ListTasks(r.Context(), "", "", threadID, 200, 0, "", "")
+	tasks, _ := tr.tasks.ListTasks(r.Context(), "", "", threadID, 200, 0, "", "")
 	if tasks != nil {
 		type agentToks struct {
 			input, output, cacheRead, cacheWrite, reasoning int64
@@ -177,7 +179,7 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Find child threads
-	children, _ := tr.client.ListThreads(r.Context(), "", "")
+	children, _ := tr.threads.ListThreads(r.Context(), "", "")
 	children = filterChildren(children, threadID)
 
 	if IsHTMX(r) {
@@ -189,7 +191,7 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 			"Children":  children,
 		})
 	} else {
-		messages, err := tr.client.GetThreadHistoryTail(r.Context(), threadID, 20)
+		messages, err := tr.threads.GetThreadHistoryTail(r.Context(), threadID, 20)
 		if err != nil {
 			slog.Warn(fmt.Sprintf("[webui] thread history tail error thread=%s: %v", threadID, err))
 			messages = nil
@@ -217,9 +219,9 @@ func (tr *threadsResource) history(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	if tail > 0 {
-		messages, err = tr.client.GetThreadHistoryTail(r.Context(), threadID, tail)
+		messages, err = tr.threads.GetThreadHistoryTail(r.Context(), threadID, tail)
 	} else {
-		messages, err = tr.client.GetThreadHistory(r.Context(), threadID, offset, limit)
+		messages, err = tr.threads.GetThreadHistory(r.Context(), threadID, offset, limit)
 	}
 
 	if err != nil {
@@ -227,7 +229,7 @@ func (tr *threadsResource) history(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	running, _ := tr.client.IsRequestRunning(r.Context(), threadID)
+	running, _ := tr.threads.IsRequestRunning(r.Context(), threadID)
 
 	if IsHTMX(r) {
 		if q.Get("poll") == "1" {
@@ -264,7 +266,7 @@ func (tr *threadsResource) deleteWorkspace(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	tasks, err := tr.client.ListTasks(r.Context(), "", "running", threadID, 1, 0, "", "")
+	tasks, err := tr.tasks.ListTasks(r.Context(), "", "running", threadID, 1, 0, "", "")
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -274,7 +276,7 @@ func (tr *threadsResource) deleteWorkspace(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	ok, err := tr.client.AcquireRequestLock(r.Context(), threadID, "deleting", tasklib.LockTTL)
+	ok, err := tr.threads.AcquireRequestLock(r.Context(), threadID, "deleting", tasklib.LockTTL)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -283,7 +285,7 @@ func (tr *threadsResource) deleteWorkspace(w http.ResponseWriter, r *http.Reques
 		Error(w, http.StatusConflict, "thread is in use")
 		return
 	}
-	defer tr.client.ReleaseRequestLock(cleanupContext(), threadID)
+	defer tr.threads.ReleaseRequestLock(cleanupContext(), threadID)
 
 	wp := workspacePath(threadID)
 	if err := removeWorkspace(wp); err != nil {
@@ -304,7 +306,7 @@ func (tr *threadsResource) keep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	exists, err := tr.client.ThreadExists(r.Context(), threadID)
+	exists, err := tr.threads.ThreadExists(r.Context(), threadID)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -314,7 +316,7 @@ func (tr *threadsResource) keep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := tr.client.SetThreadTTL(r.Context(), threadID, tasklib.TTLThread); err != nil {
+	if err := tr.threads.SetThreadTTL(r.Context(), threadID, tasklib.TTLThread); err != nil {
 		serverError(w, "internal error", err)
 		return
 	}
@@ -336,7 +338,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	exists, err := tr.client.ThreadExists(r.Context(), threadID)
+	exists, err := tr.threads.ThreadExists(r.Context(), threadID)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -347,7 +349,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Acquire request lock BEFORE subtree discovery to close TOCTOU window.
-	ok, err := tr.client.AcquireRequestLock(r.Context(), threadID, "deleting", tasklib.LockTTL)
+	ok, err := tr.threads.AcquireRequestLock(r.Context(), threadID, "deleting", tasklib.LockTTL)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -356,7 +358,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 		Error(w, http.StatusConflict, "thread is in use")
 		return
 	}
-	defer tr.client.ReleaseRequestLock(cleanupContext(), threadID)
+	defer tr.threads.ReleaseRequestLock(cleanupContext(), threadID)
 
 	// Discover subtree for cascade deletion.
 	// The request lock on the root prevents concurrent operations on the root
@@ -364,7 +366,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 	// Enqueue or child creation during the validation→deletion window is an
 	// accepted trade-off. Acquiring locks on every descendant would be
 	// expensive and risks deadlock with other cascade operations.
-	descendants, err := tr.client.DiscoverDescendants(r.Context(), threadID)
+	descendants, err := tr.threads.DiscoverDescendants(r.Context(), threadID)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -381,7 +383,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 	for _, tid := range allIDs {
 		// Check ThreadLockKey — catches the narrow window where Enqueue has
 		// acquired the lock via Lua but hasn't persisted task status yet.
-		locked, err := tr.client.IsThreadLocked(r.Context(), tid)
+		locked, err := tr.threads.IsThreadLocked(r.Context(), tid)
 		if err != nil {
 			serverError(w, "internal error", err)
 			return
@@ -394,7 +396,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 		// Check ThreadRunningKey on child threads (root lock is held by us).
 		// A child could have a running web UI request with zero active tasks.
 		if tid != threadID {
-			running, err := tr.client.IsRequestRunning(r.Context(), tid)
+			running, err := tr.threads.IsRequestRunning(r.Context(), tid)
 			if err != nil {
 				serverError(w, "internal error", err)
 				return
@@ -413,7 +415,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 	// would be missed — an accepted edge case.
 	var sessionIDs []string
 	for _, tid := range allIDs {
-		tasks, err := tr.client.ListTasks(r.Context(), "", "", tid, 1000, 0, "", "")
+		tasks, err := tr.tasks.ListTasks(r.Context(), "", "", tid, 1000, 0, "", "")
 		if err != nil {
 			serverError(w, "internal error", err)
 			return
@@ -426,7 +428,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 		// Collect session ID for filesystem cleanup after Redis deletion
-		sid, err := tr.client.GetThreadSessionID(r.Context(), tid)
+		sid, err := tr.threads.GetThreadSessionID(r.Context(), tid)
 		if err != nil {
 			slog.Warn(fmt.Sprintf("[webui] get session id error thread=%s: %v", tid, err))
 		}
@@ -437,7 +439,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 
 	// Delete all Redis keys using pre-discovered descendant set (avoids
 	// redundant Redis SCAN vs calling DeleteThread which would re-discover).
-	if err := tr.client.DeleteThreadKnown(cleanupContext(), threadID, descendants); err != nil {
+	if err := tr.threads.DeleteThreadKnown(cleanupContext(), threadID, descendants); err != nil {
 		slog.Warn(fmt.Sprintf("[webui] partial cascade deletion thread=%s: %v", threadID, err))
 		serverError(w, fmt.Sprintf("partial deletion: %v", err), err)
 		return
@@ -467,7 +469,7 @@ func (tr *threadsResource) resetSession(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	sessionID, err := tr.client.GetThreadSessionID(r.Context(), threadID)
+	sessionID, err := tr.threads.GetThreadSessionID(r.Context(), threadID)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -477,7 +479,7 @@ func (tr *threadsResource) resetSession(w http.ResponseWriter, r *http.Request) 
 		removeSessionFile(sessionID)
 	}
 
-	if err := tr.client.SetThreadSessionID(r.Context(), threadID, ""); err != nil {
+	if err := tr.threads.SetThreadSessionID(r.Context(), threadID, ""); err != nil {
 		slog.Warn(fmt.Sprintf("[webui] clear session id error thread=%s: %v", threadID, err))
 		serverError(w, "internal error", err)
 		return

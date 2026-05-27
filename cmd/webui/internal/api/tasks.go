@@ -9,7 +9,7 @@ import (
 )
 
 type tasksResource struct {
-	client   *tasklib.Client
+	tasks    tasklib.TaskStore
 	renderer *templates.Renderer
 }
 
@@ -28,7 +28,7 @@ func (tr *tasksResource) list(w http.ResponseWriter, r *http.Request) {
 	sortBy := q.Get("sort_by")
 	sortDir := q.Get("sort_dir")
 
-	tasks, err := tr.client.ListTasks(r.Context(), worker, status, threadID, limit, offset, sortBy, sortDir)
+	tasks, err := tr.tasks.ListTasks(r.Context(), worker, status, threadID, limit, offset, sortBy, sortDir)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -51,7 +51,7 @@ func (tr *tasksResource) list(w http.ResponseWriter, r *http.Request) {
 // GET /api/tasks/{task_id}
 func (tr *tasksResource) get(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("task_id")
-	task, err := tr.client.GetTask(r.Context(), taskID)
+	task, err := tr.tasks.GetTask(r.Context(), taskID)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -68,7 +68,7 @@ func (tr *tasksResource) result(w http.ResponseWriter, r *http.Request) {
 	taskID := r.PathValue("task_id")
 	tail, _ := strconv.Atoi(r.URL.Query().Get("tail"))
 
-	task, err := tr.client.GetTask(r.Context(), taskID)
+	task, err := tr.tasks.GetTask(r.Context(), taskID)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -78,7 +78,7 @@ func (tr *tasksResource) result(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := tr.client.GetTaskResult(r.Context(), taskID, tail)
+	result, err := tr.tasks.GetTaskResult(r.Context(), taskID, tail)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return

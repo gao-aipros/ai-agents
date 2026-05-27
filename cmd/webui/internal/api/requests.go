@@ -14,7 +14,7 @@ import (
 )
 
 type requestsResource struct {
-	client   *tasklib.Client
+	threads  tasklib.ThreadStore
 	handler  *request.Handler
 	renderer *templates.Renderer
 }
@@ -89,7 +89,7 @@ func (rs *requestsResource) cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := rs.client.CancelRequest(r.Context(), threadID); err != nil {
+	if err := rs.threads.CancelRequest(r.Context(), threadID); err != nil {
 		slog.Warn(fmt.Sprintf("[webui] cancel request redis error thread=%s: %v", threadID, err))
 	}
 
