@@ -123,7 +123,8 @@ func main() {
 	// Background alert monitor for stuck threads and lost heartbeats
 	alertCfg := tasklib.LoadAlertConfig()
 	if alertCfg.IsEnabled() {
-		go runAlertMonitor(bgCtx, services.SysOps, alertCfg)
+		monitor := tasklib.NewMonitor(services.SysOps, alertCfg)
+	go monitor.Run(bgCtx)
 	}
 
 	// Build chi router with page routes, API endpoints, and static files
