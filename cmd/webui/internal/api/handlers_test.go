@@ -47,6 +47,7 @@ func newTestRouter(t *testing.T) *testHarness {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	client := tasklib.NewClient(rdb)
+	services := tasklib.NewServices(rdb)
 
 	workspaceDir, err := os.MkdirTemp("", "webui-api-test-workspace-*")
 	if err != nil {
@@ -78,7 +79,7 @@ func newTestRouter(t *testing.T) *testHarness {
 	}
 	var accessLog atomic.Pointer[slog.Logger]
 	newAccessLogger := func() *slog.Logger { return nil }
-	router := NewRouter(client, handler, renderer, bgCtx, &accessLog, "", newAccessLogger)
+	router := NewRouter(services, handler, renderer, bgCtx, &accessLog, "", newAccessLogger)
 
 	return &testHarness{
 		Router:       router,

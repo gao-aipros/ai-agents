@@ -97,7 +97,7 @@ func main() {
 	rdb := redis.NewClient(&redis.Options{
 		Addr: fmt.Sprintf("%s:%d", redisHost, redisPort),
 	})
-	client := tasklib.NewClient(rdb)
+	client := tasklib.NewServices(rdb)
 
 	hostname, _ := os.Hostname()
 	if hostname == "" {
@@ -133,11 +133,11 @@ func main() {
 				QueueDepth:     int(qd),
 				UptimeSeconds:  int64(time.Since(startTime).Seconds()),
 			}
-			if err := client.UpdateWorkerHeartbeat(context.Background(), workerType, hostname, hb); err != nil {
+			if err := client.Workers.UpdateWorkerHeartbeat(context.Background(), workerType, hostname, hb); err != nil {
 				log.Warn("heartbeat failed", "error", err.Error())
 			} else if !heartbeatOnlineSent {
 				// Best-effort event: worker_online on first successful heartbeat
-				client.PushSystemEvent(context.Background(), &tasklib.Event{
+				client.Events.PushSystemEvent(context.Background(), &tasklib.Event{
 					Type:           tasklib.EventWorkerOnline,
 					WorkerType:     workerType,
 					WorkerHostname: hostname,
@@ -173,7 +173,7 @@ func main() {
 				rdb = redis.NewClient(&redis.Options{
 					Addr: fmt.Sprintf("%s:%d", redisHost, redisPort),
 				})
-				client = tasklib.NewClient(rdb)
+				client = tasklib.NewServices(rdb)
 			}
 			if !running.Load() {
 				break
@@ -181,14 +181,14 @@ func main() {
 			continue
 		}
 
-		processOneTask(log, client, client, rdb, result, workerType, agentCmd,
+		processOneTask(log, client.Threads, client.Events, rdb, result, workerType, agentCmd,
 			taskTimeout, historyWindow, workspaceDir, processingKey, hostname, &tasksProcessed, alertCfg)
 	}
 
 	log.Info("worker shutting down")
 
 	// Best-effort event: worker_offline on shutdown
-	client.PushSystemEvent(context.Background(), &tasklib.Event{
+	client.Events.PushSystemEvent(context.Background(), &tasklib.Event{
 		Type:           tasklib.EventWorkerOffline,
 		WorkerType:     workerType,
 		WorkerHostname: hostname,

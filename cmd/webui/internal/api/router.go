@@ -18,8 +18,8 @@ import (
 )
 
 // NewRouter creates a chi router with all /api/ endpoints and page routes.
-func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templates.Renderer, shutdownCtx context.Context, accessLog *atomic.Pointer[slog.Logger], adminKey string, newAccessLogger func() *slog.Logger) chi.Router {
-	rdb := client.RDB()
+func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *templates.Renderer, shutdownCtx context.Context, accessLog *atomic.Pointer[slog.Logger], adminKey string, newAccessLogger func() *slog.Logger) chi.Router {
+	rdb := services.RDB()
 	r := chi.NewRouter()
 
 	// Middleware stack (all middleware must be registered before any routes in chi)
@@ -36,7 +36,7 @@ func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templ
 	r.Handle("/static/*", http.StripPrefix("/static/", fileServer))
 
 	// Page resources
-	pages := &pageResource{tasks: client, threads: client, tokens: client, handler: handler, renderer: renderer}
+	pages := &pageResource{tasks: services.Tasks, threads: services.Threads, tokens: services.Tokens, handler: handler, renderer: renderer}
 
 	// Page routes (full HTML pages)
 	r.Get("/", pages.dashboard)
@@ -49,20 +49,20 @@ func NewRouter(client *tasklib.Client, handler *request.Handler, renderer *templ
 	r.Get("/api/requests/_form", pages.requestForm)
 
 	r.Route("/api", func(r chi.Router) {
-		sys := &systemResource{rdb: rdb, workers: client, handler: handler}
+		sys := &systemResource{rdb: rdb, workers: services.Workers, handler: handler}
 		diag := &diagnosticsResource{rdb: rdb}
-		evt := &eventsResource{events: client}
-		wrk := &workersResource{workers: client, renderer: renderer}
-		req := &requestsResource{threads: client, handler: handler, renderer: renderer}
-		thr := &threadsResource{threads: client, tasks: client, tokens: client, renderer: renderer}
-		tsk := &tasksResource{tasks: client, renderer: renderer}
+		evt := &eventsResource{events: services.Events}
+		wrk := &workersResource{workers: services.Workers, renderer: renderer}
+		req := &requestsResource{threads: services.Threads, handler: handler, renderer: renderer}
+		thr := &threadsResource{threads: services.Threads, tasks: services.Tasks, tokens: services.Tokens, renderer: renderer}
+		tsk := &tasksResource{tasks: services.Tasks, renderer: renderer}
 
 		// Health / stats / diagnostics / events / metrics
 		r.Get("/health", sys.health)
 		r.Get("/stats", sys.stats)
 		r.Get("/diagnostics", diag.get)
 		r.Get("/events", evt.systemEvents)
-		r.Get("/metrics", newMetricsHandler(rdb, client).ServeHTTP)
+		r.Get("/metrics", newMetricsHandler(rdb, services.Workers).ServeHTTP)
 
 		// Workers
 		r.Get("/workers", wrk.list)

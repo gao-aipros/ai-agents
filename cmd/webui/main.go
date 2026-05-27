@@ -93,8 +93,8 @@ func main() {
 	}
 	log.Info("connected to redis", "host", redisHost, "port", redisPort)
 
-	client := tasklib.NewClient(rdb)
-	reqHandler := request.New(client, rdb, cfg)
+	services := tasklib.NewServices(rdb)
+	reqHandler := request.New(services.Threads, rdb, cfg)
 
 	// Template renderer
 	renderer, err := templates.New()
@@ -115,7 +115,7 @@ func main() {
 	}
 
 	// Build chi router with page routes, API endpoints, and static files
-	router := api.NewRouter(client, reqHandler, renderer, bgCtx, &accessLog, adminAPIKey, newAccessLogger)
+	router := api.NewRouter(services, reqHandler, renderer, bgCtx, &accessLog, adminAPIKey, newAccessLogger)
 
 	srv := &http.Server{
 		Addr:    ":" + port,
