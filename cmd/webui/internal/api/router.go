@@ -18,7 +18,7 @@ import (
 )
 
 // NewRouter creates a chi router with all /api/ endpoints and page routes.
-func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *templates.Renderer, shutdownCtx context.Context, accessLog *atomic.Pointer[slog.Logger], adminKey string, newAccessLogger func() *slog.Logger) chi.Router {
+func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *templates.Renderer, shutdownCtx context.Context, accessLog *atomic.Pointer[slog.Logger], newAccessLogger func() *slog.Logger, mwCfg MiddlewareConfig) chi.Router {
 	rdb := services.RDB()
 	r := chi.NewRouter()
 
@@ -27,7 +27,7 @@ func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *t
 	r.Use(accessLogMiddleware(accessLog))
 	r.Use(chimw.RealIP)
 	r.Use(recoverMiddleware)
-	r.Use(authMiddleware)
+	r.Use(authMiddleware(mwCfg.AuthKey))
 	r.Use(csrfMiddleware(renderer.CSRFToken))
 	r.Use(contentTypeMiddleware)
 
@@ -53,8 +53,8 @@ func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *t
 		diag := &diagnosticsResource{rdb: rdb, scanner: services.Scanner}
 		evt := &eventsResource{events: services.Events}
 		wrk := &workersResource{workers: services.Workers, renderer: renderer}
-		req := &requestsResource{threads: services.Threads, handler: handler, renderer: renderer}
-		thr := &threadsResource{threads: services.Threads, tasks: services.Tasks, tokens: services.Tokens, renderer: renderer}
+		req := &requestsResource{threads: services.Threads, handler: handler, renderer: renderer, workspaceDir: mwCfg.WorkspaceDir, claudeSessionsDir: mwCfg.ClaudeSessionsDir}
+		thr := &threadsResource{threads: services.Threads, tasks: services.Tasks, tokens: services.Tokens, renderer: renderer, workspaceDir: mwCfg.WorkspaceDir, claudeSessionsDir: mwCfg.ClaudeSessionsDir}
 		tsk := &tasksResource{tasks: services.Tasks, renderer: renderer}
 
 		// Health / stats / diagnostics / events / metrics
@@ -70,24 +70,24 @@ func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *t
 		r.Get("/workers/{worker_type}/instances", wrk.instances)
 
 		// Requests — strict rate limits
-		r.With(rateLimitMiddleware(requestsLimiter), maxBytesMiddleware(32*1024)).
+		r.With(rateLimitMiddleware(mwCfg.RequestsLimiter), maxBytesMiddleware(32*1024)).
 			Post("/requests", req.submit)
-		r.With(rateLimitMiddleware(defaultLimiter)).
+		r.With(rateLimitMiddleware(mwCfg.DefaultLimiter)).
 			Post("/threads/{thread_id}/cancel", req.cancel)
 
 		// Threads
-		r.With(rateLimitMiddleware(threadsLimiter)).Post("/threads", thr.create)
+		r.With(rateLimitMiddleware(mwCfg.ThreadsLimiter)).Post("/threads", thr.create)
 		r.Get("/threads", thr.list)
 		r.Get("/threads/{thread_id}", thr.get)
 		r.Get("/threads/{thread_id}/history", thr.history)
 		r.Get("/threads/{thread_id}/events", evt.threadEvents)
-		r.With(rateLimitMiddleware(defaultLimiter)).
+		r.With(rateLimitMiddleware(mwCfg.DefaultLimiter)).
 			Delete("/threads/{thread_id}", thr.deleteThread)
-		r.With(rateLimitMiddleware(defaultLimiter)).
+		r.With(rateLimitMiddleware(mwCfg.DefaultLimiter)).
 			Delete("/threads/{thread_id}/workspace", thr.deleteWorkspace)
-		r.With(rateLimitMiddleware(defaultLimiter)).
+		r.With(rateLimitMiddleware(mwCfg.DefaultLimiter)).
 			Post("/threads/{thread_id}/keep", thr.keep)
-		r.With(rateLimitMiddleware(defaultLimiter)).
+		r.With(rateLimitMiddleware(mwCfg.DefaultLimiter)).
 			Post("/threads/{thread_id}/reset-session", thr.resetSession)
 
 		// Tasks
@@ -97,14 +97,14 @@ func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *t
 
 		// Admin (gated by adminAuthMiddleware; authMiddleware skips /api/admin/ paths)
 		admin := &adminResource{accessLog: accessLog, newAccessLogger: newAccessLogger}
-		r.With(adminAuthMiddleware(adminKey)).Get("/admin/log-access", admin.logAccessHandler)
-		r.With(adminAuthMiddleware(adminKey)).Put("/admin/log-access", admin.logAccessHandler)
+		r.With(adminAuthMiddleware(mwCfg.AdminKey)).Get("/admin/log-access", admin.logAccessHandler)
+		r.With(adminAuthMiddleware(mwCfg.AdminKey)).Put("/admin/log-access", admin.logAccessHandler)
 	})
 
 	// Start rate limiter cleanup goroutines
-	go requestsLimiter.cleanup(shutdownCtx)
-	go threadsLimiter.cleanup(shutdownCtx)
-	go defaultLimiter.cleanup(shutdownCtx)
+	go mwCfg.RequestsLimiter.cleanup(shutdownCtx)
+	go mwCfg.ThreadsLimiter.cleanup(shutdownCtx)
+	go mwCfg.DefaultLimiter.cleanup(shutdownCtx)
 
 	return r
 }

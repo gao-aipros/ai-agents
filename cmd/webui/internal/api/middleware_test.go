@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,12 +14,7 @@ import (
 // ── auth middleware tests ──────────────────────────────────────────────────
 
 func TestAuthMiddleware_NoKeySet(t *testing.T) {
-	// Ensure no API key is set
-	oldKey := apiKey
-	apiKey = ""
-	defer func() { apiKey = oldKey }()
-
-	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := authMiddleware("")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -34,11 +28,7 @@ func TestAuthMiddleware_NoKeySet(t *testing.T) {
 }
 
 func TestAuthMiddleware_KeySet_NoHeader(t *testing.T) {
-	oldKey := apiKey
-	apiKey = "test-secret"
-	defer func() { apiKey = oldKey }()
-
-	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := authMiddleware("test-secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -52,11 +42,7 @@ func TestAuthMiddleware_KeySet_NoHeader(t *testing.T) {
 }
 
 func TestAuthMiddleware_KeySet_ValidBearer(t *testing.T) {
-	oldKey := apiKey
-	apiKey = "test-secret"
-	defer func() { apiKey = oldKey }()
-
-	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := authMiddleware("test-secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -71,11 +57,7 @@ func TestAuthMiddleware_KeySet_ValidBearer(t *testing.T) {
 }
 
 func TestAuthMiddleware_KeySet_WrongBearer(t *testing.T) {
-	oldKey := apiKey
-	apiKey = "test-secret"
-	defer func() { apiKey = oldKey }()
-
-	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := authMiddleware("test-secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -90,11 +72,7 @@ func TestAuthMiddleware_KeySet_WrongBearer(t *testing.T) {
 }
 
 func TestAuthMiddleware_KeySet_ValidQueryParam(t *testing.T) {
-	oldKey := apiKey
-	apiKey = "test-secret"
-	defer func() { apiKey = oldKey }()
-
-	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := authMiddleware("test-secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -108,11 +86,7 @@ func TestAuthMiddleware_KeySet_ValidQueryParam(t *testing.T) {
 }
 
 func TestAuthMiddleware_KeySet_WrongQueryParam(t *testing.T) {
-	oldKey := apiKey
-	apiKey = "test-secret"
-	defer func() { apiKey = oldKey }()
-
-	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := authMiddleware("test-secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -126,11 +100,7 @@ func TestAuthMiddleware_KeySet_WrongQueryParam(t *testing.T) {
 }
 
 func TestAuthMiddleware_KeySet_EmptyQueryParam(t *testing.T) {
-	oldKey := apiKey
-	apiKey = "test-secret"
-	defer func() { apiKey = oldKey }()
-
-	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := authMiddleware("test-secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -144,11 +114,7 @@ func TestAuthMiddleware_KeySet_EmptyQueryParam(t *testing.T) {
 }
 
 func TestAuthMiddleware_KeySet_HeaderOverridesQueryParam(t *testing.T) {
-	oldKey := apiKey
-	apiKey = "test-secret"
-	defer func() { apiKey = oldKey }()
-
-	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := authMiddleware("test-secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -163,11 +129,7 @@ func TestAuthMiddleware_KeySet_HeaderOverridesQueryParam(t *testing.T) {
 }
 
 func TestAuthMiddleware_KeySet_WrongScheme(t *testing.T) {
-	oldKey := apiKey
-	apiKey = "test-secret"
-	defer func() { apiKey = oldKey }()
-
-	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := authMiddleware("test-secret")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -498,10 +460,6 @@ func TestSanitizeQuery_NoAPIKeyUnchanged(t *testing.T) {
 // api_key before Logger would see it, while authMiddleware still authenticates
 // successfully via the context value.
 func TestSanitizeBeforeLogger_AuthPasses(t *testing.T) {
-	oldKey := apiKey
-	apiKey = "test-secret"
-	defer func() { apiKey = oldKey }()
-
 	var loggedURI string
 
 	// Simulate full stack: sanitize → logger → auth
@@ -509,7 +467,7 @@ func TestSanitizeBeforeLogger_AuthPasses(t *testing.T) {
 		// Logger would see this RequestURI
 		loggedURI = r.RequestURI
 		// Then auth reads from context (set by sanitize)
-		authMiddleware(http.HandlerFunc(func(w2 http.ResponseWriter, r2 *http.Request) {
+		authMiddleware("test-secret")(http.HandlerFunc(func(w2 http.ResponseWriter, r2 *http.Request) {
 			w2.WriteHeader(http.StatusOK)
 		})).ServeHTTP(w, r)
 	}))
@@ -525,18 +483,6 @@ func TestSanitizeBeforeLogger_AuthPasses(t *testing.T) {
 	if strings.Contains(loggedURI, "api_key") {
 		t.Errorf("RequestURI visible to Logger still contains api_key: %q", loggedURI)
 	}
-}
-
-// ── init warning test ─────────────────────────────────────────────────────
-
-func TestAPIKeyInitWarning(t *testing.T) {
-	// apiKey is initialized from env in init(). Verify it reads correctly.
-	os.Setenv("WEBUI_API_KEY", "custom-key")
-	// Can't re-run init(), just verify env var is readable
-	if key := os.Getenv("WEBUI_API_KEY"); key != "custom-key" {
-		t.Errorf("WEBUI_API_KEY = %q, want %q", key, "custom-key")
-	}
-	os.Unsetenv("WEBUI_API_KEY")
 }
 
 // ── access log middleware tests ────────────────────────────────────────────

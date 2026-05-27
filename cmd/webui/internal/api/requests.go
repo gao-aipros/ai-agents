@@ -14,9 +14,11 @@ import (
 )
 
 type requestsResource struct {
-	threads  tasklib.ThreadStore
-	handler  *request.Handler
-	renderer *templates.Renderer
+	threads           tasklib.ThreadStore
+	handler           *request.Handler
+	renderer          *templates.Renderer
+	workspaceDir      string
+	claudeSessionsDir string
 }
 
 // POST /api/requests

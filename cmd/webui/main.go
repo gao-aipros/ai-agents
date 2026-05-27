@@ -75,9 +75,21 @@ func main() {
 		accessLog.Store(newAccessLogger())
 	}
 
-	adminAPIKey := env.String("ADMIN_API_KEY", os.Getenv("WEBUI_API_KEY"))
+	// ── env-derived middleware config ───────────────────────────────────
+	mwCfg := api.MiddlewareConfig{
+		AuthKey:           os.Getenv("WEBUI_API_KEY"),
+		AdminKey:          env.String("ADMIN_API_KEY", os.Getenv("WEBUI_API_KEY")),
+		RequestsLimiter:   api.NewRateLimiter(10, time.Minute),
+		ThreadsLimiter:    api.NewRateLimiter(30, time.Minute),
+		DefaultLimiter:    api.NewRateLimiter(60, time.Minute),
+		WorkspaceDir:      env.String("WORKSPACE_DIR", "/workspace"),
+		ClaudeSessionsDir: env.String("CLAUDE_SESSIONS_DIR", "/home/agent/.claude"),
+	}
 
 	cfg := request.DefaultConfig()
+	cfg.WorkspaceDir = mwCfg.WorkspaceDir
+	cfg.ClaudeSessionsDir = mwCfg.ClaudeSessionsDir
+
 	port := env.String("WEBUI_PORT", "8000")
 
 	// Redis connection
@@ -115,7 +127,7 @@ func main() {
 	}
 
 	// Build chi router with page routes, API endpoints, and static files
-	router := api.NewRouter(services, reqHandler, renderer, bgCtx, &accessLog, adminAPIKey, newAccessLogger)
+	router := api.NewRouter(services, reqHandler, renderer, bgCtx, &accessLog, newAccessLogger, mwCfg)
 
 	srv := &http.Server{
 		Addr:    ":" + port,
