@@ -87,14 +87,16 @@ func newTestHandler(t *testing.T) (*Handler, *miniredis.Miniredis, chan string) 
 
 	notify := make(chan string, 10)
 	cfg := Config{
-		ClaudePath:        "",
-		ClaudeSessionsDir: sessionsDir,
-		RequestTimeout:    30 * time.Second,
-		MaxConcurrent:     5,
-		ShutdownGrace:     5 * time.Second,
-		WorkspaceDir:      workspaceDir,
-		OutputFormat:      "text",
-		TestNotify:        notify,
+		ClaudePath: "",
+		Paths: &PathsConfig{
+			WorkspaceDir:      workspaceDir,
+			ClaudeSessionsDir: sessionsDir,
+		},
+		RequestTimeout: 30 * time.Second,
+		MaxConcurrent:  5,
+		ShutdownGrace:  5 * time.Second,
+		OutputFormat:   "text",
+		TestNotify:     notify,
 	}
 	handler := New(client, client, client, client, cfg)
 	return handler, mr, notify
@@ -110,7 +112,7 @@ func TestSubmit_Success(t *testing.T) {
 		"Running command to check things.",
 		"Task completed successfully",
 	}
-	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, lines, 0)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.Paths.WorkspaceDir, lines, 0)
 
 	ctx := context.Background()
 	result, err := handler.Submit(ctx, "test-thread", "Do something", "owner/repo")
@@ -200,7 +202,7 @@ func TestSubmit_ErrorResult(t *testing.T) {
 
 	// Non-zero exit with stderr → error message.
 	handler.cfg.ClaudePath = writeFakeClaudeWithStderr(
-		handler.cfg.WorkspaceDir,
+		handler.cfg.Paths.WorkspaceDir,
 		nil,
 		[]string{"Permission denied"},
 		1,
@@ -251,7 +253,7 @@ func TestSubmit_ThreadBusy(t *testing.T) {
 	}
 	_ = mr
 
-	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, []string{"ok"}, 0)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.Paths.WorkspaceDir, []string{"ok"}, 0)
 
 	_, err = handler.Submit(ctx, "busy-thread", "Another request", "")
 	if err == nil {
@@ -281,7 +283,7 @@ func TestSubmit_ConcurrencyLimit(t *testing.T) {
 func TestSubmit_CreatesThread(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
-	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, []string{"done"}, 0)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.Paths.WorkspaceDir, []string{"done"}, 0)
 
 	ctx := context.Background()
 	_, err := handler.Submit(ctx, "new-thread", "Create me a thread", "owner/repo")
@@ -309,7 +311,7 @@ func TestSubmit_CreatesThread(t *testing.T) {
 func TestSubmit_StoresSessionID(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
-	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, []string{"ok"}, 0)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.Paths.WorkspaceDir, []string{"ok"}, 0)
 
 	ctx := context.Background()
 	_, err := handler.Submit(ctx, "session-thread", "First request", "")
@@ -337,7 +339,7 @@ func TestSubmit_StoresSessionID(t *testing.T) {
 func TestCancel_RemovesRegistration(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
-	handler.cfg.ClaudePath = filepath.Join(handler.cfg.WorkspaceDir, "fake-slow")
+	handler.cfg.ClaudePath = filepath.Join(handler.cfg.Paths.WorkspaceDir, "fake-slow")
 	os.WriteFile(handler.cfg.ClaudePath, []byte("#!/bin/bash\necho 'started'\nexec sleep 30\n"), 0755)
 
 	ctx := context.Background()
@@ -377,7 +379,7 @@ func TestCancel_MidFlight(t *testing.T) {
 echo 'started'
 exec sleep 30
 `
-	handler.cfg.ClaudePath = filepath.Join(handler.cfg.WorkspaceDir, "fake-claude")
+	handler.cfg.ClaudePath = filepath.Join(handler.cfg.Paths.WorkspaceDir, "fake-claude")
 	os.WriteFile(handler.cfg.ClaudePath, []byte(script), 0755)
 
 	ctx := context.Background()
@@ -426,7 +428,7 @@ func TestCancel_NoRunningRequest(t *testing.T) {
 func TestShutdown_WaitsForCompletion(t *testing.T) {
 	handler, _, _ := newTestHandler(t)
 
-	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, []string{"done"}, 0)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.Paths.WorkspaceDir, []string{"done"}, 0)
 	handler.cfg.ShutdownGrace = 10 * time.Second
 
 	ctx := context.Background()
@@ -483,7 +485,7 @@ func TestSubmit_EmptyOutput(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
 	// Exit 0 with no stdout → error (no output produced)
-	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, nil, 0)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.Paths.WorkspaceDir, nil, 0)
 
 	ctx := context.Background()
 	_, err := handler.Submit(ctx, "empty-thread", "Do something", "")
@@ -515,7 +517,7 @@ func TestSubmit_EmptyOutputWithStderr(t *testing.T) {
 
 	// Exit 0 with no stdout + non-empty stderr → error includes stderr detail
 	handler.cfg.ClaudePath = writeFakeClaudeWithStderr(
-		handler.cfg.WorkspaceDir,
+		handler.cfg.Paths.WorkspaceDir,
 		nil,
 		[]string{"some stderr output"},
 		0,
@@ -554,7 +556,7 @@ func TestStderrCapturedOnError(t *testing.T) {
 
 	// Non-zero exit with stderr → error message should contain stderr.
 	handler.cfg.ClaudePath = writeFakeClaudeWithStderr(
-		handler.cfg.WorkspaceDir,
+		handler.cfg.Paths.WorkspaceDir,
 		[]string{"Working on it..."},
 		[]string{"Error: DeepSeek API returned 500 Internal Server Error", "event=api_error status=500"},
 		1,
@@ -603,7 +605,7 @@ func TestSubmit_ThreadBusyNoOrphanedMessage(t *testing.T) {
 		t.Fatal("expected lock to be acquired")
 	}
 
-	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, []string{"ok"}, 0)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.Paths.WorkspaceDir, []string{"ok"}, 0)
 
 	_, err = handler.Submit(ctx, "orphan-thread", "This should fail", "")
 	if err != ErrThreadBusy {
@@ -663,7 +665,7 @@ func TestMustUUID(t *testing.T) {
 func TestLargeLineHandling(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
-	script := filepath.Join(handler.cfg.WorkspaceDir, "fake-large-claude")
+	script := filepath.Join(handler.cfg.Paths.WorkspaceDir, "fake-large-claude")
 	scriptContent := `#!/usr/bin/env python3
 import sys
 
@@ -722,7 +724,7 @@ sys.exit(0)
 func TestLargeStderrHandling(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
-	script := filepath.Join(handler.cfg.WorkspaceDir, "fake-large-stderr")
+	script := filepath.Join(handler.cfg.Paths.WorkspaceDir, "fake-large-stderr")
 	scriptContent := `#!/usr/bin/env python3
 import sys
 
@@ -806,7 +808,7 @@ func TestRunSubprocess_SetsThreadEnvVar(t *testing.T) {
 	// Fake claude script echoes $THREAD so we can verify it was set.
 	// Using inline script instead of writeFakeClaude helper: the helper
 	// uses single-quoted echo which would prevent $THREAD expansion.
-	script := filepath.Join(handler.cfg.WorkspaceDir, "fake-claude-env")
+	script := filepath.Join(handler.cfg.Paths.WorkspaceDir, "fake-claude-env")
 	scriptContent := `#!/bin/bash
 echo "THREAD=$THREAD"
 `
@@ -844,7 +846,7 @@ echo "THREAD=$THREAD"
 
 func TestSubmitDoesNotOverwriteTaskStatus(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
-	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, []string{"done"}, 0)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.Paths.WorkspaceDir, []string{"done"}, 0)
 
 	ctx := context.Background()
 	threadID := "locked-status-thread"
@@ -896,7 +898,7 @@ func TestSubmit_StderrWithSuccess(t *testing.T) {
 
 	// Exit 0 with warning on stderr → should be marked complete, not error.
 	handler.cfg.ClaudePath = writeFakeClaudeWithStderr(
-		handler.cfg.WorkspaceDir,
+		handler.cfg.Paths.WorkspaceDir,
 		[]string{"Task completed successfully"},
 		[]string{"Warning: deprecation notice"},
 		0,
@@ -959,14 +961,16 @@ func newTestHandlerStreamJSON(t *testing.T) (*Handler, *miniredis.Miniredis, cha
 
 	notify := make(chan string, 10)
 	cfg := Config{
-		ClaudePath:        "",
-		ClaudeSessionsDir: sessionsDir,
-		RequestTimeout:    30 * time.Second,
-		MaxConcurrent:     5,
-		ShutdownGrace:     5 * time.Second,
-		WorkspaceDir:      workspaceDir,
-		OutputFormat:      "stream-json",
-		TestNotify:        notify,
+		ClaudePath: "",
+		Paths: &PathsConfig{
+			WorkspaceDir:      workspaceDir,
+			ClaudeSessionsDir: sessionsDir,
+		},
+		RequestTimeout: 30 * time.Second,
+		MaxConcurrent:  5,
+		ShutdownGrace:  5 * time.Second,
+		OutputFormat:   "stream-json",
+		TestNotify:     notify,
 	}
 	handler := New(client, client, client, client, cfg)
 	return handler, mr, notify
@@ -981,7 +985,7 @@ func TestStreamJSON_Success(t *testing.T) {
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"Running command:"},{"type":"tool_use","text":""}]}}`,
 		`{"type":"result","subtype":"success","is_error":false,"result":"Task completed successfully"}`,
 	}
-	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, lines, 0)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.Paths.WorkspaceDir, lines, 0)
 
 	ctx := context.Background()
 	_, err := handler.Submit(ctx, "json-thread", "Do something", "")
@@ -1035,7 +1039,7 @@ func TestStreamJSON_ErrorResult(t *testing.T) {
 	lines := []string{
 		`{"type":"result","subtype":"error_during_execution","is_error":true,"result":"Permission denied"}`,
 	}
-	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, lines, 1)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.Paths.WorkspaceDir, lines, 1)
 
 	ctx := context.Background()
 	_, err := handler.Submit(ctx, "json-err-thread", "Do something dangerous", "")
@@ -1071,7 +1075,7 @@ func TestStreamJSON_Dedup(t *testing.T) {
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"The bug was on line 42, fixed it."}]}}`,
 		`{"type":"result","subtype":"success","is_error":false,"result":"The bug was on line 42, fixed it."}`,
 	}
-	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.WorkspaceDir, lines, 0)
+	handler.cfg.ClaudePath = writeFakeClaude(handler.cfg.Paths.WorkspaceDir, lines, 0)
 
 	ctx := context.Background()
 	_, err := handler.Submit(ctx, "json-dedup-thread", "Fix the bug", "")
@@ -1108,7 +1112,7 @@ func TestStreamJSON_Dedup(t *testing.T) {
 func TestStreamJSON_StderrOnCrash(t *testing.T) {
 	handler, _, notify := newTestHandlerStreamJSON(t)
 
-	script := filepath.Join(handler.cfg.WorkspaceDir, "fake-json-crash")
+	script := filepath.Join(handler.cfg.Paths.WorkspaceDir, "fake-json-crash")
 	scriptContent := `#!/bin/bash
 echo '{"type":"system","subtype":"init"}'
 echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Working on it..."}]}}'

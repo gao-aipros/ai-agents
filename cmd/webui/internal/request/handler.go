@@ -21,14 +21,19 @@ import (
 	"github.com/noodle05/ai-agents/tasklib"
 )
 
+// PathsConfig holds filesystem paths shared across components.
+type PathsConfig struct {
+	WorkspaceDir      string
+	ClaudeSessionsDir string
+}
+
 // Config holds configuration for the request handler.
 type Config struct {
-	ClaudePath        string
-	ClaudeSessionsDir string
-	RequestTimeout    time.Duration
-	MaxConcurrent     int
-	ShutdownGrace     time.Duration
-	WorkspaceDir      string
+	ClaudePath     string
+	Paths          *PathsConfig
+	RequestTimeout time.Duration
+	MaxConcurrent  int
+	ShutdownGrace  time.Duration
 	// OutputFormat controls the claude -p output mode: "text" (plain -p) or
 	// "stream-json" (--output-format stream-json --verbose). Default "text".
 	OutputFormat string
@@ -40,13 +45,15 @@ type Config struct {
 // DefaultConfig returns a Config with defaults from environment variables.
 func DefaultConfig() Config {
 	return Config{
-		ClaudePath:        env.String("CLAUDE_PATH", "/usr/local/bin/claude"),
-		ClaudeSessionsDir: env.String("CLAUDE_SESSIONS_DIR", "/home/agent/.claude"),
-		RequestTimeout:    time.Duration(env.Int("REQUEST_TIMEOUT", tasklib.DefaultRequestTimeout)) * time.Second,
-		MaxConcurrent:     env.Int("MAX_CONCURRENT_REQUESTS", 5),
-		ShutdownGrace:     time.Duration(env.Int("REQUEST_SHUTDOWN_GRACE", 60)) * time.Second,
-		WorkspaceDir:      env.String("WORKSPACE_DIR", "/workspace"),
-		OutputFormat:      env.String("CLAUDE_OUTPUT_FORMAT", "text"),
+		ClaudePath: env.String("CLAUDE_PATH", "/usr/local/bin/claude"),
+		Paths: &PathsConfig{
+			WorkspaceDir:      env.String("WORKSPACE_DIR", "/workspace"),
+			ClaudeSessionsDir: env.String("CLAUDE_SESSIONS_DIR", "/home/agent/.claude"),
+		},
+		RequestTimeout: time.Duration(env.Int("REQUEST_TIMEOUT", tasklib.DefaultRequestTimeout)) * time.Second,
+		MaxConcurrent:  env.Int("MAX_CONCURRENT_REQUESTS", 5),
+		ShutdownGrace:  time.Duration(env.Int("REQUEST_SHUTDOWN_GRACE", 60)) * time.Second,
+		OutputFormat:   env.String("CLAUDE_OUTPUT_FORMAT", "text"),
 	}
 }
 
@@ -167,7 +174,7 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 
 	useResume := false
 	if sessionID != "" {
-		if sessionFileExists(h.cfg.ClaudeSessionsDir, sessionID) {
+		if sessionFileExists(h.cfg.Paths.ClaudeSessionsDir, sessionID) {
 			useResume = true
 		} else {
 			h.logger.Info(fmt.Sprintf("thread=%s session file missing for %s, generating fresh session", threadID, sessionID))
@@ -319,7 +326,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 	h.logger.Info(fmt.Sprintf("thread=%s request=%s spawning claude -p", threadID, requestID))
 
 	cmd := exec.CommandContext(ctx, h.cfg.ClaudePath, args...)
-	cmd.Dir = filepath.Join(h.cfg.WorkspaceDir, threadID)
+	cmd.Dir = filepath.Join(h.cfg.Paths.WorkspaceDir, threadID)
 	var env []string
 	for _, e := range os.Environ() {
 		if !strings.HasPrefix(e, "THREAD=") {

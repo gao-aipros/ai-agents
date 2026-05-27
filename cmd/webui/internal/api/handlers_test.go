@@ -62,14 +62,16 @@ func newTestRouter(t *testing.T, mwCfg MiddlewareConfig) *testHarness {
 
 	notify := make(chan string, 10)
 	cfg := request.Config{
-		ClaudePath:        "/bin/true",
-		ClaudeSessionsDir: sessionsDir,
-		RequestTimeout:    30 * time.Second,
-		MaxConcurrent:     5,
-		ShutdownGrace:     5 * time.Second,
-		WorkspaceDir:      workspaceDir,
-		OutputFormat:      "text",
-		TestNotify:        notify,
+		ClaudePath: "/bin/true",
+		Paths: &request.PathsConfig{
+			WorkspaceDir:      workspaceDir,
+			ClaudeSessionsDir: sessionsDir,
+		},
+		RequestTimeout: 30 * time.Second,
+		MaxConcurrent:  5,
+		ShutdownGrace:  5 * time.Second,
+		OutputFormat:   "text",
+		TestNotify:     notify,
 	}
 
 	handler := request.New(services.Threads, services.Requests, services.History, services.SysOps, cfg)
@@ -91,11 +93,11 @@ func newTestRouter(t *testing.T, mwCfg MiddlewareConfig) *testHarness {
 	if mwCfg.DefaultLimiter == nil {
 		mwCfg.DefaultLimiter = NewRateLimiter(60, time.Minute)
 	}
-	if mwCfg.WorkspaceDir == "" {
-		mwCfg.WorkspaceDir = workspaceDir
-	}
-	if mwCfg.ClaudeSessionsDir == "" {
-		mwCfg.ClaudeSessionsDir = sessionsDir
+	if mwCfg.Paths == nil {
+		mwCfg.Paths = &request.PathsConfig{
+			WorkspaceDir:      workspaceDir,
+			ClaudeSessionsDir: sessionsDir,
+		}
 	}
 
 	router := NewRouter(services, handler, renderer, bgCtx, &accessLog, newAccessLogger, mwCfg)
