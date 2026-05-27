@@ -52,12 +52,12 @@ var LockTTL time.Duration
 var WorkerTypes = []string{"claude", "copilot", "opencode", "codex"}
 
 // KeyName helpers produce the same Redis key names as task.py.
-func TaskKey(taskID, field string) string   { return "task:" + taskID + ":" + field }
-func QueueKey(worker string) string          { return "tasks:queue:" + worker }
-func ProcessingKey(worker string) string     { return "tasks:processing:" + worker }
-func ThreadStateKey(threadID string) string  { return "thread:" + threadID + ":current_state" }
-func ThreadMessagesKey(threadID string) string { return "thread:" + threadID + ":messages" }
-func ThreadLockKey(threadID string) string       { return "thread:" + threadID + ":lock" }
+func TaskKey(taskID, field string) string          { return "task:" + taskID + ":" + field }
+func QueueKey(worker string) string                { return "tasks:queue:" + worker }
+func ProcessingKey(worker string) string           { return "tasks:processing:" + worker }
+func ThreadStateKey(threadID string) string        { return "thread:" + threadID + ":current_state" }
+func ThreadMessagesKey(threadID string) string     { return "thread:" + threadID + ":messages" }
+func ThreadLockKey(threadID string) string         { return "thread:" + threadID + ":lock" }
 func ThreadRunningKey(threadID string) string      { return "thread:" + threadID + ":running" }
 func ThreadCompleteKey(threadID string) string     { return "thread:" + threadID + ":complete" }
 func ThreadSessionIDKey(threadID string) string    { return "thread:" + threadID + ":session_id" }
@@ -65,7 +65,7 @@ func ThreadLastActivityKey(threadID string) string { return "thread:" + threadID
 func GroupTasksKey(threadID, label string) string {
 	return "thread:" + threadID + ":group:" + label + ":tasks"
 }
-func ThreadEventsKey(threadID string) string  { return "thread:" + threadID + ":events" }
+func ThreadEventsKey(threadID string) string   { return "thread:" + threadID + ":events" }
 func ThreadLockedAtKey(threadID string) string { return "thread:" + threadID + ":locked_at" }
 func HeartbeatKey(workerType, hostname string) string {
 	return "worker:" + workerType + ":" + hostname + ":heartbeat"
@@ -81,7 +81,7 @@ func NewClient(rdb *redis.Client) *Client {
 	return &Client{rdb: rdb}
 }
 
-// Services composes all 6 role interfaces for consumers that need the full
+// Services composes all role interfaces for consumers that need the full
 // surface area (CLI tools, DI composition roots).
 type Services struct {
 	Tasks   TaskStore
@@ -90,14 +90,10 @@ type Services struct {
 	Workers WorkerRegistry
 	Tokens  TokenLedger
 	Scanner ThreadScanner
-
-	rdb *redis.Client
+	SysOps  SystemOps
 }
 
-// RDB returns the underlying redis client.
-func (s *Services) RDB() *redis.Client { return s.rdb }
-
-// NewServices creates a Services that composes all 6 role interfaces.
+// NewServices creates a Services that composes all role interfaces.
 // The single *Client under the hood satisfies every interface, so all
 // fields share the same underlying Redis connection.
 func NewServices(rdb *redis.Client) *Services {
@@ -109,12 +105,9 @@ func NewServices(rdb *redis.Client) *Services {
 		Workers: c,
 		Tokens:  c,
 		Scanner: c,
-		rdb:     rdb,
+		SysOps:  c,
 	}
 }
-
-// RDB returns the underlying redis client (useful for testing / raw ops).
-func (c *Client) RDB() *redis.Client { return c.rdb }
 
 // Ping checks Redis connectivity.
 func (c *Client) Ping(ctx context.Context) error {

@@ -29,6 +29,7 @@ type testHarness struct {
 	Router       chi.Router
 	Handler      *request.Handler
 	Client       *tasklib.Client
+	rdb          *redis.Client
 	Renderer     *templates.Renderer
 	MR           *miniredis.Miniredis
 	WorkspaceDir string
@@ -71,7 +72,7 @@ func newTestRouter(t *testing.T, mwCfg MiddlewareConfig) *testHarness {
 		TestNotify:        notify,
 	}
 
-	handler := request.New(client, rdb, cfg)
+	handler := request.New(services.Threads, services.SysOps, cfg)
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	renderer, err := templates.New()
 	if err != nil {
@@ -103,6 +104,7 @@ func newTestRouter(t *testing.T, mwCfg MiddlewareConfig) *testHarness {
 		Router:       router,
 		Handler:      handler,
 		Client:       client,
+		rdb:          rdb,
 		Renderer:     renderer,
 		MR:           mr,
 		WorkspaceDir: workspaceDir,
@@ -1315,7 +1317,7 @@ func TestMetricsEndpoint_Returns200(t *testing.T) {
 	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
-	rdb := th.Client.RDB()
+	rdb := th.rdb
 	rdb.Set(context.Background(), "stats:task_done", "10", 0)
 	rdb.Set(context.Background(), "stats:task_failed", "2", 0)
 	rdb.Set(context.Background(), "stats:task_cancelled", "1", 0)
@@ -1357,7 +1359,7 @@ func TestMetricsEndpoint_StatusLabels(t *testing.T) {
 	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
-	rdb := th.Client.RDB()
+	rdb := th.rdb
 	rdb.Set(context.Background(), "stats:task_done", "5", 0)
 	rdb.Set(context.Background(), "stats:task_failed", "3", 0)
 	rdb.Set(context.Background(), "stats:task_cancelled", "2", 0)
@@ -1379,7 +1381,7 @@ func TestMetricsEndpoint_QueueDepthLabels(t *testing.T) {
 	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
-	rdb := th.Client.RDB()
+	rdb := th.rdb
 	rdb.LPush(context.Background(), tasklib.QueueKey("claude"), "task-json-1")
 	rdb.LPush(context.Background(), tasklib.QueueKey("copilot"), "task-json-2")
 
@@ -1419,7 +1421,7 @@ func TestHandleCreateThread_WithParentThreadID(t *testing.T) {
 	}
 
 	// Verify parent stored in Redis
-	state, _ := th.Client.RDB().HGetAll(context.Background(), tasklib.ThreadStateKey("child")).Result()
+	state, _ := th.rdb.HGetAll(context.Background(), tasklib.ThreadStateKey("child")).Result()
 	if state["parent_thread_id"] != "parent" {
 		t.Errorf("Redis parent_thread_id = %q, want %q", state["parent_thread_id"], "parent")
 	}
@@ -1656,7 +1658,7 @@ func TestHandleDeleteThread_CascadeMoreThan50Tasks(t *testing.T) {
 			t.Fatalf("Enqueue %d failed: %v", i, err)
 		}
 		// Mark task as done
-		th.Client.RDB().Set(ctx, tasklib.TaskKey(task.TaskID, "status"), "done", 0)
+		th.rdb.Set(ctx, tasklib.TaskKey(task.TaskID, "status"), "done", 0)
 	}
 
 	// The 60th task is "running" (active) — should be detected even though it's past position 50
@@ -1664,7 +1666,7 @@ func TestHandleDeleteThread_CascadeMoreThan50Tasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Enqueue active task failed: %v", err)
 	}
-	th.Client.RDB().Set(ctx, tasklib.TaskKey(task.TaskID, "status"), "running", 0)
+	th.rdb.Set(ctx, tasklib.TaskKey(task.TaskID, "status"), "running", 0)
 	// Release the thread lock so IsThreadLocked doesn't catch this first —
 	// we want ListTasks to detect the "running" task at position 60.
 	th.Client.UnlockThread(ctx, "bulk-child")

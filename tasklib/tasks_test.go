@@ -516,8 +516,8 @@ func TestUpdateThread(t *testing.T) {
 	c.CreateThread(ctx(), "thr1", "", "")
 
 	err := c.UpdateThread(ctx(), "thr1", map[string]string{
-		"status":      "complete",
-		"last_design": "use redis",
+		"status":       "complete",
+		"last_design":  "use redis",
 		"gh_pr_number": "42",
 	})
 	if err != nil {
@@ -1048,10 +1048,10 @@ func TestThreadStatusFromTaskKnownMapping(t *testing.T) {
 
 func TestComputeLockTTL(t *testing.T) {
 	tests := []struct {
-		name            string
-		requestTimeout  string // env value for REQUEST_TIMEOUT, "" = unset
-		lockTTL         string // env value for LOCK_TTL, "" = unset
-		want            time.Duration
+		name           string
+		requestTimeout string // env value for REQUEST_TIMEOUT, "" = unset
+		lockTTL        string // env value for LOCK_TTL, "" = unset
+		want           time.Duration
 	}{
 		{
 			name:           "default (neither env set)",

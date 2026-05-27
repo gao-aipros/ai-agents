@@ -19,7 +19,6 @@ import (
 
 // NewRouter creates a chi router with all /api/ endpoints and page routes.
 func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *templates.Renderer, shutdownCtx context.Context, accessLog *atomic.Pointer[slog.Logger], newAccessLogger func() *slog.Logger, mwCfg MiddlewareConfig) chi.Router {
-	rdb := services.RDB()
 	r := chi.NewRouter()
 
 	// Middleware stack (all middleware must be registered before any routes in chi)
@@ -49,8 +48,8 @@ func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *t
 	r.Get("/api/requests/_form", pages.requestForm)
 
 	r.Route("/api", func(r chi.Router) {
-		sys := &systemResource{rdb: rdb, workers: services.Workers, handler: handler}
-		diag := &diagnosticsResource{rdb: rdb, scanner: services.Scanner}
+		sys := &systemResource{sysOps: services.SysOps, workers: services.Workers, handler: handler}
+		diag := &diagnosticsResource{sysOps: services.SysOps, scanner: services.Scanner}
 		evt := &eventsResource{events: services.Events}
 		wrk := &workersResource{workers: services.Workers, renderer: renderer}
 		req := &requestsResource{threads: services.Threads, handler: handler, renderer: renderer, workspaceDir: mwCfg.WorkspaceDir, claudeSessionsDir: mwCfg.ClaudeSessionsDir}
@@ -62,7 +61,7 @@ func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *t
 		r.Get("/stats", sys.stats)
 		r.Get("/diagnostics", diag.get)
 		r.Get("/events", evt.systemEvents)
-		r.Get("/metrics", newMetricsHandler(rdb, services.Workers, services.Scanner).ServeHTTP)
+		r.Get("/metrics", newMetricsHandler(services.SysOps, services.Workers, services.Scanner).ServeHTTP)
 
 		// Workers
 		r.Get("/workers", wrk.list)

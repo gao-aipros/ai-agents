@@ -15,30 +15,30 @@ import (
 
 // Task represents a task entity as stored in Redis.
 type Task struct {
-	TaskID               string `json:"task_id"`
-	ThreadID             string `json:"thread_id,omitempty"`
-	Instruction          string `json:"instruction,omitempty"`
-	Worker               string `json:"worker,omitempty"`
-	Status               string `json:"status,omitempty"`
-	Description          string `json:"description,omitempty"`
-	Result               string `json:"result,omitempty"`
-	ExitCode             string `json:"exit_code,omitempty"`
-	EnqueuedAt           string `json:"enqueued_at,omitempty"`
-	CompletedAt          string `json:"completed_at,omitempty"`
-	StartedAt            string `json:"started_at,omitempty"`
-	LastStartedAt        string `json:"last_started_at,omitempty"`
-	WorkerHostname       string `json:"worker_hostname,omitempty"`
-	InputTokens          int64  `json:"input_tokens,omitempty"`
-	OutputTokens         int64  `json:"output_tokens,omitempty"`
-	CacheReadTokens      int64  `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens     int64  `json:"cache_write_tokens,omitempty"`
-	ReasoningTokens      int64  `json:"reasoning_tokens,omitempty"`
-	RetryCount           string `json:"retry_count,omitempty"`
-	ErrorMessage         string `json:"error_message,omitempty"`
-	CorrelationID        string `json:"correlation_id,omitempty"`
-	CancelledBy          string `json:"cancelled_by,omitempty"`
-	CancelledAt          string `json:"cancelled_at,omitempty"`
-	CancelledPrevStatus  string `json:"cancelled_previous_status,omitempty"`
+	TaskID              string `json:"task_id"`
+	ThreadID            string `json:"thread_id,omitempty"`
+	Instruction         string `json:"instruction,omitempty"`
+	Worker              string `json:"worker,omitempty"`
+	Status              string `json:"status,omitempty"`
+	Description         string `json:"description,omitempty"`
+	Result              string `json:"result,omitempty"`
+	ExitCode            string `json:"exit_code,omitempty"`
+	EnqueuedAt          string `json:"enqueued_at,omitempty"`
+	CompletedAt         string `json:"completed_at,omitempty"`
+	StartedAt           string `json:"started_at,omitempty"`
+	LastStartedAt       string `json:"last_started_at,omitempty"`
+	WorkerHostname      string `json:"worker_hostname,omitempty"`
+	InputTokens         int64  `json:"input_tokens,omitempty"`
+	OutputTokens        int64  `json:"output_tokens,omitempty"`
+	CacheReadTokens     int64  `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens    int64  `json:"cache_write_tokens,omitempty"`
+	ReasoningTokens     int64  `json:"reasoning_tokens,omitempty"`
+	RetryCount          string `json:"retry_count,omitempty"`
+	ErrorMessage        string `json:"error_message,omitempty"`
+	CorrelationID       string `json:"correlation_id,omitempty"`
+	CancelledBy         string `json:"cancelled_by,omitempty"`
+	CancelledAt         string `json:"cancelled_at,omitempty"`
+	CancelledPrevStatus string `json:"cancelled_previous_status,omitempty"`
 }
 
 // TaskPayload is the JSON serialized into queue lists.
@@ -58,11 +58,11 @@ type GroupResult struct {
 
 // TaskInfo is the value stored in the active_tasks hash.
 type TaskInfo struct {
-	Status      string `json:"status"`
-	Worker      string `json:"worker"`
-	ThreadID    string `json:"thread_id"`
-	StartedAt   string `json:"started_at"`
-	WorkerHost  string `json:"worker_hostname,omitempty"`
+	Status     string `json:"status"`
+	Worker     string `json:"worker"`
+	ThreadID   string `json:"thread_id"`
+	StartedAt  string `json:"started_at"`
+	WorkerHost string `json:"worker_hostname,omitempty"`
 }
 
 // Enqueue pushes a task onto a worker queue. Byte-for-byte compatible with
@@ -112,13 +112,13 @@ func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction stri
 		Type:       EventLockAcquired,
 		TaskID:     taskID,
 		WorkerType: worker,
-		Detail: LockDetail{HolderTaskID: taskID},
+		Detail:     LockDetail{HolderTaskID: taskID},
 	})
 
 	// Append instruction to thread history
 	msg, err := json.Marshal(map[string]interface{}{
-		"role":    "master",
-		"content": instruction,
+		"role":      "master",
+		"content":   instruction,
 		"timestamp": now,
 		"metadata":  map[string]string{"task_id": taskID, "worker": worker},
 	})
@@ -905,7 +905,7 @@ func (c *Client) updateThreadStatus(ctx context.Context, threadID, taskStatus st
 
 	// Best-effort event: thread_status_change
 	c.PushThreadEvent(ctx, threadID, &Event{
-		Type: EventThreadStatusChange,
+		Type:   EventThreadStatusChange,
 		Detail: ThreadStatusChangeDetail{From: prevStatus, To: threadStatus},
 	})
 }

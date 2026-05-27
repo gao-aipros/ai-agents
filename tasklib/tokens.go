@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
-	"strings"
-	"strconv"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -409,8 +409,8 @@ type codexItem struct {
 // codex uses #[serde(tag = "type")] internally-tagged enum representation,
 // so variant fields (item, usage) are inlined at the top level.
 type codexStreamEvent struct {
-	Type string      `json:"type"`
-	Item *codexItem  `json:"item,omitempty"`
+	Type  string      `json:"type"`
+	Item  *codexItem  `json:"item,omitempty"`
 	Usage *codexUsage `json:"usage,omitempty"`
 }
 
@@ -523,9 +523,9 @@ func ParseCopilotStderr(stderr string) TokenStats {
 		return TokenStats{}
 	}
 	return TokenStats{
-		InputTokens:      parseSuffixedNumber(matches[1]),
-		CacheReadTokens:  parseSuffixedNumber(matches[2]),
-		OutputTokens:     parseSuffixedNumber(matches[3]),
+		InputTokens:     parseSuffixedNumber(matches[1]),
+		CacheReadTokens: parseSuffixedNumber(matches[2]),
+		OutputTokens:    parseSuffixedNumber(matches[3]),
 	}
 }
 
@@ -625,5 +625,3 @@ func formatFloatStr(f float64) string {
 	}
 	return s
 }
-
-

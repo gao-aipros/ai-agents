@@ -32,11 +32,11 @@ const (
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func newTestClient(t *testing.T) (*tasklib.Services, *miniredis.Miniredis) {
+func newTestClient(t *testing.T) (*tasklib.Services, *redis.Client, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	return tasklib.NewServices(rdb), mr
+	return tasklib.NewServices(rdb), rdb, mr
 }
 
 func makeTaskPayload(taskID, threadID, instruction string, extra map[string]interface{}) string {
@@ -86,9 +86,8 @@ func mockExecCmd(stdout, stderr string, exitCode int, err error) func() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 func TestRegistersInActiveTasks(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	// Capture active_tasks state inside the mock (as Python tests do with
 	// side_effect) — cleanup removes it before processOneTask returns.
@@ -126,9 +125,8 @@ func TestRegistersInActiveTasks(t *testing.T) {
 }
 
 func TestSetsPerTaskStatusKeys(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("Build output", "", 0, nil)
 	defer restore()
 
@@ -156,9 +154,8 @@ func TestSetsPerTaskStatusKeys(t *testing.T) {
 }
 
 func TestPerTaskKeysHaveTTL(t *testing.T) {
-	client, mr := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, mr := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("ok", "", 0, nil)
 	defer restore()
 
@@ -184,9 +181,8 @@ func TestPerTaskKeysHaveTTL(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 func TestIncludesThreadHistoryInPrompt(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	// Pre-populate thread history
 	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread),
@@ -226,9 +222,8 @@ func TestIncludesThreadHistoryInPrompt(t *testing.T) {
 }
 
 func TestRespectsHistoryWindowFromPayload(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	// Add 20 messages, default window is 10
 	for i := 0; i < 20; i++ {
@@ -268,9 +263,8 @@ func TestRespectsHistoryWindowFromPayload(t *testing.T) {
 }
 
 func TestIncludesCurrentStateInPrompt(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	rdb.HSet(context.Background(), tasklib.ThreadStateKey(testThread), map[string]interface{}{
 		"status":      "awaiting_review",
@@ -311,9 +305,8 @@ func TestIncludesCurrentStateInPrompt(t *testing.T) {
 }
 
 func TestNoThreadHistoryNoCrash(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	var capturedPrompt string
 	orig := execCommand
@@ -341,9 +334,8 @@ func TestNoThreadHistoryNoCrash(t *testing.T) {
 }
 
 func TestNoCurrentStateNoCrash(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	var capturedPrompt string
 	orig := execCommand
@@ -368,9 +360,8 @@ func TestNoCurrentStateNoCrash(t *testing.T) {
 }
 
 func TestCurrentStateMissingFieldsDefaults(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	// Only set status, no optional fields
 	rdb.HSet(context.Background(), tasklib.ThreadStateKey(testThread), map[string]interface{}{
@@ -408,9 +399,8 @@ func TestCurrentStateMissingFieldsDefaults(t *testing.T) {
 // ── Worker-Filtered Thread History Tests ──────────────────────────────────────
 
 func TestGroupTaskFiltersHistoryByWorker(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	// Simulate a group fan-out: messages for 4 different workers
 	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread),
@@ -456,9 +446,8 @@ func TestGroupTaskFiltersHistoryByWorker(t *testing.T) {
 }
 
 func TestSequentialTaskSeesFullHistory(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	// Pre-populate with messages for multiple workers (simulating sequential workflow)
 	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread),
@@ -496,9 +485,8 @@ func TestSequentialTaskSeesFullHistory(t *testing.T) {
 }
 
 func TestGroupTaskBackwardCompatNoWorkerMetadata(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	// Messages WITHOUT worker metadata (old format) should pass through the filter
 	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread),
@@ -540,9 +528,8 @@ func TestGroupTaskBackwardCompatNoWorkerMetadata(t *testing.T) {
 }
 
 func TestGroupTaskAllMessagesForOtherWorkers(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	// All thread messages are for other workers
 	for i := 0; i < 5; i++ {
@@ -590,9 +577,8 @@ func TestGroupTaskAllMessagesForOtherWorkers(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 func TestCreatesWorkspaceForThread(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("ok", "", 0, nil)
 	defer restore()
 
@@ -613,9 +599,8 @@ func TestCreatesWorkspaceForThread(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 func TestSuccessfulExecutionStatusDone(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("Task completed", "", 0, nil)
 	defer restore()
 
@@ -638,9 +623,8 @@ func TestSuccessfulExecutionStatusDone(t *testing.T) {
 }
 
 func TestFailedExecutionStatusFailed(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("Partial output", "error text", 1, nil)
 	defer restore()
 
@@ -669,9 +653,8 @@ func TestFailedExecutionStatusFailed(t *testing.T) {
 }
 
 func TestFailedResultPrefixedWithFailedTag(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("Output", "", 1, nil)
 	defer restore()
 
@@ -688,9 +671,8 @@ func TestFailedResultPrefixedWithFailedTag(t *testing.T) {
 }
 
 func TestTimeoutStatusFailed(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("", "", -1, errAgentTimeout)
 	defer restore()
 
@@ -711,9 +693,8 @@ func TestTimeoutStatusFailed(t *testing.T) {
 }
 
 func TestTimeoutResultMessage(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("", "", -1, errAgentTimeout)
 	defer restore()
 
@@ -735,9 +716,8 @@ func TestTimeoutResultMessage(t *testing.T) {
 }
 
 func TestStderrNotAppendedOnSuccess(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("stdout here", "stderr here", 0, nil)
 	defer restore()
 
@@ -760,9 +740,8 @@ func TestStderrNotAppendedOnSuccess(t *testing.T) {
 }
 
 func TestStderrAppendedOnFailure(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("stdout here", "stderr text", 1, nil)
 	defer restore()
 
@@ -782,9 +761,8 @@ func TestStderrAppendedOnFailure(t *testing.T) {
 }
 
 func TestTimeoutValueFromPayload(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	var capturedTimeout time.Duration
 	orig := execCommand
@@ -814,9 +792,8 @@ func TestTimeoutValueFromPayload(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 func TestResultStored(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("Build output here", "", 0, nil)
 	defer restore()
 
@@ -833,9 +810,8 @@ func TestResultStored(t *testing.T) {
 }
 
 func TestExitCodeStoredAsString(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("ok", "", 0, nil)
 	defer restore()
 
@@ -852,9 +828,8 @@ func TestExitCodeStoredAsString(t *testing.T) {
 }
 
 func TestCompletedAtSet(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("ok", "", 0, nil)
 	defer restore()
 
@@ -877,9 +852,8 @@ func TestCompletedAtSet(t *testing.T) {
 }
 
 func TestResultAppendedToThreadHistory(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("Result text", "", 0, nil)
 	defer restore()
 
@@ -904,9 +878,8 @@ func TestResultAppendedToThreadHistory(t *testing.T) {
 }
 
 func TestResultCappedAt10kChars(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	hugeOutput := strings.Repeat("x", 15000)
 	restore := mockExecCmd(hugeOutput, "", 0, nil)
 	defer restore()
@@ -934,9 +907,8 @@ func TestResultCappedAt10kChars(t *testing.T) {
 }
 
 func TestThreadHistoryTTLRefreshed(t *testing.T) {
-	client, mr := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, mr := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("New result", "", 0, nil)
 	defer restore()
 
@@ -966,9 +938,8 @@ func TestThreadHistoryTTLRefreshed(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 func TestCancelFlagDetectedBeforeSubprocess(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	rdb.Set(context.Background(), tasklib.TaskKey(testTaskID, "cancel"), "1", 0)
 
@@ -992,9 +963,8 @@ func TestCancelFlagDetectedBeforeSubprocess(t *testing.T) {
 }
 
 func TestCancelledStatusStored(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	rdb.Set(context.Background(), tasklib.TaskKey(testTaskID, "cancel"), "1", 0)
 
@@ -1033,9 +1003,8 @@ func TestCancelledStatusStored(t *testing.T) {
 }
 
 func TestCancelledResultMessage(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	rdb.Set(context.Background(), tasklib.TaskKey(testTaskID, "cancel"), "1", 0)
 
@@ -1052,9 +1021,8 @@ func TestCancelledResultMessage(t *testing.T) {
 }
 
 func TestCancelledExitCodeMinusOne(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	rdb.Set(context.Background(), tasklib.TaskKey(testTaskID, "cancel"), "1", 0)
 
@@ -1071,9 +1039,8 @@ func TestCancelledExitCodeMinusOne(t *testing.T) {
 }
 
 func TestCancelledCompletedAtSet(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	rdb.Set(context.Background(), tasklib.TaskKey(testTaskID, "cancel"), "1", 0)
 
@@ -1090,9 +1057,8 @@ func TestCancelledCompletedAtSet(t *testing.T) {
 }
 
 func TestCancellationMessageInThreadHistory(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	rdb.Set(context.Background(), tasklib.TaskKey(testTaskID, "cancel"), "1", 0)
 
@@ -1117,9 +1083,8 @@ func TestCancellationMessageInThreadHistory(t *testing.T) {
 }
 
 func TestCancelledRemovedFromProcessingList(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	rdb.Set(context.Background(), tasklib.TaskKey(testTaskID, "cancel"), "1", 0)
 
@@ -1139,9 +1104,8 @@ func TestCancelledRemovedFromProcessingList(t *testing.T) {
 }
 
 func TestCancelledRemovedFromActiveTasks(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	rdb.Set(context.Background(), tasklib.TaskKey(testTaskID, "cancel"), "1", 0)
 
@@ -1157,9 +1121,8 @@ func TestCancelledRemovedFromActiveTasks(t *testing.T) {
 }
 
 func TestNoCancelFlagProceedsNormally(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	cmdCalled := false
 	orig := execCommand
@@ -1189,9 +1152,8 @@ func TestNoCancelFlagProceedsNormally(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 func TestSetsMetadataFields(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("ok", "", 0, nil)
 	defer restore()
 
@@ -1214,9 +1176,8 @@ func TestSetsMetadataFields(t *testing.T) {
 }
 
 func TestNeverSetsStatusField(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("ok", "", 0, nil)
 	defer restore()
 
@@ -1237,9 +1198,8 @@ func TestNeverSetsStatusField(t *testing.T) {
 }
 
 func TestPreservesExistingStateFields(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("ok", "", 0, nil)
 	defer restore()
 
@@ -1274,9 +1234,8 @@ func TestPreservesExistingStateFields(t *testing.T) {
 }
 
 func TestThreadStateTTLSet(t *testing.T) {
-	client, mr := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, mr := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("ok", "", 0, nil)
 	defer restore()
 
@@ -1300,9 +1259,8 @@ func TestThreadStateTTLSet(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 func TestRemovedFromProcessingList(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("ok", "", 0, nil)
 	defer restore()
 
@@ -1322,9 +1280,8 @@ func TestRemovedFromProcessingList(t *testing.T) {
 }
 
 func TestRemovedFromActiveTasks(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("ok", "", 0, nil)
 	defer restore()
 
@@ -1340,9 +1297,8 @@ func TestRemovedFromActiveTasks(t *testing.T) {
 }
 
 func TestCleanupAfterFailedTask(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("Partial", "Error", 1, nil)
 	defer restore()
 
@@ -1362,9 +1318,8 @@ func TestCleanupAfterFailedTask(t *testing.T) {
 }
 
 func TestCleanupAfterTimeout(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("", "", -1, errAgentTimeout)
 	defer restore()
 
@@ -1388,9 +1343,8 @@ func TestCleanupAfterTimeout(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 func TestMalformedTaskPayloadRemovedFromProcessing(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	processingKey := tasklib.ProcessingKey(testWorker)
 	badPayload := "not valid json {{{"
@@ -1405,9 +1359,8 @@ func TestMalformedTaskPayloadRemovedFromProcessing(t *testing.T) {
 }
 
 func TestMalformedThreadMessageSkipped(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	// Add a corrupt message + valid message
 	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(testThread), "not valid json")
@@ -1431,9 +1384,8 @@ func TestMalformedThreadMessageSkipped(t *testing.T) {
 }
 
 func TestSetsRunningStatusImmediately(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 
 	var statusBefore string
 	orig := execCommand
@@ -1478,9 +1430,8 @@ func TestValidWorker(t *testing.T) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 func TestCancelledBySetOnFlagCancel(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("", "", 0, nil)
 	defer restore()
 
@@ -1515,9 +1466,8 @@ func TestCancelledBySetOnFlagCancel(t *testing.T) {
 }
 
 func TestCancelledBySystemWhenNoCancelTaskAPI(t *testing.T) {
-	client, _ := newTestClient(t)
-	rdb := client.RDB()
-	log := newLogger()
+	client, rdb, _ := newTestClient(t)
+		log := newLogger()
 	restore := mockExecCmd("", "", 0, nil)
 	defer restore()
 

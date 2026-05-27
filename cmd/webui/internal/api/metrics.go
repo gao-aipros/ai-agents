@@ -10,21 +10,20 @@ import (
 	"github.com/noodle05/ai-agents/tasklib"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/redis/go-redis/v9"
 )
 
 // newMetricsHandler creates a Prometheus HTTP handler for GET /metrics.
 // The registry and collector are created once per handler invocation.
-func newMetricsHandler(rdb *redis.Client, workers tasklib.WorkerRegistry, scanner tasklib.ThreadScanner) http.Handler {
+func newMetricsHandler(sysOps tasklib.SystemOps, workers tasklib.WorkerRegistry, scanner tasklib.ThreadScanner) http.Handler {
 	reg := prometheus.NewRegistry()
-	reg.MustRegister(newRedisCollector(rdb, workers, scanner))
+	reg.MustRegister(newRedisCollector(sysOps, workers, scanner))
 	return promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
 }
 
 // redisCollector reads current metric values from Redis on each scrape.
 // Histogram data is in-memory and resets on restart (per design doc).
 type redisCollector struct {
-	rdb     *redis.Client
+	sysOps  tasklib.SystemOps
 	scanner tasklib.ThreadScanner
 	workers tasklib.WorkerRegistry
 
@@ -39,12 +38,12 @@ type redisCollector struct {
 	queueWait     *prometheus.Desc
 }
 
-func newRedisCollector(rdb *redis.Client, workers tasklib.WorkerRegistry, scanner tasklib.ThreadScanner) *redisCollector {
+func newRedisCollector(sysOps tasklib.SystemOps, workers tasklib.WorkerRegistry, scanner tasklib.ThreadScanner) *redisCollector {
 	labels := func(name, help string, variableLabels ...string) *prometheus.Desc {
 		return prometheus.NewDesc("ai_agents_"+name, help, variableLabels, nil)
 	}
 	return &redisCollector{
-		rdb:           rdb,
+		sysOps:        sysOps,
 		scanner:       scanner,
 		workers:       workers,
 		tasksTotal:    labels("tasks_total", "Total tasks by status.", "status"),
@@ -77,7 +76,7 @@ func (c *redisCollector) Collect(ch chan<- prometheus.Metric) {
 	// ── Counters from Redis atomic keys ──
 	counterKeys := []string{"stats:task_done", "stats:task_failed", "stats:task_cancelled"}
 	statuses := []string{"done", "failed", "cancelled"}
-	vals, err := c.rdb.MGet(ctx, counterKeys...).Result()
+	vals, err := c.sysOps.GetCounters(ctx, counterKeys...)
 	if err != nil {
 		slog.Warn("metrics: counter MGET failed", "error", err)
 	} else {
@@ -94,13 +93,13 @@ func (c *redisCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 
 	// ── Running / pending ──
-	if n, err := c.rdb.HLen(ctx, "active_tasks").Result(); err == nil {
+	if n, err := c.sysOps.ActiveTaskCount(ctx); err == nil {
 		ch <- prometheus.MustNewConstMetric(c.tasksRunning, prometheus.GaugeValue, float64(n))
 	}
 
 	var pending int64
 	for _, wt := range tasklib.WorkerTypes {
-		if dep, err := c.rdb.LLen(ctx, tasklib.QueueKey(wt)).Result(); err == nil {
+		if dep, err := c.sysOps.QueueDepth(ctx, tasklib.QueueKey(wt)); err == nil {
 			pending += dep
 		}
 	}
@@ -122,7 +121,7 @@ func (c *redisCollector) Collect(ch chan<- prometheus.Metric) {
 
 	// ── Queue depth by worker type ──
 	for _, wt := range tasklib.WorkerTypes {
-		dep, err := c.rdb.LLen(ctx, tasklib.QueueKey(wt)).Result()
+		dep, err := c.sysOps.QueueDepth(ctx, tasklib.QueueKey(wt))
 		if err != nil {
 			dep = 0
 		}

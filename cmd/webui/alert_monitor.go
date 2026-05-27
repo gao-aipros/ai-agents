@@ -7,12 +7,11 @@ import (
 	"time"
 
 	"github.com/noodle05/ai-agents/tasklib"
-	"github.com/redis/go-redis/v9"
 )
 
 // runAlertMonitor is a background goroutine that polls for alert conditions:
 // stale tasks and lost worker heartbeats. Best-effort — panics are recovered.
-func runAlertMonitor(ctx context.Context, rdb *redis.Client, cfg tasklib.AlertConfig) {
+func runAlertMonitor(ctx context.Context, sysOps tasklib.SystemOps, cfg tasklib.AlertConfig) {
 	if !cfg.IsEnabled() {
 		return
 	}
@@ -46,22 +45,22 @@ func runAlertMonitor(ctx context.Context, rdb *redis.Client, cfg tasklib.AlertCo
 		}
 
 		if cfg.OnStuckThread {
-			checkStuckTasks(ctx, rdb, cfg, lastStuckAlert, alertCooldown)
+			checkStuckTasks(ctx, sysOps, cfg, lastStuckAlert, alertCooldown)
 		}
 		if cfg.OnWorkerLost {
-			lastHeartbeatCheck = checkLostHeartbeats(ctx, rdb, cfg, lastHeartbeatCheck, lastOfflineAlert, alertCooldown)
+			lastHeartbeatCheck = checkLostHeartbeats(ctx, sysOps, cfg, lastHeartbeatCheck, lastOfflineAlert, alertCooldown)
 		}
 	}
 }
 
-func checkStuckTasks(ctx context.Context, rdb *redis.Client, cfg tasklib.AlertConfig, lastAlert map[string]time.Time, cooldown time.Duration) {
+func checkStuckTasks(ctx context.Context, sysOps tasklib.SystemOps, cfg tasklib.AlertConfig, lastAlert map[string]time.Time, cooldown time.Duration) {
 	if lastAlert == nil {
 		lastAlert = make(map[string]time.Time)
 	}
 	cutoff := time.Now().Add(-cfg.StuckThreshold)
 	now := time.Now()
 
-	raw, err := rdb.HGetAll(ctx, "active_tasks").Result()
+	raw, err := sysOps.GetAllActiveTasks(ctx)
 	if err != nil {
 		slog.Warn("alert monitor: active_tasks scan failed", "error", err)
 		return
@@ -97,7 +96,7 @@ func checkStuckTasks(ctx context.Context, rdb *redis.Client, cfg tasklib.AlertCo
 	}
 }
 
-func checkLostHeartbeats(ctx context.Context, rdb *redis.Client, cfg tasklib.AlertConfig, lastCheck time.Time, lastAlert map[string]time.Time, cooldown time.Duration) time.Time {
+func checkLostHeartbeats(ctx context.Context, sysOps tasklib.SystemOps, cfg tasklib.AlertConfig, lastCheck time.Time, lastAlert map[string]time.Time, cooldown time.Duration) time.Time {
 	// Only check heartbeats every 60s to avoid noisy false positives
 	if time.Since(lastCheck) < 60*time.Second {
 		return lastCheck
@@ -108,52 +107,45 @@ func checkLostHeartbeats(ctx context.Context, rdb *redis.Client, cfg tasklib.Ale
 	now := time.Now()
 
 	for _, workerType := range tasklib.WorkerTypes {
-		var cursor uint64
-		for {
-			keys, nextCursor, err := rdb.Scan(ctx, cursor, "worker:"+workerType+":*:heartbeat", 100).Result()
+		keys, err := sysOps.ScanKeys(ctx, "worker:"+workerType+":*:heartbeat", 100)
+		if err != nil {
+			continue
+		}
+		for _, key := range keys {
+			val, err := sysOps.GetKey(ctx, key)
 			if err != nil {
-				break
+				continue
 			}
-			for _, key := range keys {
-				val, err := rdb.Get(ctx, key).Result()
-				if err != nil {
-					continue
-				}
-				var hb tasklib.HeartbeatData
-				if err := json.Unmarshal([]byte(val), &hb); err != nil {
-					continue
-				}
-				// Compare timestamp from HeartbeatData — reliable regardless
-				// of TTL state, ObjectIdleTime, or other readers.
-				if hb.LastHeartbeatAt == "" {
-					continue
-				}
-				lastHB, err := time.Parse("2006-01-02T15:04:05Z", hb.LastHeartbeatAt)
-				if err != nil {
-					continue
-				}
-				if now.Sub(lastHB) < cfg.WorkerLostThreshold {
-					continue
-				}
+			var hb tasklib.HeartbeatData
+			if err := json.Unmarshal([]byte(val), &hb); err != nil {
+				continue
+			}
+			// Compare timestamp from HeartbeatData — reliable regardless
+			// of TTL state, ObjectIdleTime, or other readers.
+			if hb.LastHeartbeatAt == "" {
+				continue
+			}
+			lastHB, err := time.Parse("2006-01-02T15:04:05Z", hb.LastHeartbeatAt)
+			if err != nil {
+				continue
+			}
+			if now.Sub(lastHB) < cfg.WorkerLostThreshold {
+				continue
+			}
 
-				keyStr := workerType + ":" + hb.Hostname
-				if prev, ok := lastAlert[keyStr]; ok && now.Sub(prev) < cooldown {
-					continue
-				}
-				lastAlert[keyStr] = now
+			keyStr := workerType + ":" + hb.Hostname
+			if prev, ok := lastAlert[keyStr]; ok && now.Sub(prev) < cooldown {
+				continue
+			}
+			lastAlert[keyStr] = now
 
-				slog.Warn("worker heartbeat lost", "worker_type", workerType, "hostname", hb.Hostname, "last_heartbeat", hb.LastHeartbeatAt)
-				cfg.SendAlert(ctx, tasklib.AlertWorkerLost, map[string]any{
-					"worker_type":     workerType,
-					"hostname":        hb.Hostname,
-					"last_heartbeat_at": hb.LastHeartbeatAt,
-					"since_seconds":   int64(now.Sub(lastHB).Seconds()),
-				})
-			}
-			cursor = nextCursor
-			if cursor == 0 {
-				break
-			}
+			slog.Warn("worker heartbeat lost", "worker_type", workerType, "hostname", hb.Hostname, "last_heartbeat", hb.LastHeartbeatAt)
+			cfg.SendAlert(ctx, tasklib.AlertWorkerLost, map[string]any{
+				"worker_type":     workerType,
+				"hostname":        hb.Hostname,
+				"last_heartbeat_at": hb.LastHeartbeatAt,
+				"since_seconds":   int64(now.Sub(lastHB).Seconds()),
+			})
 		}
 	}
 	return now

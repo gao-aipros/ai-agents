@@ -106,7 +106,7 @@ func main() {
 	log.Info("connected to redis", "host", redisHost, "port", redisPort)
 
 	services := tasklib.NewServices(rdb)
-	reqHandler := request.New(services.Threads, rdb, cfg)
+	reqHandler := request.New(services.Threads, services.SysOps, cfg)
 
 	// Template renderer
 	renderer, err := templates.New()
@@ -123,7 +123,7 @@ func main() {
 	// Background alert monitor for stuck threads and lost heartbeats
 	alertCfg := tasklib.LoadAlertConfig()
 	if alertCfg.IsEnabled() {
-		go runAlertMonitor(bgCtx, rdb, alertCfg)
+		go runAlertMonitor(bgCtx, services.SysOps, alertCfg)
 	}
 
 	// Build chi router with page routes, API endpoints, and static files

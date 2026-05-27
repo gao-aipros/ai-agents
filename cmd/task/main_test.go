@@ -19,6 +19,8 @@ import (
 
 // ── test helpers ──────────────────────────────────────────────────────────────
 
+var testRdb *redis.Client
+
 func setupTestRedis(t *testing.T) (*miniredis.Miniredis, func()) {
 	t.Helper()
 	mr := miniredis.RunT(t)
@@ -26,6 +28,7 @@ func setupTestRedis(t *testing.T) (*miniredis.Miniredis, func()) {
 	origGetServices := getServices
 	getServices = func() *tasklib.Services {
 		rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		testRdb = rdb
 		return tasklib.NewServices(rdb)
 	}
 
@@ -59,8 +62,8 @@ func captureOutput(fn func()) string {
 
 // readTaskKey reads a per-task field via the test's getServices.
 func readTaskKey(taskID, field string) string {
-	s := getServices()
-	val, _ := s.RDB().Get(context.Background(), tasklib.TaskKey(taskID, field)).Result()
+	getServices()
+	val, _ := testRdb.Get(context.Background(), tasklib.TaskKey(taskID, field)).Result()
 	return val
 }
 
@@ -104,8 +107,8 @@ func TestCmdEnqueue(t *testing.T) {
 		t.Errorf("expected worker=claude, got %s", w)
 	}
 
-	s := getServices()
-	queueItems, _ := s.RDB().LRange(context.Background(), tasklib.QueueKey("claude"), 0, -1).Result()
+	getServices()
+	queueItems, _ := testRdb.LRange(context.Background(), tasklib.QueueKey("claude"), 0, -1).Result()
 	if len(queueItems) != 1 {
 		t.Errorf("expected 1 item on queue, got %d", len(queueItems))
 	}
@@ -127,7 +130,7 @@ func TestCmdEnqueueThreadLocked(t *testing.T) {
 	s.Threads.LockThread(context.Background(), enqueueThread, "holder-task", tasklib.LockTTL)
 	// Auto-clear logic checks if the lock holder is active — create a
 	// running task entry so "holder-task" is considered a valid holder.
-	s.RDB().Set(context.Background(), tasklib.TaskKey("holder-task", "status"), "running", 0)
+	testRdb.Set(context.Background(), tasklib.TaskKey("holder-task", "status"), "running", 0)
 
 	var panicMsg string
 	func() {
@@ -388,8 +391,8 @@ func TestCmdRequeueStale(t *testing.T) {
 		t.Errorf("expected task ID in output, got: %s", output)
 	}
 
-	s := getServices()
-	queueItems, _ := s.RDB().LRange(context.Background(), tasklib.QueueKey("claude"), 0, -1).Result()
+	getServices()
+	queueItems, _ := testRdb.LRange(context.Background(), tasklib.QueueKey("claude"), 0, -1).Result()
 	if len(queueItems) != 1 {
 		t.Errorf("expected 1 item requeued, got %d", len(queueItems))
 	}
@@ -500,8 +503,8 @@ func TestCmdThreadCreate(t *testing.T) {
 		t.Errorf("expected 'Thread created', got: %s", output)
 	}
 
-	s := getServices()
-	state, _ := s.RDB().HGetAll(context.Background(), tasklib.ThreadStateKey("my-thread")).Result()
+	getServices()
+	state, _ := testRdb.HGetAll(context.Background(), tasklib.ThreadStateKey("my-thread")).Result()
 	if state["status"] != "initiated" {
 		t.Errorf("expected status=initiated, got %s", state["status"])
 	}
@@ -534,8 +537,8 @@ func TestCmdThreadCreate_WithParent(t *testing.T) {
 		t.Errorf("expected 'Thread created', got: %s", output)
 	}
 
-	s := getServices()
-	state, _ := s.RDB().HGetAll(context.Background(), tasklib.ThreadStateKey("child-thread")).Result()
+	getServices()
+	state, _ := testRdb.HGetAll(context.Background(), tasklib.ThreadStateKey("child-thread")).Result()
 	if state["parent_thread_id"] != "parent-thread" {
 		t.Errorf("expected parent_thread_id=parent-thread, got %s", state["parent_thread_id"])
 	}
@@ -566,8 +569,8 @@ func TestCmdThreadCreate_ParentFromEnv(t *testing.T) {
 		t.Errorf("expected 'Thread created', got: %s", output)
 	}
 
-	s := getServices()
-	state, _ := s.RDB().HGetAll(context.Background(), tasklib.ThreadStateKey("my-thread")).Result()
+	getServices()
+	state, _ := testRdb.HGetAll(context.Background(), tasklib.ThreadStateKey("my-thread")).Result()
 	if state["parent_thread_id"] != "env-thread-id" {
 		t.Errorf("expected parent_thread_id=env-thread-id, got %s", state["parent_thread_id"])
 	}
@@ -600,8 +603,8 @@ func TestCmdThreadCreate_ParentExplicitEmpty(t *testing.T) {
 		t.Errorf("expected 'Thread created', got: %s", output)
 	}
 
-	s := getServices()
-	state, _ := s.RDB().HGetAll(context.Background(), tasklib.ThreadStateKey("my-thread")).Result()
+	getServices()
+	state, _ := testRdb.HGetAll(context.Background(), tasklib.ThreadStateKey("my-thread")).Result()
 	if _, exists := state["parent_thread_id"]; exists {
 		t.Errorf("expected no parent_thread_id, got %s", state["parent_thread_id"])
 	}
@@ -632,8 +635,8 @@ func TestCmdThreadCreate_ParentExplicitValue(t *testing.T) {
 		t.Errorf("expected 'Thread created', got: %s", output)
 	}
 
-	s := getServices()
-	state, _ := s.RDB().HGetAll(context.Background(), tasklib.ThreadStateKey("my-thread")).Result()
+	getServices()
+	state, _ := testRdb.HGetAll(context.Background(), tasklib.ThreadStateKey("my-thread")).Result()
 	if state["parent_thread_id"] != "custom-parent" {
 		t.Errorf("expected parent_thread_id=custom-parent, got %s", state["parent_thread_id"])
 	}
@@ -663,8 +666,8 @@ func TestCmdThreadCreate_ParentFromEnvWhenEnvEmpty(t *testing.T) {
 		t.Errorf("expected 'Thread created', got: %s", output)
 	}
 
-	s := getServices()
-	state, _ := s.RDB().HGetAll(context.Background(), tasklib.ThreadStateKey("my-thread")).Result()
+	getServices()
+	state, _ := testRdb.HGetAll(context.Background(), tasklib.ThreadStateKey("my-thread")).Result()
 	if _, exists := state["parent_thread_id"]; exists {
 		t.Errorf("expected no parent_thread_id, got %s", state["parent_thread_id"])
 	}
@@ -775,8 +778,8 @@ func TestCmdThreadUpdate(t *testing.T) {
 		t.Errorf("expected 'Thread updated', got: %s", output)
 	}
 
-	s := getServices()
-	state, _ := s.RDB().HGetAll(context.Background(), tasklib.ThreadStateKey("my-thread")).Result()
+	getServices()
+	state, _ := testRdb.HGetAll(context.Background(), tasklib.ThreadStateKey("my-thread")).Result()
 	if state["status"] != "complete" {
 		t.Errorf("expected status=complete, got %s", state["status"])
 	}

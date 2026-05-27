@@ -642,10 +642,10 @@ func TestEventEnvelopeHasRequiredFields(t *testing.T) {
 	ev := events[0]
 
 	checks := map[string]string{
-		"event_id":   ev.EventID,
-		"type":       ev.Type,
-		"timestamp":  ev.Timestamp,
-		"task_id":    ev.TaskID,
+		"event_id":  ev.EventID,
+		"type":      ev.Type,
+		"timestamp": ev.Timestamp,
+		"task_id":   ev.TaskID,
 	}
 	for field, val := range checks {
 		if val == "" {
@@ -683,7 +683,6 @@ func TestCancelTaskAllCancelledByValues(t *testing.T) {
 		})
 	}
 }
-
 
 // ── stale-lock auto-clear test ────────────────────────────────────────────────
 
@@ -734,7 +733,6 @@ func TestStaleLockNotClearedForActiveHolder(t *testing.T) {
 		t.Error("Enqueue should fail when lock holder is still active")
 	}
 }
-
 
 // ── new event emission tests ──────────────────────────────────────────────────
 

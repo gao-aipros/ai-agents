@@ -11,18 +11,16 @@ import (
 	"time"
 
 	"github.com/noodle05/ai-agents/tasklib"
-	"github.com/redis/go-redis/v9"
 )
 
 type diagnosticsResource struct {
-	rdb     *redis.Client
+	sysOps  tasklib.SystemOps
 	scanner tasklib.ThreadScanner
 }
 
 // GET /api/diagnostics
 func (dr *diagnosticsResource) get(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	rdb := dr.rdb
 
 	staleThreshold := 30 // minutes
 	if s := r.URL.Query().Get("stale_threshold"); s != "" {
@@ -33,14 +31,14 @@ func (dr *diagnosticsResource) get(w http.ResponseWriter, r *http.Request) {
 
 	diag := map[string]interface{}{}
 
-	locks, err := listLocks(ctx, rdb)
+	locks, err := listLocks(ctx, dr.sysOps)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("[webui] diagnostics: lock scan error: %v", err))
 		locks = nil
 	}
 	diag["locks"] = locks
 
-	staleTasks, err := listStaleTasks(ctx, rdb, staleThreshold)
+	staleTasks, err := listStaleTasks(ctx, dr.sysOps, staleThreshold)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("[webui] diagnostics: stale task scan error: %v", err))
 		staleTasks = nil
@@ -49,7 +47,7 @@ func (dr *diagnosticsResource) get(w http.ResponseWriter, r *http.Request) {
 
 	queueDepths := make(map[string]int64)
 	for _, workerType := range tasklib.WorkerTypes {
-		dep, err := rdb.LLen(ctx, tasklib.QueueKey(workerType)).Result()
+		dep, err := dr.sysOps.QueueDepth(ctx, tasklib.QueueKey(workerType))
 		if err != nil {
 			dep = -1
 		}
@@ -62,14 +60,14 @@ func (dr *diagnosticsResource) get(w http.ResponseWriter, r *http.Request) {
 	diag["threads_active"] = activeThreads
 	diag["threads_stuck"] = stuckThreads
 
-	memInfo, err := redisMemoryInfo(ctx, rdb)
+	memInfo, err := redisMemoryInfo(ctx, dr.sysOps)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("[webui] diagnostics: redis INFO error: %v", err))
 		memInfo = nil
 	}
 	diag["redis_memory"] = memInfo
 
-	keyCounts, err := keySpaceCounts(ctx, rdb)
+	keyCounts, err := keySpaceCounts(ctx, dr.sysOps)
 	if err != nil {
 		slog.Warn("key-space count error", "error", err)
 	}
@@ -85,38 +83,31 @@ type lockInfo struct {
 	HeldSeconds int64  `json:"held_seconds,omitempty"`
 }
 
-func listLocks(ctx context.Context, rdb *redis.Client) ([]lockInfo, error) {
+func listLocks(ctx context.Context, sysOps tasklib.SystemOps) ([]lockInfo, error) {
+	keys, err := sysOps.ScanKeys(ctx, "thread:*:lock", 100)
+	if err != nil {
+		return nil, err
+	}
 	var locks []lockInfo
-	var cursor uint64
-	for {
-		keys, nextCursor, err := rdb.Scan(ctx, cursor, "thread:*:lock", 100).Result()
+	for _, key := range keys {
+		parts := strings.SplitN(key, ":", 3)
+		if len(parts) < 2 {
+			continue
+		}
+		threadID := parts[1]
+		holder, err := sysOps.GetKey(ctx, key)
 		if err != nil {
-			return nil, err
+			continue
 		}
-		for _, key := range keys {
-			parts := strings.SplitN(key, ":", 3)
-			if len(parts) < 2 {
-				continue
+		li := lockInfo{ThreadID: threadID, HolderTask: holder}
+		lockedAt, err := sysOps.GetKey(ctx, tasklib.ThreadLockedAtKey(threadID))
+		if err == nil && lockedAt != "" {
+			li.LockedAt = lockedAt
+			if t, err := time.Parse("2006-01-02T15:04:05Z", lockedAt); err == nil {
+				li.HeldSeconds = int64(time.Since(t).Seconds())
 			}
-			threadID := parts[1]
-			holder, err := rdb.Get(ctx, key).Result()
-			if err != nil {
-				continue
-			}
-			li := lockInfo{ThreadID: threadID, HolderTask: holder}
-			lockedAtKey := tasklib.ThreadLockedAtKey(threadID)
-			if lockedAt, err := rdb.Get(ctx, lockedAtKey).Result(); err == nil && lockedAt != "" {
-				li.LockedAt = lockedAt
-				if t, err := time.Parse("2006-01-02T15:04:05Z", lockedAt); err == nil {
-					li.HeldSeconds = int64(time.Since(t).Seconds())
-				}
-			}
-			locks = append(locks, li)
 		}
-		cursor = nextCursor
-		if cursor == 0 {
-			break
-		}
+		locks = append(locks, li)
 	}
 	if locks == nil {
 		locks = []lockInfo{}
@@ -133,8 +124,8 @@ type staleTaskInfo struct {
 	StaleMinutes int64  `json:"stale_minutes"`
 }
 
-func listStaleTasks(ctx context.Context, rdb *redis.Client, thresholdMinutes int) ([]staleTaskInfo, error) {
-	raw, err := rdb.HGetAll(ctx, "active_tasks").Result()
+func listStaleTasks(ctx context.Context, sysOps tasklib.SystemOps, thresholdMinutes int) ([]staleTaskInfo, error) {
+	raw, err := sysOps.GetAllActiveTasks(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -192,8 +183,8 @@ func countThreads(ctx context.Context, scanner tasklib.ThreadScanner, staleThres
 	return
 }
 
-func redisMemoryInfo(ctx context.Context, rdb *redis.Client) (map[string]string, error) {
-	raw, err := rdb.Info(ctx, "memory").Result()
+func redisMemoryInfo(ctx context.Context, sysOps tasklib.SystemOps) (map[string]string, error) {
+	raw, err := sysOps.Info(ctx, "memory")
 	if err != nil {
 		return nil, err
 	}
@@ -210,24 +201,15 @@ func redisMemoryInfo(ctx context.Context, rdb *redis.Client) (map[string]string,
 	return result, nil
 }
 
-func keySpaceCounts(ctx context.Context, rdb *redis.Client) (map[string]int, error) {
+func keySpaceCounts(ctx context.Context, sysOps tasklib.SystemOps) (map[string]int, error) {
 	patterns := []string{"task:*", "thread:*", "worker:*", "stats:*", "system:*", "tasks:queue:*", "tasks:processing:*"}
 	counts := make(map[string]int)
 	for _, pattern := range patterns {
-		var cursor uint64
-		count := 0
-		for {
-			keys, nextCursor, err := rdb.Scan(ctx, cursor, pattern, 1000).Result()
-			if err != nil {
-				break
-			}
-			count += len(keys)
-			cursor = nextCursor
-			if cursor == 0 {
-				break
-			}
+		keys, err := sysOps.ScanKeys(ctx, pattern, 1000)
+		if err != nil {
+			continue
 		}
-		counts[pattern] = count
+		counts[pattern] = len(keys)
 	}
 	return counts, nil
 }
