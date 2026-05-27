@@ -115,12 +115,12 @@ func (c *Client) ListThreads(ctx context.Context, sortBy, sortDir string) ([]*Th
 			threadID := parts[1]
 			state, _ := c.rdb.HGetAll(ctx, key).Result()
 			threads = append(threads, &Thread{
-				ThreadID:      threadID,
-				Status:        stateVal(state, "status", "unknown"),
-				CreatedAt:     stateVal(state, "created_at", "-"),
-				UpdatedAt:     stateVal(state, "updated_at", "-"),
-				GHRepo:        stateVal(state, "gh_repo", "-"),
-				GHPRNumber:    stateVal(state, "gh_pr_number", "-"),
+				ThreadID:       threadID,
+				Status:         stateVal(state, "status", "unknown"),
+				CreatedAt:      stateVal(state, "created_at", "-"),
+				UpdatedAt:      stateVal(state, "updated_at", "-"),
+				GHRepo:         stateVal(state, "gh_repo", "-"),
+				GHPRNumber:     stateVal(state, "gh_pr_number", "-"),
 				CorrelationID:  stateVal(state, "correlation_id", ""),
 				ParentThreadID: stateVal(state, "parent_thread_id", ""),
 			})
@@ -133,13 +133,13 @@ func (c *Client) ListThreads(ctx context.Context, sortBy, sortDir string) ([]*Th
 
 	// Sort by status priority by default, or by specified column.
 	threadStatusOrder := map[string]int{
-		"error":      0,
-		"running":    1,
-		"cancelled":  2,
-		"complete":   3,
-		"initiated":  4,
-		"reviewing":  5,
-		"unknown":    6,
+		"error":     0,
+		"running":   1,
+		"cancelled": 2,
+		"complete":  3,
+		"initiated": 4,
+		"reviewing": 5,
+		"unknown":   6,
 	}
 
 	sort.Slice(threads, func(i, j int) bool {
@@ -377,7 +377,7 @@ func (c *Client) UnlockThread(ctx context.Context, threadID string) error {
 	err := c.rdb.Del(ctx, ThreadLockKey(threadID), ThreadLockedAtKey(threadID)).Err()
 	// Best-effort event: lock_released
 	c.PushThreadEvent(ctx, threadID, &Event{
-		Type: EventLockReleased,
+		Type:   EventLockReleased,
 		Detail: LockDetail{HolderTaskID: holder},
 	})
 	return err
@@ -559,16 +559,16 @@ func ParseThreadUpdateFields(status, design, pr string) map[string]string {
 // TaskCounts reflects at most the most recent 200 tasks. If a thread has more
 // than 200 tasks, older tasks are not reflected in counts or LastError.
 type ThreadDiagnostics struct {
-	ThreadID       string          `json:"thread_id"`
-	Status         string          `json:"status"`
-	UpdatedAt      string          `json:"updated_at"`
-	CorrelationID  string          `json:"correlation_id"`
-	LastError      string          `json:"last_error,omitempty"`
-	Lock           *LockInfo       `json:"lock,omitempty"`
-	TaskCounts     map[string]int  `json:"task_counts"`
-	RecentEvents   []Event         `json:"recent_events"`
-	StuckTasks     []StuckTaskInfo `json:"stuck_tasks,omitempty"`
-	Warnings       []string        `json:"warnings,omitempty"`
+	ThreadID      string          `json:"thread_id"`
+	Status        string          `json:"status"`
+	UpdatedAt     string          `json:"updated_at"`
+	CorrelationID string          `json:"correlation_id"`
+	LastError     string          `json:"last_error,omitempty"`
+	Lock          *LockInfo       `json:"lock,omitempty"`
+	TaskCounts    map[string]int  `json:"task_counts"`
+	RecentEvents  []Event         `json:"recent_events"`
+	StuckTasks    []StuckTaskInfo `json:"stuck_tasks,omitempty"`
+	Warnings      []string        `json:"warnings,omitempty"`
 }
 
 // LockInfo describes a thread lock.

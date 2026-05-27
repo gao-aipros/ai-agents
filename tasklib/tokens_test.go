@@ -73,11 +73,16 @@ func TestNewStatsProvider(t *testing.T) {
 func provTypeName(v StatsProvider) string {
 	s := "?"
 	switch v.(type) {
-	case *ClaudeStatsProvider: s = "ClaudeStatsProvider"
-	case *CodexStatsProvider: s = "CodexStatsProvider"
-	case *OpenCodeStatsProvider: s = "OpenCodeStatsProvider"
-	case *CopilotStatsProvider: s = "CopilotStatsProvider"
-	case *NoopStatsProvider: s = "NoopStatsProvider"
+	case *ClaudeStatsProvider:
+		s = "ClaudeStatsProvider"
+	case *CodexStatsProvider:
+		s = "CodexStatsProvider"
+	case *OpenCodeStatsProvider:
+		s = "OpenCodeStatsProvider"
+	case *CopilotStatsProvider:
+		s = "CopilotStatsProvider"
+	case *NoopStatsProvider:
+		s = "NoopStatsProvider"
 	}
 	return s
 }

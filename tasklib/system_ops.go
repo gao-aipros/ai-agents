@@ -7,7 +7,8 @@ import (
 )
 
 // ScanKeys returns all keys matching the given glob-style pattern.
-// count is the SCAN COUNT hint (0 = use default).
+// count is the COUNT hint passed to each SCAN iteration (0 = Redis default of 10).
+// Callers should pass a positive count (10+) for reasonable performance.
 func (c *Client) ScanKeys(ctx context.Context, pattern string, count int64) ([]string, error) {
 	var all []string
 	var cursor uint64

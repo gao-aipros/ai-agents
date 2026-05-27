@@ -21,12 +21,12 @@ type WorkerStats map[string]*WorkerInfo
 
 // WorkerInstance represents a single worker instance (hostname-level).
 type WorkerInstance struct {
-	Hostname        string `json:"hostname"`
-	TasksProcessed  int    `json:"tasks_processed"`
-	QueueDepth      int    `json:"queue_depth"`
-	UptimeSeconds   int64  `json:"uptime_seconds"`
+	Hostname             string `json:"hostname"`
+	TasksProcessed       int    `json:"tasks_processed"`
+	QueueDepth           int    `json:"queue_depth"`
+	UptimeSeconds        int64  `json:"uptime_seconds"`
 	LastHeartbeatPayload string `json:"last_heartbeat"`
-	Online          bool   `json:"online"`
+	Online               bool   `json:"online"`
 }
 
 // HeartbeatData is the JSON payload written into heartbeat keys.
@@ -206,12 +206,12 @@ func (c *Client) GetWorkerInstances(ctx context.Context, workerType string) ([]W
 			online := ttl > 0
 
 			instances = append(instances, WorkerInstance{
-				Hostname:        hb.Hostname,
-				TasksProcessed:  hb.TasksProcessed,
-				QueueDepth:      hb.QueueDepth,
-				UptimeSeconds:   hb.UptimeSeconds,
+				Hostname:             hb.Hostname,
+				TasksProcessed:       hb.TasksProcessed,
+				QueueDepth:           hb.QueueDepth,
+				UptimeSeconds:        hb.UptimeSeconds,
 				LastHeartbeatPayload: raw,
-				Online:          online,
+				Online:               online,
 			})
 		}
 		cursor = nextCursor

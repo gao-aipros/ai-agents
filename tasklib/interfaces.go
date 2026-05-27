@@ -101,7 +101,11 @@ type TokenLedger interface {
 // It replaces the raw *redis.Client escape hatch previously exposed by
 // Services.RDB().
 type SystemOps interface {
+	// Ping checks Redis connectivity.
 	Ping(ctx context.Context) error
+	// ScanKeys returns keys matching pattern using SCAN.
+	// count is the COUNT hint passed to each SCAN iteration (0 = Redis default of 10).
+	// Callers should pass a positive count (10+) for reasonable performance.
 	ScanKeys(ctx context.Context, pattern string, count int64) ([]string, error)
 	GetKey(ctx context.Context, key string) (string, error)
 	ActiveTaskCount(ctx context.Context) (int64, error)

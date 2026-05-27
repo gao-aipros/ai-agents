@@ -52,12 +52,12 @@ var LockTTL time.Duration
 var WorkerTypes = []string{"claude", "copilot", "opencode", "codex"}
 
 // KeyName helpers produce the same Redis key names as task.py.
-func TaskKey(taskID, field string) string   { return "task:" + taskID + ":" + field }
-func QueueKey(worker string) string          { return "tasks:queue:" + worker }
-func ProcessingKey(worker string) string     { return "tasks:processing:" + worker }
-func ThreadStateKey(threadID string) string  { return "thread:" + threadID + ":current_state" }
-func ThreadMessagesKey(threadID string) string { return "thread:" + threadID + ":messages" }
-func ThreadLockKey(threadID string) string       { return "thread:" + threadID + ":lock" }
+func TaskKey(taskID, field string) string          { return "task:" + taskID + ":" + field }
+func QueueKey(worker string) string                { return "tasks:queue:" + worker }
+func ProcessingKey(worker string) string           { return "tasks:processing:" + worker }
+func ThreadStateKey(threadID string) string        { return "thread:" + threadID + ":current_state" }
+func ThreadMessagesKey(threadID string) string     { return "thread:" + threadID + ":messages" }
+func ThreadLockKey(threadID string) string         { return "thread:" + threadID + ":lock" }
 func ThreadRunningKey(threadID string) string      { return "thread:" + threadID + ":running" }
 func ThreadCompleteKey(threadID string) string     { return "thread:" + threadID + ":complete" }
 func ThreadSessionIDKey(threadID string) string    { return "thread:" + threadID + ":session_id" }
@@ -65,7 +65,7 @@ func ThreadLastActivityKey(threadID string) string { return "thread:" + threadID
 func GroupTasksKey(threadID, label string) string {
 	return "thread:" + threadID + ":group:" + label + ":tasks"
 }
-func ThreadEventsKey(threadID string) string  { return "thread:" + threadID + ":events" }
+func ThreadEventsKey(threadID string) string   { return "thread:" + threadID + ":events" }
 func ThreadLockedAtKey(threadID string) string { return "thread:" + threadID + ":locked_at" }
 func HeartbeatKey(workerType, hostname string) string {
 	return "worker:" + workerType + ":" + hostname + ":heartbeat"

@@ -21,6 +21,22 @@ func TestScanKeys_HappyPath(t *testing.T) {
 	}
 }
 
+func TestScanKeys_Pagination(t *testing.T) {
+	c, mr := setupTestClient(t)
+	// Create enough keys to trigger multiple SCAN iterations (miniredis count=10).
+	for i := range 25 {
+		mr.Set("scan:page:key:"+string(rune('a'+i%26))+string(rune('0'+i/10)), "val")
+	}
+
+	keys, err := c.ScanKeys(ctx(), "scan:page:*", 10)
+	if err != nil {
+		t.Fatalf("ScanKeys: %v", err)
+	}
+	if len(keys) != 25 {
+		t.Errorf("expected 25 keys, got %d", len(keys))
+	}
+}
+
 func TestScanKeys_EmptyResult(t *testing.T) {
 	c, _ := setupTestClient(t)
 

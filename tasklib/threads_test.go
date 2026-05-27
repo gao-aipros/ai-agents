@@ -68,23 +68,23 @@ func TestGetThreadHistoryTailForWorker(t *testing.T) {
 	c.CreateThread(ctx(), threadID, "", "")
 
 	msgForClaude := Message{
-		Role:      "master",
-		Content:   "Instruction for claude",
-		Metadata:  map[string]string{"task_id": "t1", "worker": "claude"},
+		Role:     "master",
+		Content:  "Instruction for claude",
+		Metadata: map[string]string{"task_id": "t1", "worker": "claude"},
 	}
 	msgForCopilot := Message{
-		Role:      "master",
-		Content:   "Instruction for copilot",
-		Metadata:  map[string]string{"task_id": "t2", "worker": "copilot"},
+		Role:     "master",
+		Content:  "Instruction for copilot",
+		Metadata: map[string]string{"task_id": "t2", "worker": "copilot"},
 	}
 	msgNoMeta := Message{
 		Role:    "master",
 		Content: "Legacy message without worker metadata",
 	}
 	msgForClaude2 := Message{
-		Role:      "master",
-		Content:   "Second instruction for claude",
-		Metadata:  map[string]string{"task_id": "t3", "worker": "claude"},
+		Role:     "master",
+		Content:  "Second instruction for claude",
+		Metadata: map[string]string{"task_id": "t3", "worker": "claude"},
 	}
 
 	c.AppendMessage(ctx(), threadID, msgForClaude)

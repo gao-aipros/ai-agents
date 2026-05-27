@@ -19,26 +19,26 @@ import (
 type AlertType string
 
 const (
-	AlertTaskFailed    AlertType = "task_failed"
-	AlertThreadStuck   AlertType = "thread_stuck"
-	AlertWorkerLost    AlertType = "worker_lost"
+	AlertTaskFailed  AlertType = "task_failed"
+	AlertThreadStuck AlertType = "thread_stuck"
+	AlertWorkerLost  AlertType = "worker_lost"
 )
 
 // AlertPayload is the JSON body POSTed to the webhook URL.
 type AlertPayload struct {
-	Type      AlertType  `json:"type"`
-	Timestamp string     `json:"timestamp"`
-	Detail    any        `json:"detail"`
+	Type      AlertType `json:"type"`
+	Timestamp string    `json:"timestamp"`
+	Detail    any       `json:"detail"`
 }
 
 // AlertConfig is read from environment variables once at startup.
 type AlertConfig struct {
-	WebhookURL     string
-	WebhookSecret  string
-	OnFailed       bool
-	OnStuckThread  bool
-	OnWorkerLost   bool
-	StuckThreshold time.Duration
+	WebhookURL          string
+	WebhookSecret       string
+	OnFailed            bool
+	OnStuckThread       bool
+	OnWorkerLost        bool
+	StuckThreshold      time.Duration
 	WorkerLostThreshold time.Duration
 }
 
