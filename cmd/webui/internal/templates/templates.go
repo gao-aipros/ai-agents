@@ -85,13 +85,129 @@ func New() (*Renderer, error) {
 	return r, nil
 }
 
-// baseData merges data with base template variables.
-// Always allocates a new map to avoid mutating caller's data.
-// For map data, keys are merged into the top level (templates access them
-// directly, e.g. {{.Threads}}). For non-map/non-nil data (e.g. a struct),
-// the value is stored under the key "Data" (templates access it via
-// {{.Data.FieldName}}).
-func (r *Renderer) baseData(data interface{}) map[string]interface{} {
+// ── View Model Types ────────────────────────────────────────────────────────
+
+// BaseView holds template variables common to every rendered page/partial.
+// Page-specific view models embed this struct directly so Go html/template
+// promotes its fields to the top level (e.g. {{.Theme}} works alongside
+// {{.Threads}}).
+type BaseView struct {
+	Theme       string
+	HtmxSrc     string
+	PollDash    string
+	PollThread  string
+	PollWorkers string
+	WorkerTypes []string
+	CSRFToken   string
+	NowUnix     int64
+	PageContent template.HTML
+}
+
+// ViewModel is implemented by all page view model types.
+// The baseView() method lets the renderer find and populate the embedded
+// BaseView without reflection.
+type ViewModel interface {
+	baseView() *BaseView
+}
+
+// DashboardView is the view model for the dashboard page.
+type DashboardView struct {
+	BaseView
+	TokenStats *DashboardTokenStats
+}
+
+// DashboardTokenStats holds the aggregated token statistics for the dashboard.
+type DashboardTokenStats struct {
+	TotalIn   string
+	TotalOut  string
+	TaskCount int64
+	Rows      []DashboardTokenStatsRow
+}
+
+// DashboardTokenStatsRow is a single row in the dashboard token table.
+type DashboardTokenStatsRow struct {
+	Agent  string
+	Input  string
+	Output string
+}
+
+func (v *DashboardView) baseView() *BaseView { return &v.BaseView }
+
+// ThreadListView is the view model for the thread list page.
+type ThreadListView struct {
+	BaseView
+	Threads  []*tasklib.Thread
+	Children map[string][]*tasklib.Thread
+	SortBy   string
+	SortDir  string
+}
+
+func (v *ThreadListView) baseView() *BaseView { return &v.BaseView }
+
+// ThreadDetailView is the view model for the thread detail page.
+type ThreadDetailView struct {
+	BaseView
+	Thread    *tasklib.Thread
+	Running   bool
+	Complete  bool
+	TokenRows []TokenRow
+	Children  []*tasklib.Thread
+}
+
+// TokenRow represents a single row in the per-agent token usage table.
+type TokenRow struct {
+	Agent     string
+	Input     string
+	Output    string
+	Cache     string
+	Reasoning string
+}
+
+func (v *ThreadDetailView) baseView() *BaseView { return &v.BaseView }
+
+// TaskListView is the view model for the task list page.
+type TaskListView struct {
+	BaseView
+	SortBy  string
+	SortDir string
+}
+
+func (v *TaskListView) baseView() *BaseView { return &v.BaseView }
+
+// TaskDetailView is the view model for the task detail page.
+type TaskDetailView struct {
+	BaseView
+	Task     *tasklib.Task
+	TailInfo string
+}
+
+func (v *TaskDetailView) baseView() *BaseView { return &v.BaseView }
+
+// WorkerView is the view model for the worker cards partial.
+type WorkerView struct {
+	BaseView
+	Workers map[string]*tasklib.WorkerStats
+}
+
+func (v *WorkerView) baseView() *BaseView { return &v.BaseView }
+
+// prepareData returns template-ready data.
+// For ViewModel: populates BaseView fields in-place, returns the vm (zero allocs).
+// For map[string]interface{}: creates merged map with base keys (one alloc).
+// For nil/other: creates base-only map (one alloc).
+func (r *Renderer) prepareData(data interface{}) interface{} {
+	if vm, ok := data.(ViewModel); ok {
+		bv := vm.baseView()
+		bv.Theme = r.Theme
+		bv.HtmxSrc = r.HtmxSrc
+		bv.PollDash = r.PollDash
+		bv.PollThread = r.PollThread
+		bv.PollWorkers = r.PollWorkers
+		bv.WorkerTypes = r.WorkerTypes
+		bv.CSRFToken = r.CSRFToken
+		bv.NowUnix = time.Now().Unix()
+		return vm
+	}
 	m := make(map[string]interface{})
 	if existing, ok := data.(map[string]interface{}); ok {
 		for k, v := range existing {
@@ -113,19 +229,19 @@ func (r *Renderer) baseData(data interface{}) map[string]interface{} {
 
 // Page renders a full HTML page. The content template is rendered first and
 // passed as PageContent to base.html, which injects it via {{.PageContent}}.
-func (r *Renderer) Page(w io.Writer, contentTemplate string, data interface{}) error {
+func (r *Renderer) Page(w io.Writer, contentTemplate string, vm ViewModel) error {
+	r.prepareData(vm)
 	var content bytes.Buffer
-	if err := r.tmpl.ExecuteTemplate(&content, contentTemplate, r.baseData(data)); err != nil {
+	if err := r.tmpl.ExecuteTemplate(&content, contentTemplate, vm); err != nil {
 		return err
 	}
-	bd := r.baseData(data)
-	bd["PageContent"] = template.HTML(content.String())
-	return r.tmpl.ExecuteTemplate(w, "base.html", bd)
+	vm.baseView().PageContent = template.HTML(content.String())
+	return r.tmpl.ExecuteTemplate(w, "base.html", vm)
 }
 
 // Partial renders a named template without the layout shell (for HTMX responses).
 func (r *Renderer) Partial(w io.Writer, name string, data interface{}) error {
-	return r.tmpl.ExecuteTemplate(w, name, r.baseData(data))
+	return r.tmpl.ExecuteTemplate(w, name, r.prepareData(data))
 }
 
 // ── template helper functions ─────────────────────────────────────────────

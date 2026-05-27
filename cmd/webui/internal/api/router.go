@@ -125,33 +125,28 @@ func (pr *pageResource) dashboard(w http.ResponseWriter, r *http.Request) {
 	tokens, _ := pr.tokens.GetTokenStats(ctx, tasklib.StatsTotalKey())
 	taskCount, _ := pr.tokens.GetTokenStatsTaskCount(ctx, tasklib.StatsTotalKey())
 
-	data := map[string]interface{}{}
+	vm := &templates.DashboardView{}
 	if tokens != nil && tokens.HasAny() {
-		type statsRow struct {
-			Agent  string
-			Input  string
-			Output string
-		}
-		var rows []statsRow
+		var rows []templates.DashboardTokenStatsRow
 		for _, wt := range []string{"master", "claude", "codex", "copilot", "opencode"} {
 			wtTokens, err := pr.tokens.GetTokenStats(ctx, tasklib.StatsWorkerKey(wt))
 			if err != nil || wtTokens == nil || !wtTokens.HasAny() {
 				continue
 			}
-			rows = append(rows, statsRow{
+			rows = append(rows, templates.DashboardTokenStatsRow{
 				Agent:  wt,
 				Input:  tasklib.FormatTokenCount(wtTokens.InputTokens),
 				Output: tasklib.FormatTokenCount(wtTokens.OutputTokens),
 			})
 		}
-		data["TokenStats"] = map[string]interface{}{
-			"TotalIn":   tasklib.FormatTokenCount(tokens.InputTokens),
-			"TotalOut":  tasklib.FormatTokenCount(tokens.OutputTokens),
-			"TaskCount": taskCount,
-			"Rows":      rows,
+		vm.TokenStats = &templates.DashboardTokenStats{
+			TotalIn:   tasklib.FormatTokenCount(tokens.InputTokens),
+			TotalOut:  tasklib.FormatTokenCount(tokens.OutputTokens),
+			TaskCount: taskCount,
+			Rows:      rows,
 		}
 	}
-	Page(w, pr.renderer, "page-dashboard", data)
+	Page(w, pr.renderer, "page-dashboard", vm)
 }
 
 // GET /threads
@@ -166,11 +161,11 @@ func (pr *pageResource) threadList(w http.ResponseWriter, r *http.Request) {
 	}
 	children := buildThreadTree(threads)
 	rootThreads := filterRootThreads(threads)
-	Page(w, pr.renderer, "page-thread-list", map[string]interface{}{
-		"Threads":  rootThreads,
-		"Children": children,
-		"SortBy":   sortBy,
-		"SortDir":  sortDir,
+	Page(w, pr.renderer, "page-thread-list", &templates.ThreadListView{
+		Threads:  rootThreads,
+		Children: children,
+		SortBy:   sortBy,
+		SortDir:  sortDir,
 	})
 }
 
@@ -179,22 +174,20 @@ func (pr *pageResource) threadDetail(w http.ResponseWriter, r *http.Request) {
 	threadID := r.PathValue("thread_id")
 
 	if !request.ValidThreadID(threadID) {
-		Page(w, pr.renderer, "page-thread-detail", map[string]interface{}{"Thread": nil})
+		Page(w, pr.renderer, "page-thread-detail", &templates.ThreadDetailView{})
 		return
 	}
 
 	exists, err := pr.threads.ThreadExists(r.Context(), threadID)
 	if err != nil || !exists {
-		Page(w, pr.renderer, "page-thread-detail", map[string]interface{}{
-			"Thread": nil,
-		})
+		Page(w, pr.renderer, "page-thread-detail", &templates.ThreadDetailView{})
 		return
 	}
 
 	thread, err := pr.threads.GetThread(r.Context(), threadID)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("[webui] thread detail page error: %v", err))
-		Page(w, pr.renderer, "page-thread-detail", map[string]interface{}{"Thread": nil})
+		Page(w, pr.renderer, "page-thread-detail", &templates.ThreadDetailView{})
 		return
 	}
 
@@ -210,20 +203,20 @@ func (pr *pageResource) threadDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	Page(w, pr.renderer, "page-thread-detail", map[string]interface{}{
-		"Thread":   thread,
-		"Running":  running,
-		"Complete": complete,
-		"Children": children,
+	Page(w, pr.renderer, "page-thread-detail", &templates.ThreadDetailView{
+		Thread:   thread,
+		Running:  running,
+		Complete: complete,
+		Children: children,
 	})
 }
 
 // GET /tasks
 func (pr *pageResource) taskList(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	Page(w, pr.renderer, "page-task-list", map[string]interface{}{
-		"SortBy":  q.Get("sort_by"),
-		"SortDir": q.Get("sort_dir"),
+	Page(w, pr.renderer, "page-task-list", &templates.TaskListView{
+		SortBy:  q.Get("sort_by"),
+		SortDir: q.Get("sort_dir"),
 	})
 }
 
@@ -233,9 +226,7 @@ func (pr *pageResource) taskDetail(w http.ResponseWriter, r *http.Request) {
 
 	task, err := pr.tasks.GetTask(r.Context(), taskID)
 	if err != nil || task.Status == "" {
-		Page(w, pr.renderer, "page-task-detail", map[string]interface{}{
-			"Task": nil,
-		})
+		Page(w, pr.renderer, "page-task-detail", &templates.TaskDetailView{})
 		return
 	}
 
@@ -253,9 +244,9 @@ func (pr *pageResource) taskDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	Page(w, pr.renderer, "page-task-detail", map[string]interface{}{
-		"Task":     task,
-		"TailInfo": tailInfo,
+	Page(w, pr.renderer, "page-task-detail", &templates.TaskDetailView{
+		Task:     task,
+		TailInfo: tailInfo,
 	})
 }
 

@@ -31,9 +31,9 @@ func IsHTMX(r *http.Request) bool {
 // contentTemplate names the page template (e.g. "page-dashboard") whose output
 // is injected into base.html via {{.PageContent}}.
 // Renders into a buffer first so a partial failure doesn't produce a corrupt 200.
-func Page(w http.ResponseWriter, r *templates.Renderer, contentTemplate string, data interface{}) {
+func Page(w http.ResponseWriter, r *templates.Renderer, contentTemplate string, vm templates.ViewModel) {
 	var buf bytes.Buffer
-	if err := r.Page(&buf, contentTemplate, data); err != nil {
+	if err := r.Page(&buf, contentTemplate, vm); err != nil {
 		slog.Warn(fmt.Sprintf("[webui] template page error: %v", err))
 		Error(w, http.StatusInternalServerError, "internal server error")
 		return
