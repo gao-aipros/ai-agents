@@ -801,7 +801,6 @@ func TestDefaultConfig_OutputFormat(t *testing.T) {
 	}
 }
 
-
 func TestRunSubprocess_SetsThreadEnvVar(t *testing.T) {
 	handler, _, notify := newTestHandler(t)
 
@@ -936,7 +935,6 @@ func TestSubmit_StderrWithSuccess(t *testing.T) {
 		t.Errorf("last message type = %q, want response", last.Type)
 	}
 }
-
 
 // ── stream-json mode regression tests ─────────────────────────────────────
 

@@ -155,11 +155,11 @@ func (h *Handler) handleAssistantMessage(ctx context.Context, threadID string, m
 
 // streamMessage represents a single JSON line from claude --output-format stream-json.
 type streamMessage struct {
-	Type    string              `json:"type"`
-	Subtype string              `json:"subtype"`
-	IsError bool                `json:"is_error"`
-	Result  string              `json:"result"`
-	Message *streamAssistant    `json:"message"`
+	Type    string               `json:"type"`
+	Subtype string               `json:"subtype"`
+	IsError bool                 `json:"is_error"`
+	Result  string               `json:"result"`
+	Message *streamAssistant     `json:"message"`
 	Usage   *tasklib.ClaudeUsage `json:"usage,omitempty"`
 }
 
