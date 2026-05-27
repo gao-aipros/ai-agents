@@ -20,6 +20,19 @@ ALLOWED_MD_DIRS = [
     ".claude/",
 ]
 
+THREAD_MODIFY_PATTERNS = [
+    # export THREAD=value
+    r'\bexport\s+THREAD\s*=',
+    # declare THREAD=value (with or without -x flag)
+    r'\bdeclare\s+.*THREAD\s*=',
+    # typeset THREAD=value (with or without -x flag)
+    r'\btypeset\s+.*THREAD\s*=',
+    # Inline env var: THREAD=value cmd (preceded by word boundary or line start)
+    r'(?:^|[\s;&|])\s*THREAD\s*=\s*\S',
+    # env THREAD=value cmd
+    r'\benv\s+.*\bTHREAD\s*=',
+]
+
 FORBIDDEN_BASH_PATTERNS = [
     # gh write commands the master must never run
     r"\bgh\s+pr\s+create\b",
@@ -116,10 +129,40 @@ def check_write(file_path: str) -> None:
 
 
 def check_thread_create(command: str) -> None:
-    """Validate task thread-create commands: --parent must be $THREAD."""
+    """Validate task thread-create commands: --parent must be $THREAD, --id must be valid."""
     m = re.search(r'\btask\s+thread-create\b', command)
     if not m:
         return  # not a thread-create command
+
+    # --- Validate --id ---
+
+    id_match = re.search(r'--id[=\s]+(\S+)', command)
+
+    if not id_match or id_match.group(1).startswith('--'):
+        block(
+            "task thread-create requires --id with a deterministic value. "
+            "Use --id $THREAD-<issue_number> (e.g., --id $THREAD-192). "
+            "Never use bare words like 'root'."
+        )
+
+    id_value = id_match.group(1)
+
+    # Reject bare "root" as an ID (the specific bug we're fixing)
+    if id_value == "root":
+        block(
+            "task thread-create --id cannot be 'root'. "
+            "Use --id $THREAD-<issue_number> (e.g., --id $THREAD-192)."
+        )
+
+    # Require $THREAD- prefix for namespacing under the root thread.
+    # Accept both $THREAD-... and "$THREAD-... (pre shell expansion).
+    if not (id_value.startswith("$THREAD-") or id_value.startswith('"$THREAD-')):
+        block(
+            f"task thread-create --id must be namespaced under $THREAD. "
+            f"Got: {id_value}. Use --id $THREAD-<issue_number> (e.g., --id $THREAD-192)."
+        )
+
+    # --- Validate --parent ---
 
     # Match --parent VALUE or --parent=VALUE (cobra supports both forms).
     parent_match = re.search(r'--parent[=\s]+(\S+)', command)
@@ -149,8 +192,32 @@ def check_thread_create(command: str) -> None:
         )
 
 
+def check_thread_modify(command: str) -> None:
+    """Block any command that attempts to modify the THREAD environment variable."""
+    for pattern in THREAD_MODIFY_PATTERNS:
+        if re.search(pattern, command):
+            block(
+                f"Attempt to modify THREAD environment variable matched '{pattern}': "
+                f"{command[:120]}. THREAD is set by the web UI harness and must not "
+                f"be changed. Use task thread-create to create child threads instead."
+            )
+
+
 def check_bash(command: str) -> None:
-    # First, specific thread-create validation
+    # Defense-in-depth: detect if THREAD was already modified before this command
+    original_thread = os.environ.get("ORIGINAL_THREAD", "")
+    current_thread = os.environ.get("THREAD", "")
+    if original_thread and current_thread != original_thread:
+        block(
+            f"THREAD environment variable was modified (current='{current_thread}', "
+            f"original='{original_thread}'). THREAD is set by the web UI harness "
+            f"and must not be changed. Use task thread-create to create child threads instead."
+        )
+
+    # Block commands that try to modify THREAD
+    check_thread_modify(command)
+
+    # Validate thread-create commands
     check_thread_create(command)
 
     # Then, generic forbidden pattern checks
