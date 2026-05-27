@@ -63,6 +63,47 @@
     </section>
   </div>
 
+  {{if .Tasks}}
+  <section>
+    <h2>Tasks</h2>
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th>Task ID</th>
+            <th>Worker</th>
+            <th>Status</th>
+            <th>Enqueued</th>
+            <th>Started</th>
+            <th>Completed</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+        {{range .Tasks}}
+          <tr>
+            <td><a href="/tasks/{{.TaskID}}" class="mono">{{.TaskID}}</a></td>
+            <td><span class="badge badge-info">{{or .Worker "-"}}</span></td>
+            <td>{{statusBadge .Status}}</td>
+            <td class="text-muted">{{if .EnqueuedAt}}<time datetime="{{.EnqueuedAt}}">{{.EnqueuedAt}}</time>{{else}}-{{end}}</td>
+            <td class="text-muted">{{if .StartedAt}}<time datetime="{{.StartedAt}}">{{.StartedAt}}</time>{{else}}-{{end}}</td>
+            <td class="text-muted">{{if .CompletedAt}}<time datetime="{{.CompletedAt}}">{{.CompletedAt}}</time>{{else}}-{{end}}</td>
+            <td><a href="/tasks/{{.TaskID}}" class="btn btn-sm">View</a></td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  {{else if .Thread}}
+  <section>
+    <h2>Tasks</h2>
+    <div class="card">
+      <div class="text-center text-muted" style="padding:24px">No tasks</div>
+    </div>
+  </section>
+  {{end}}
+
   <section>
     <h2>Messages</h2>
     <div id="thread-history"
