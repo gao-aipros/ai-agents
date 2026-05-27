@@ -1858,3 +1858,238 @@ func TestHandleCreateThread_ValidParent(t *testing.T) {
 		t.Errorf("parent_thread_id = %q, want %q", resp["parent_thread_id"], "valid-parent")
 	}
 }
+
+// ── global tokens ─────────────────────────────────────────────────────────
+
+func seedTokenData(t *testing.T, rdb *redis.Client) {
+	t.Helper()
+	ctx := context.Background()
+
+	rdb.HSet(ctx, tasklib.StatsTotalKey(), map[string]interface{}{
+		"input_tokens":  int64(50000),
+		"output_tokens": int64(12000),
+		"cache_read":    int64(3000),
+		"cache_write":   int64(1000),
+		"reasoning":     int64(0),
+		"task_count":    int64(197),
+	})
+	rdb.HSet(ctx, tasklib.StatsWorkerKey("master"), map[string]interface{}{
+		"input_tokens":  int64(5000),
+		"output_tokens": int64(2000),
+		"cache_read":    int64(500),
+		"cache_write":   int64(200),
+		"reasoning":     int64(0),
+		"task_count":    int64(50),
+	})
+	rdb.HSet(ctx, tasklib.StatsWorkerKey("claude"), map[string]interface{}{
+		"input_tokens":  int64(45000),
+		"output_tokens": int64(10000),
+		"cache_read":    int64(2500),
+		"cache_write":   int64(800),
+		"reasoning":     int64(0),
+		"task_count":    int64(147),
+	})
+}
+
+func TestHandleGlobalTokens_JSON(t *testing.T) {
+	th := newTestRouter(t, MiddlewareConfig{})
+	defer th.Cleanup()
+
+	seedTokenData(t, th.rdb)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/tokens", nil)
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	readJSON(w, &resp)
+
+	total, ok := resp["total"].(map[string]interface{})
+	if !ok {
+		t.Fatal("response missing total field")
+	}
+	if total["input_tokens"] != float64(50000) {
+		t.Errorf("total input_tokens = %v, want 50000", total["input_tokens"])
+	}
+	if total["output_tokens"] != float64(12000) {
+		t.Errorf("total output_tokens = %v, want 12000", total["output_tokens"])
+	}
+
+	if taskCount, ok := resp["task_count"].(float64); !ok || taskCount != 197 {
+		t.Errorf("task_count = %v, want 197", resp["task_count"])
+	}
+
+	workers, ok := resp["workers"].(map[string]interface{})
+	if !ok {
+		t.Fatal("response missing workers field")
+	}
+	if _, ok := workers["master"]; !ok {
+		t.Error("workers missing master")
+	}
+	if _, ok := workers["claude"]; !ok {
+		t.Error("workers missing claude")
+	}
+
+	// Only master and claude should be present (codex/copilot/opencode have no data)
+	if len(workers) != 2 {
+		t.Errorf("workers count = %d, want 2 (master + claude only)", len(workers))
+	}
+}
+
+func TestHandleGlobalTokens_HTMX(t *testing.T) {
+	th := newTestRouter(t, MiddlewareConfig{})
+	defer th.Cleanup()
+
+	seedTokenData(t, th.rdb)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/tokens", nil)
+	r.Header.Set("HX-Request", "true")
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	bodyStr := w.Body.String()
+	if !strings.Contains(bodyStr, "50K") {
+		t.Errorf("expected formatted total input (50K) in HTML partial, got: %s", bodyStr)
+	}
+	if !strings.Contains(bodyStr, "12K") {
+		t.Errorf("expected formatted total output (12K) in HTML partial, got: %s", bodyStr)
+	}
+	if !strings.Contains(bodyStr, "197 tasks") {
+		t.Errorf("expected task count in HTML partial, got: %s", bodyStr)
+	}
+	if !strings.Contains(bodyStr, "master") {
+		t.Errorf("expected master row in HTML partial, got: %s", bodyStr)
+	}
+	if !strings.Contains(bodyStr, "claude") {
+		t.Errorf("expected claude row in HTML partial, got: %s", bodyStr)
+	}
+	// token-stats template wraps content in card
+	if !strings.Contains(bodyStr, "token-stats") {
+		t.Errorf("expected token-stats CSS class, got: %s", bodyStr)
+	}
+}
+
+func TestHandleGlobalTokens_Empty(t *testing.T) {
+	th := newTestRouter(t, MiddlewareConfig{})
+	defer th.Cleanup()
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/tokens", nil)
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	readJSON(w, &resp)
+
+	total, ok := resp["total"].(map[string]interface{})
+	if !ok {
+		t.Fatal("response missing total field")
+	}
+	if len(total) != 0 {
+		t.Errorf("total should be empty map, got %v", total)
+	}
+
+	if taskCount, ok := resp["task_count"].(float64); !ok || taskCount != 0 {
+		t.Errorf("task_count = %v, want 0", resp["task_count"])
+	}
+
+	workers, ok := resp["workers"].(map[string]interface{})
+	if !ok {
+		t.Fatal("response missing workers field")
+	}
+	if len(workers) != 0 {
+		t.Errorf("workers should be empty, got %v", workers)
+	}
+}
+
+func TestHandleGetThread_IncludesTokens(t *testing.T) {
+	th := newTestRouter(t, MiddlewareConfig{})
+	defer th.Cleanup()
+
+	ctx := context.Background()
+	threadID := "tokens-thread"
+	th.Client.CreateThread(ctx, threadID, "repo/test", "")
+
+	// Add master token stats to the thread state directly
+	th.rdb.HSet(ctx, tasklib.ThreadStateKey(threadID), map[string]interface{}{
+		"master_input_tokens":        int64(1000),
+		"master_output_tokens":       int64(500),
+		"master_cache_read_tokens":   int64(100),
+		"master_cache_write_tokens":  int64(50),
+		"master_reasoning_tokens":    int64(0),
+	})
+
+	// Enqueue a task with token data
+	task, err := th.Client.Enqueue(ctx, "claude", threadID, "test instruction")
+	if err != nil {
+		t.Fatalf("Enqueue failed: %v", err)
+	}
+	th.rdb.Set(ctx, tasklib.TaskKey(task.TaskID, "status"), "done", 0)
+	th.rdb.Set(ctx, tasklib.TaskKey(task.TaskID, "input_tokens"), int64(300), 0)
+	th.rdb.Set(ctx, tasklib.TaskKey(task.TaskID, "output_tokens"), int64(200), 0)
+	th.rdb.Set(ctx, tasklib.TaskKey(task.TaskID, "cache_read_tokens"), int64(50), 0)
+
+	// Unlock thread so task is visible
+	th.Client.UnlockThread(ctx, threadID)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/threads/"+threadID, nil)
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	readJSON(w, &resp)
+
+	tokens, ok := resp["tokens"].(map[string]interface{})
+	if !ok {
+		t.Fatal("response missing tokens field")
+	}
+
+	master, ok := tokens["master"].(map[string]interface{})
+	if !ok {
+		t.Fatal("tokens missing master field")
+	}
+	if master["InputTokens"] != float64(1000) {
+		t.Errorf("master InputTokens = %v, want 1000", master["InputTokens"])
+	}
+	if master["OutputTokens"] != float64(500) {
+		t.Errorf("master OutputTokens = %v, want 500", master["OutputTokens"])
+	}
+
+	workers, ok := tokens["workers"].(map[string]interface{})
+	if !ok {
+		t.Fatal("tokens missing workers field")
+	}
+	claude, ok := workers["claude"].(map[string]interface{})
+	if !ok {
+		t.Fatal("workers missing claude")
+	}
+	if claude["InputTokens"] != float64(300) {
+		t.Errorf("claude InputTokens = %v, want 300", claude["InputTokens"])
+	}
+	if claude["OutputTokens"] != float64(200) {
+		t.Errorf("claude OutputTokens = %v, want 200", claude["OutputTokens"])
+	}
+
+	tokenRows, ok := resp["token_rows"].([]interface{})
+	if !ok {
+		t.Fatal("response missing token_rows field")
+	}
+	if len(tokenRows) != 2 {
+		t.Errorf("token_rows count = %d, want 2 (master + claude)", len(tokenRows))
+	}
+}

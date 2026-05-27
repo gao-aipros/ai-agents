@@ -35,7 +35,7 @@ func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *t
 	r.Handle("/static/*", http.StripPrefix("/static/", fileServer))
 
 	// Page resources
-	pages := &pageResource{tasks: services.Tasks, threads: services.Threads, requests: services.Requests, tokens: services.Tokens, handler: handler, renderer: renderer}
+	pages := &pageResource{tasks: services.Tasks, threads: services.Threads, requests: services.Requests, handler: handler, renderer: renderer}
 
 	// Page routes (full HTML pages)
 	r.Get("/", pages.dashboard)
@@ -55,6 +55,7 @@ func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *t
 		req := &requestsResource{requests: services.Requests, handler: handler, renderer: renderer}
 		thr := &threadsResource{threads: services.Threads, requests: services.Requests, threadHistory: services.History, tasks: services.Tasks, tokens: services.Tokens, renderer: renderer, paths: mwCfg.Paths}
 		tsk := &tasksResource{tasks: services.Tasks, renderer: renderer}
+			tok := &tokensResource{tokens: services.Tokens, renderer: renderer}
 
 		// Health / stats / diagnostics / events / metrics
 		r.Get("/health", sys.health)
@@ -94,6 +95,9 @@ func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *t
 		r.Get("/tasks/{task_id}", tsk.get)
 		r.Get("/tasks/{task_id}/result", tsk.result)
 
+		// Token stats
+		r.With(rateLimitMiddleware(mwCfg.DefaultLimiter)).Get("/tokens", tok.globalTokens)
+
 		// Admin (gated by adminAuthMiddleware; authMiddleware skips /api/admin/ paths)
 		admin := &adminResource{accessLog: accessLog, newAccessLogger: newAccessLogger}
 		r.With(adminAuthMiddleware(mwCfg.AdminKey)).Get("/admin/log-access", admin.logAccessHandler)
@@ -114,39 +118,13 @@ type pageResource struct {
 	tasks    tasklib.TaskStore
 	threads  tasklib.ThreadStore
 	requests tasklib.RequestStore
-	tokens   tasklib.TokenLedger
 	handler  *request.Handler
 	renderer *templates.Renderer
 }
 
 // GET /
 func (pr *pageResource) dashboard(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	tokens, _ := pr.tokens.GetTokenStats(ctx, tasklib.StatsTotalKey())
-	taskCount, _ := pr.tokens.GetTokenStatsTaskCount(ctx, tasklib.StatsTotalKey())
-
-	vm := &templates.DashboardView{}
-	if tokens != nil && tokens.HasAny() {
-		var rows []templates.DashboardTokenStatsRow
-		for _, wt := range []string{"master", "claude", "codex", "copilot", "opencode"} {
-			wtTokens, err := pr.tokens.GetTokenStats(ctx, tasklib.StatsWorkerKey(wt))
-			if err != nil || wtTokens == nil || !wtTokens.HasAny() {
-				continue
-			}
-			rows = append(rows, templates.DashboardTokenStatsRow{
-				Agent:  wt,
-				Input:  tasklib.FormatTokenCount(wtTokens.InputTokens),
-				Output: tasklib.FormatTokenCount(wtTokens.OutputTokens),
-			})
-		}
-		vm.TokenStats = &templates.DashboardTokenStats{
-			TotalIn:   tasklib.FormatTokenCount(tokens.InputTokens),
-			TotalOut:  tasklib.FormatTokenCount(tokens.OutputTokens),
-			TaskCount: taskCount,
-			Rows:      rows,
-		}
-	}
-	Page(w, pr.renderer, "page-dashboard", vm)
+	Page(w, pr.renderer, "page-dashboard", &templates.DashboardView{})
 }
 
 // GET /threads
