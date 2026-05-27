@@ -168,6 +168,9 @@ func TestGetThreadHistoryTailForWorker(t *testing.T) {
 func TestCreateThread_WithParent(t *testing.T) {
 	c, _ := setupTestClient(t)
 
+	// Create parent thread first — validation now requires it to exist.
+	c.CreateThread(ctx(), "parent-thread", "", "")
+
 	thread, err := c.CreateThread(ctx(), "child-thread", "owner/repo", "parent-thread")
 	if err != nil {
 		t.Fatalf("CreateThread with parent: %v", err)
@@ -210,6 +213,7 @@ func TestCreateThread_WithoutParent(t *testing.T) {
 func TestGetThread_ReturnsParentThreadID(t *testing.T) {
 	c, _ := setupTestClient(t)
 
+	c.CreateThread(ctx(), "parent-abc", "", "")
 	c.CreateThread(ctx(), "child-1", "repo/x", "parent-abc")
 
 	thread, err := c.GetThread(ctx(), "child-1")
@@ -273,6 +277,8 @@ func TestListThreads_ReturnsParentThreadID(t *testing.T) {
 func TestUpdateThread_ParentThreadIDPassedThrough(t *testing.T) {
 	c, _ := setupTestClient(t)
 
+	c.CreateThread(ctx(), "old-parent", "", "")
+	c.CreateThread(ctx(), "new-parent", "", "")
 	c.CreateThread(ctx(), "update-me", "", "old-parent")
 
 	// Update with parent_thread_id field
@@ -612,6 +618,7 @@ func TestDeleteThreadKnown_EmptyDescendantsMap(t *testing.T) {
 func TestUpdateThread_UnrelatedFieldsDoNotWipeParent(t *testing.T) {
 	c, _ := setupTestClient(t)
 
+	c.CreateThread(ctx(), "my-parent", "", "")
 	c.CreateThread(ctx(), "keep-parent", "", "my-parent")
 
 	// Update only status — parent_thread_id should be preserved by HSet (only updated_at is always set)
@@ -628,5 +635,97 @@ func TestUpdateThread_UnrelatedFieldsDoNotWipeParent(t *testing.T) {
 	}
 	if state["status"] != "running" {
 		t.Errorf("status in Redis = %q, want %q", state["status"], "running")
+	}
+}
+
+// ── parent validation tests ──────────────────────────────────────────────
+
+func TestCreateThread_ParentNotFound(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	_, err := c.CreateThread(ctx(), "orphan-child", "", "nonexistent-parent")
+	if err == nil {
+		t.Fatal("expected error for non-existent parent")
+	}
+	if err.Error() != `parent thread "nonexistent-parent" not found` {
+		t.Errorf("error = %q, want %q", err.Error(), `parent thread "nonexistent-parent" not found`)
+	}
+}
+
+func TestCreateThread_SelfParent(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	_, err := c.CreateThread(ctx(), "self-thread", "", "self-thread")
+	if err == nil {
+		t.Fatal("expected error for self-referencing parent")
+	}
+	if err.Error() != "thread cannot be its own parent" {
+		t.Errorf("error = %q, want %q", err.Error(), "thread cannot be its own parent")
+	}
+}
+
+func TestCreateThread_ParentExists(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "real-parent", "", "")
+
+	thread, err := c.CreateThread(ctx(), "real-child", "owner/repo", "real-parent")
+	if err != nil {
+		t.Fatalf("CreateThread with existing parent: %v", err)
+	}
+	if thread.ParentThreadID != "real-parent" {
+		t.Errorf("ParentThreadID = %q, want %q", thread.ParentThreadID, "real-parent")
+	}
+}
+
+func TestUpdateThread_ParentNotFound(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "update-orphan", "", "")
+
+	err := c.UpdateThread(ctx(), "update-orphan", map[string]string{
+		"parent_thread_id": "nonexistent",
+	})
+	if err == nil {
+		t.Fatal("expected error for non-existent parent")
+	}
+	if err.Error() != `parent thread "nonexistent" not found` {
+		t.Errorf("error = %q, want %q", err.Error(), `parent thread "nonexistent" not found`)
+	}
+}
+
+func TestUpdateThread_SelfParent(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "update-self", "", "")
+
+	err := c.UpdateThread(ctx(), "update-self", map[string]string{
+		"parent_thread_id": "update-self",
+	})
+	if err == nil {
+		t.Fatal("expected error for self-referencing parent")
+	}
+	if err.Error() != "thread cannot be its own parent" {
+		t.Errorf("error = %q, want %q", err.Error(), "thread cannot be its own parent")
+	}
+}
+
+func TestUpdateThread_ClearParent(t *testing.T) {
+	c, _ := setupTestClient(t)
+
+	c.CreateThread(ctx(), "existing-parent", "", "")
+	c.CreateThread(ctx(), "clear-parent-child", "", "existing-parent")
+
+	// Setting parent_thread_id to empty should clear the parent relationship
+	err := c.UpdateThread(ctx(), "clear-parent-child", map[string]string{
+		"parent_thread_id": "",
+	})
+	if err != nil {
+		t.Fatalf("UpdateThread clear parent: %v", err)
+	}
+
+	state, _ := c.rdb.HGetAll(ctx(), ThreadStateKey("clear-parent-child")).Result()
+	if state["parent_thread_id"] != "" {
+		t.Errorf("parent_thread_id in Redis = %q, want empty", state["parent_thread_id"])
 	}
 }

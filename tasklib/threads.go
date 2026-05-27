@@ -40,6 +40,20 @@ func (c *Client) CreateThread(ctx context.Context, threadID, repo, parentThreadI
 		return nil, fmt.Errorf("generate correlation_id: %w", err)
 	}
 
+	// Validate parent thread exists if specified
+	if parentThreadID != "" {
+		if parentThreadID == threadID {
+			return nil, fmt.Errorf("thread cannot be its own parent")
+		}
+		exists, err := c.ThreadExists(ctx, parentThreadID)
+		if err != nil {
+			return nil, fmt.Errorf("check parent thread: %w", err)
+		}
+		if !exists {
+			return nil, fmt.Errorf("parent thread %q not found", parentThreadID)
+		}
+	}
+
 	now := Ts()
 	mapping := map[string]interface{}{
 		"status":         "initiated",
@@ -346,6 +360,18 @@ func (c *Client) UpdateThread(ctx context.Context, threadID string, fields map[s
 		case "pr", "pr_number", "gh_pr_number":
 			mapping["gh_pr_number"] = v
 		case "parent_thread_id":
+			if v != "" {
+				if v == threadID {
+					return fmt.Errorf("thread cannot be its own parent")
+				}
+				exists, err := c.ThreadExists(ctx, v)
+				if err != nil {
+					return fmt.Errorf("check parent thread: %w", err)
+				}
+				if !exists {
+					return fmt.Errorf("parent thread %q not found", v)
+				}
+			}
 			mapping["parent_thread_id"] = v
 		default:
 			mapping[k] = v
