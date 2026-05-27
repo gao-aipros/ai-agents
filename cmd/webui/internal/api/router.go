@@ -35,7 +35,7 @@ func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *t
 	r.Handle("/static/*", http.StripPrefix("/static/", fileServer))
 
 	// Page resources
-	pages := &pageResource{tasks: services.Tasks, threads: services.Threads, tokens: services.Tokens, handler: handler, renderer: renderer}
+	pages := &pageResource{tasks: services.Tasks, threads: services.Threads, requests: services.Requests, tokens: services.Tokens, handler: handler, renderer: renderer}
 
 	// Page routes (full HTML pages)
 	r.Get("/", pages.dashboard)
@@ -52,8 +52,8 @@ func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *t
 		diag := &diagnosticsResource{sysOps: services.SysOps, scanner: services.Scanner}
 		evt := &eventsResource{events: services.Events}
 		wrk := &workersResource{workers: services.Workers, renderer: renderer}
-		req := &requestsResource{threads: services.Threads, handler: handler, renderer: renderer, workspaceDir: mwCfg.WorkspaceDir, claudeSessionsDir: mwCfg.ClaudeSessionsDir}
-		thr := &threadsResource{threads: services.Threads, tasks: services.Tasks, tokens: services.Tokens, renderer: renderer, workspaceDir: mwCfg.WorkspaceDir, claudeSessionsDir: mwCfg.ClaudeSessionsDir}
+		req := &requestsResource{requests: services.Requests, handler: handler, renderer: renderer, workspaceDir: mwCfg.WorkspaceDir, claudeSessionsDir: mwCfg.ClaudeSessionsDir}
+		thr := &threadsResource{threads: services.Threads, requests: services.Requests, threadHistory: services.History, tasks: services.Tasks, tokens: services.Tokens, renderer: renderer, workspaceDir: mwCfg.WorkspaceDir, claudeSessionsDir: mwCfg.ClaudeSessionsDir}
 		tsk := &tasksResource{tasks: services.Tasks, renderer: renderer}
 
 		// Health / stats / diagnostics / events / metrics
@@ -113,6 +113,7 @@ func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *t
 type pageResource struct {
 	tasks    tasklib.TaskStore
 	threads  tasklib.ThreadStore
+	requests tasklib.RequestStore
 	tokens   tasklib.TokenLedger
 	handler  *request.Handler
 	renderer *templates.Renderer
@@ -190,7 +191,7 @@ func (pr *pageResource) threadDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	running, _ := pr.threads.IsRequestRunning(r.Context(), threadID)
+	running, _ := pr.requests.IsRequestRunning(r.Context(), threadID)
 	complete, _ := pr.threads.IsThreadComplete(r.Context(), threadID)
 
 	// Find child threads

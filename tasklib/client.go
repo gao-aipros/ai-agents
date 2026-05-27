@@ -84,13 +84,15 @@ func NewClient(rdb *redis.Client) *Client {
 // Services composes all role interfaces for consumers that need the full
 // surface area (CLI tools, DI composition roots).
 type Services struct {
-	Tasks   TaskStore
-	Threads ThreadStore
-	Events  EventBus
-	Workers WorkerRegistry
-	Tokens  TokenLedger
-	Scanner ThreadScanner
-	SysOps  SystemOps
+	Tasks    TaskStore
+	Threads  ThreadStore
+	Requests RequestStore  // request locks, session IDs, cancel/running
+	History  ThreadHistory // message CRUD, activity stamps
+	Events   EventBus
+	Workers  WorkerRegistry
+	Tokens   TokenLedger
+	Scanner  ThreadScanner
+	SysOps   SystemOps
 }
 
 // NewServices creates a Services that composes all role interfaces.
@@ -99,13 +101,15 @@ type Services struct {
 func NewServices(rdb *redis.Client) *Services {
 	c := NewClient(rdb)
 	return &Services{
-		Tasks:   c,
-		Threads: c,
-		Events:  c,
-		Workers: c,
-		Tokens:  c,
-		Scanner: c,
-		SysOps:  c,
+		Tasks:    c,
+		Threads:  c,
+		Requests: c,
+		History:  c,
+		Events:   c,
+		Workers:  c,
+		Tokens:   c,
+		Scanner:  c,
+		SysOps:   c,
 	}
 }
 

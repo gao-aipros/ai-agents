@@ -96,7 +96,7 @@ func newTestHandler(t *testing.T) (*Handler, *miniredis.Miniredis, chan string) 
 		OutputFormat:      "text",
 		TestNotify:        notify,
 	}
-	handler := New(client, client, cfg)
+	handler := New(client, client, client, client, cfg)
 	return handler, mr, notify
 }
 
@@ -148,7 +148,7 @@ func TestSubmit_Success(t *testing.T) {
 		t.Error("thread should be marked complete")
 	}
 
-	msgs, err := handler.threads.GetThreadHistory(ctx, "test-thread", 0, 0)
+	msgs, err := handler.history.GetThreadHistory(ctx, "test-thread", 0, 0)
 	if err != nil {
 		t.Fatalf("GetThreadHistory: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestSubmit_Success(t *testing.T) {
 	}
 
 	// Verify lock is released
-	running, err := handler.threads.IsRequestRunning(ctx, "test-thread")
+	running, err := handler.requests.IsRequestRunning(ctx, "test-thread")
 	if err != nil {
 		t.Fatalf("IsRequestRunning: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestSubmit_ErrorResult(t *testing.T) {
 		t.Error("thread should be marked complete after error")
 	}
 
-	msgs, _ := handler.threads.GetThreadHistory(ctx, "err-thread", 0, 0)
+	msgs, _ := handler.history.GetThreadHistory(ctx, "err-thread", 0, 0)
 	if len(msgs) < 2 {
 		t.Fatalf("expected user + error messages, got %d", len(msgs))
 	}
@@ -242,7 +242,7 @@ func TestSubmit_ThreadBusy(t *testing.T) {
 	handler, mr, _ := newTestHandler(t)
 
 	ctx := context.Background()
-	acquired, err := handler.threads.AcquireRequestLock(ctx, "busy-thread", "other-request", tasklib.LockTTL)
+	acquired, err := handler.requests.AcquireRequestLock(ctx, "busy-thread", "other-request", tasklib.LockTTL)
 	if err != nil {
 		t.Fatalf("AcquireRequestLock: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestSubmit_StoresSessionID(t *testing.T) {
 		t.Fatal("timeout waiting for subprocess")
 	}
 
-	sessionID, err := handler.threads.GetThreadSessionID(ctx, "session-thread")
+	sessionID, err := handler.requests.GetThreadSessionID(ctx, "session-thread")
 	if err != nil {
 		t.Fatalf("GetThreadSessionID: %v", err)
 	}
@@ -404,7 +404,7 @@ exec sleep 30
 		t.Error("cancel func should be removed after completion")
 	}
 
-	msgs, _ := handler.threads.GetThreadHistory(ctx, "midflight-thread", 0, 0)
+	msgs, _ := handler.history.GetThreadHistory(ctx, "midflight-thread", 0, 0)
 	if len(msgs) < 2 {
 		t.Fatalf("expected user + error messages, got %d messages", len(msgs))
 	}
@@ -496,7 +496,7 @@ func TestSubmit_EmptyOutput(t *testing.T) {
 		t.Fatal("timeout waiting for subprocess")
 	}
 
-	msgs, err := handler.threads.GetThreadHistory(ctx, "empty-thread", 0, 0)
+	msgs, err := handler.history.GetThreadHistory(ctx, "empty-thread", 0, 0)
 	if err != nil {
 		t.Fatalf("GetThreadHistory: %v", err)
 	}
@@ -532,7 +532,7 @@ func TestSubmit_EmptyOutputWithStderr(t *testing.T) {
 		t.Fatal("timeout waiting for subprocess")
 	}
 
-	msgs, err := handler.threads.GetThreadHistory(ctx, "empty-stderr-thread", 0, 0)
+	msgs, err := handler.history.GetThreadHistory(ctx, "empty-stderr-thread", 0, 0)
 	if err != nil {
 		t.Fatalf("GetThreadHistory: %v", err)
 	}
@@ -571,7 +571,7 @@ func TestStderrCapturedOnError(t *testing.T) {
 		t.Fatal("timeout waiting for subprocess to complete")
 	}
 
-	msgs, err := handler.threads.GetThreadHistory(ctx, "stderr-err-thread", 0, 0)
+	msgs, err := handler.history.GetThreadHistory(ctx, "stderr-err-thread", 0, 0)
 	if err != nil {
 		t.Fatalf("GetThreadHistory: %v", err)
 	}
@@ -595,7 +595,7 @@ func TestSubmit_ThreadBusyNoOrphanedMessage(t *testing.T) {
 
 	ctx := context.Background()
 
-	acquired, err := handler.threads.AcquireRequestLock(ctx, "orphan-thread", "existing-request", tasklib.LockTTL)
+	acquired, err := handler.requests.AcquireRequestLock(ctx, "orphan-thread", "existing-request", tasklib.LockTTL)
 	if err != nil {
 		t.Fatalf("AcquireRequestLock: %v", err)
 	}
@@ -610,7 +610,7 @@ func TestSubmit_ThreadBusyNoOrphanedMessage(t *testing.T) {
 		t.Fatalf("expected ErrThreadBusy, got %v", err)
 	}
 
-	msgs, err := handler.threads.GetThreadHistory(ctx, "orphan-thread", 0, 0)
+	msgs, err := handler.history.GetThreadHistory(ctx, "orphan-thread", 0, 0)
 	if err != nil {
 		t.Fatalf("GetThreadHistory: %v", err)
 	}
@@ -618,7 +618,7 @@ func TestSubmit_ThreadBusyNoOrphanedMessage(t *testing.T) {
 		t.Fatalf("expected 0 messages (no orphaned user request), got %d", len(msgs))
 	}
 
-	if err := handler.threads.ReleaseRequestLock(ctx, "orphan-thread"); err != nil {
+	if err := handler.requests.ReleaseRequestLock(ctx, "orphan-thread"); err != nil {
 		t.Fatalf("ReleaseRequestLock: %v", err)
 	}
 
@@ -632,7 +632,7 @@ func TestSubmit_ThreadBusyNoOrphanedMessage(t *testing.T) {
 		t.Fatal("timeout waiting for subprocess after retry")
 	}
 
-	msgs, err = handler.threads.GetThreadHistory(ctx, "orphan-thread", 0, 0)
+	msgs, err = handler.history.GetThreadHistory(ctx, "orphan-thread", 0, 0)
 	if err != nil {
 		t.Fatalf("GetThreadHistory after retry: %v", err)
 	}
@@ -697,7 +697,7 @@ sys.exit(0)
 		t.Error("thread should be marked complete after large-line output")
 	}
 
-	msgs, err := handler.threads.GetThreadHistory(ctx, "large-line-thread", 0, 0)
+	msgs, err := handler.history.GetThreadHistory(ctx, "large-line-thread", 0, 0)
 	if err != nil {
 		t.Fatalf("GetThreadHistory: %v", err)
 	}
@@ -759,7 +759,7 @@ sys.exit(0)
 		t.Error("thread should be marked complete after large-stderr output")
 	}
 
-	msgs, err := handler.threads.GetThreadHistory(ctx, "large-stderr-thread", 0, 0)
+	msgs, err := handler.history.GetThreadHistory(ctx, "large-stderr-thread", 0, 0)
 	if err != nil {
 		t.Fatalf("GetThreadHistory: %v", err)
 	}
@@ -824,7 +824,7 @@ echo "THREAD=$THREAD"
 		t.Fatal("timeout waiting for subprocess")
 	}
 
-	msgs, err := handler.threads.GetThreadHistory(ctx, "env-thread", 0, 0)
+	msgs, err := handler.history.GetThreadHistory(ctx, "env-thread", 0, 0)
 	if err != nil {
 		t.Fatalf("GetThreadHistory: %v", err)
 	}
@@ -921,7 +921,7 @@ func TestSubmit_StderrWithSuccess(t *testing.T) {
 		t.Error("thread should be marked complete when exit=0 with stderr warnings")
 	}
 
-	msgs, err := handler.threads.GetThreadHistory(ctx, "stderr-warn-thread", 0, 0)
+	msgs, err := handler.history.GetThreadHistory(ctx, "stderr-warn-thread", 0, 0)
 	if err != nil {
 		t.Fatalf("GetThreadHistory: %v", err)
 	}
@@ -968,7 +968,7 @@ func newTestHandlerStreamJSON(t *testing.T) (*Handler, *miniredis.Miniredis, cha
 		OutputFormat:      "stream-json",
 		TestNotify:        notify,
 	}
-	handler := New(client, client, cfg)
+	handler := New(client, client, client, client, cfg)
 	return handler, mr, notify
 }
 
@@ -1002,7 +1002,7 @@ func TestStreamJSON_Success(t *testing.T) {
 		t.Error("thread should be marked complete")
 	}
 
-	msgs, err := handler.threads.GetThreadHistory(ctx, "json-thread", 0, 0)
+	msgs, err := handler.history.GetThreadHistory(ctx, "json-thread", 0, 0)
 	if err != nil {
 		t.Fatalf("GetThreadHistory: %v", err)
 	}
@@ -1056,7 +1056,7 @@ func TestStreamJSON_ErrorResult(t *testing.T) {
 		t.Error("thread should be marked complete after stream-json error result")
 	}
 
-	msgs, _ := handler.threads.GetThreadHistory(ctx, "json-err-thread", 0, 0)
+	msgs, _ := handler.history.GetThreadHistory(ctx, "json-err-thread", 0, 0)
 	last := msgs[len(msgs)-1]
 	if last.Type != "error" {
 		t.Errorf("last message type = %q, want %q", last.Type, "error")
@@ -1084,7 +1084,7 @@ func TestStreamJSON_Dedup(t *testing.T) {
 		t.Fatal("timeout waiting for subprocess")
 	}
 
-	msgs, err := handler.threads.GetThreadHistory(ctx, "json-dedup-thread", 0, 0)
+	msgs, err := handler.history.GetThreadHistory(ctx, "json-dedup-thread", 0, 0)
 	if err != nil {
 		t.Fatalf("GetThreadHistory: %v", err)
 	}
@@ -1139,7 +1139,7 @@ exit 1
 		t.Error("thread should be marked complete after stream-json crash")
 	}
 
-	msgs, err := handler.threads.GetThreadHistory(ctx, "json-crash-thread", 0, 0)
+	msgs, err := handler.history.GetThreadHistory(ctx, "json-crash-thread", 0, 0)
 	if err != nil {
 		t.Fatalf("GetThreadHistory: %v", err)
 	}

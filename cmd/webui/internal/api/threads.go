@@ -14,6 +14,8 @@ import (
 
 type threadsResource struct {
 	threads           tasklib.ThreadStore
+	requests          tasklib.RequestStore
+	threadHistory     tasklib.ThreadHistory
 	tasks             tasklib.TaskStore
 	tokens            tasklib.TokenLedger
 	renderer          *templates.Renderer
@@ -114,7 +116,7 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	running, err := tr.threads.IsRequestRunning(r.Context(), threadID)
+	running, err := tr.requests.IsRequestRunning(r.Context(), threadID)
 	if err != nil {
 		slog.Warn(fmt.Sprintf("[webui] IsRequestRunning error thread=%s: %v", threadID, err))
 	}
@@ -186,7 +188,7 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 			"Children":  children,
 		})
 	} else {
-		messages, err := tr.threads.GetThreadHistoryTail(r.Context(), threadID, 20)
+		messages, err := tr.threadHistory.GetThreadHistoryTail(r.Context(), threadID, 20)
 		if err != nil {
 			slog.Warn(fmt.Sprintf("[webui] thread history tail error thread=%s: %v", threadID, err))
 			messages = nil
@@ -214,9 +216,9 @@ func (tr *threadsResource) history(w http.ResponseWriter, r *http.Request) {
 	var err error
 
 	if tail > 0 {
-		messages, err = tr.threads.GetThreadHistoryTail(r.Context(), threadID, tail)
+		messages, err = tr.threadHistory.GetThreadHistoryTail(r.Context(), threadID, tail)
 	} else {
-		messages, err = tr.threads.GetThreadHistory(r.Context(), threadID, offset, limit)
+		messages, err = tr.threadHistory.GetThreadHistory(r.Context(), threadID, offset, limit)
 	}
 
 	if err != nil {
@@ -224,7 +226,7 @@ func (tr *threadsResource) history(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	running, _ := tr.threads.IsRequestRunning(r.Context(), threadID)
+	running, _ := tr.requests.IsRequestRunning(r.Context(), threadID)
 
 	if IsHTMX(r) {
 		if q.Get("poll") == "1" {
@@ -271,7 +273,7 @@ func (tr *threadsResource) deleteWorkspace(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	ok, err := tr.threads.AcquireRequestLock(r.Context(), threadID, "deleting", tasklib.LockTTL)
+	ok, err := tr.requests.AcquireRequestLock(r.Context(), threadID, "deleting", tasklib.LockTTL)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -280,7 +282,7 @@ func (tr *threadsResource) deleteWorkspace(w http.ResponseWriter, r *http.Reques
 		Error(w, http.StatusConflict, "thread is in use")
 		return
 	}
-	defer tr.threads.ReleaseRequestLock(cleanupContext(), threadID)
+	defer tr.requests.ReleaseRequestLock(cleanupContext(), threadID)
 
 	wp := workspacePath(tr.workspaceDir, threadID)
 	if err := removeWorkspace(tr.workspaceDir, wp); err != nil {
@@ -344,7 +346,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Acquire request lock BEFORE subtree discovery to close TOCTOU window.
-	ok, err := tr.threads.AcquireRequestLock(r.Context(), threadID, "deleting", tasklib.LockTTL)
+	ok, err := tr.requests.AcquireRequestLock(r.Context(), threadID, "deleting", tasklib.LockTTL)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -353,7 +355,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 		Error(w, http.StatusConflict, "thread is in use")
 		return
 	}
-	defer tr.threads.ReleaseRequestLock(cleanupContext(), threadID)
+	defer tr.requests.ReleaseRequestLock(cleanupContext(), threadID)
 
 	// Discover subtree for cascade deletion.
 	// The request lock on the root prevents concurrent operations on the root
@@ -391,7 +393,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 		// Check ThreadRunningKey on child threads (root lock is held by us).
 		// A child could have a running web UI request with zero active tasks.
 		if tid != threadID {
-			running, err := tr.threads.IsRequestRunning(r.Context(), tid)
+			running, err := tr.requests.IsRequestRunning(r.Context(), tid)
 			if err != nil {
 				serverError(w, "internal error", err)
 				return
@@ -423,7 +425,7 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 		// Collect session ID for filesystem cleanup after Redis deletion
-		sid, err := tr.threads.GetThreadSessionID(r.Context(), tid)
+		sid, err := tr.requests.GetThreadSessionID(r.Context(), tid)
 		if err != nil {
 			slog.Warn(fmt.Sprintf("[webui] get session id error thread=%s: %v", tid, err))
 		}
@@ -464,7 +466,7 @@ func (tr *threadsResource) resetSession(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	sessionID, err := tr.threads.GetThreadSessionID(r.Context(), threadID)
+	sessionID, err := tr.requests.GetThreadSessionID(r.Context(), threadID)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -474,7 +476,7 @@ func (tr *threadsResource) resetSession(w http.ResponseWriter, r *http.Request) 
 		removeSessionFile(tr.claudeSessionsDir, sessionID)
 	}
 
-	if err := tr.threads.SetThreadSessionID(r.Context(), threadID, ""); err != nil {
+	if err := tr.requests.SetThreadSessionID(r.Context(), threadID, ""); err != nil {
 		slog.Warn(fmt.Sprintf("[webui] clear session id error thread=%s: %v", threadID, err))
 		serverError(w, "internal error", err)
 		return

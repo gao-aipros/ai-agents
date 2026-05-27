@@ -18,8 +18,31 @@ type TaskStore interface {
 	RequeueStale(ctx context.Context, worker string, olderThan time.Duration) ([]string, error)
 }
 
-// ThreadStore defines thread lifecycle, history, locking, active-task tracking,
-// cascade delete, diagnostics, and request pass-throughs.
+// RequestStore defines request-lock and session-ID operations for the
+// web UI request handler.
+type RequestStore interface {
+	AcquireRequestLock(ctx context.Context, threadID, requestID string, ttl time.Duration) (bool, error)
+	ReleaseRequestLock(ctx context.Context, threadID string) error
+	SetThreadSessionID(ctx context.Context, threadID, sessionID string) error
+	GetThreadSessionID(ctx context.Context, threadID string) (string, error)
+	IsRequestRunning(ctx context.Context, threadID string) (bool, error)
+	CancelRequest(ctx context.Context, threadID string) error
+}
+
+// ThreadHistory defines message append, retrieval, and activity-timestamp
+// operations.
+type ThreadHistory interface {
+	AppendMessage(ctx context.Context, threadID string, msg Message) error
+	GetThreadHistory(ctx context.Context, threadID string, offset, limit int) ([]Message, error)
+	GetThreadHistoryTail(ctx context.Context, threadID string, tail int) ([]Message, error)
+	GetThreadHistoryTailForWorker(ctx context.Context, threadID string, tail int, worker string) ([]Message, error)
+	ThreadMessagesLen(ctx context.Context, threadID string) (int64, error)
+	UpdateThreadLastActivity(ctx context.Context, threadID string) error
+	GetThreadLastActivity(ctx context.Context, threadID string) (string, error)
+}
+
+// ThreadStore defines thread lifecycle, locking, active-task tracking,
+// cascade delete, and diagnostics.
 type ThreadStore interface {
 	// Core lifecycle
 	CreateThread(ctx context.Context, threadID, repo, parentThreadID string) (*Thread, error)
@@ -29,13 +52,6 @@ type ThreadStore interface {
 	ThreadExists(ctx context.Context, threadID string) (bool, error)
 	SetThreadTTL(ctx context.Context, threadID string, ttl time.Duration) error
 	GetThreadDiagnostics(ctx context.Context, threadID string) (*ThreadDiagnostics, error)
-
-	// History
-	GetThreadHistory(ctx context.Context, threadID string, offset, limit int) ([]Message, error)
-	GetThreadHistoryTail(ctx context.Context, threadID string, tail int) ([]Message, error)
-	GetThreadHistoryTailForWorker(ctx context.Context, threadID string, tail int, worker string) ([]Message, error)
-	AppendMessage(ctx context.Context, threadID string, msg Message) error
-	ThreadMessagesLen(ctx context.Context, threadID string) (int64, error)
 
 	// Locking
 	LockThread(ctx context.Context, threadID, taskID string, ttl time.Duration) (bool, error)
@@ -52,18 +68,10 @@ type ThreadStore interface {
 	DeleteThreadKnown(ctx context.Context, threadID string, descendants map[string]bool) error
 	DeleteThread(ctx context.Context, threadID string) error
 
-	// Request pass-throughs
-	AcquireRequestLock(ctx context.Context, threadID, requestID string, ttl time.Duration) (bool, error)
-	ReleaseRequestLock(ctx context.Context, threadID string) error
-	SetThreadSessionID(ctx context.Context, threadID, sessionID string) error
-	GetThreadSessionID(ctx context.Context, threadID string) (string, error)
-	CancelRequest(ctx context.Context, threadID string) error
+	// Completion flags
 	SetThreadComplete(ctx context.Context, threadID string) error
 	ClearThreadComplete(ctx context.Context, threadID string) error
 	IsThreadComplete(ctx context.Context, threadID string) (bool, error)
-	UpdateThreadLastActivity(ctx context.Context, threadID string) error
-	GetThreadLastActivity(ctx context.Context, threadID string) (string, error)
-	IsRequestRunning(ctx context.Context, threadID string) (bool, error)
 }
 
 // EventBus defines event publishing and querying.
@@ -120,6 +128,8 @@ type SystemOps interface {
 var (
 	_ TaskStore      = (*Client)(nil)
 	_ ThreadStore    = (*Client)(nil)
+	_ RequestStore   = (*Client)(nil)
+	_ ThreadHistory  = (*Client)(nil)
 	_ EventBus       = (*Client)(nil)
 	_ WorkerRegistry = (*Client)(nil)
 	_ TokenLedger    = (*Client)(nil)

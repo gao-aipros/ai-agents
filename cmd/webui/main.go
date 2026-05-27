@@ -106,7 +106,7 @@ func main() {
 	log.Info("connected to redis", "host", redisHost, "port", redisPort)
 
 	services := tasklib.NewServices(rdb)
-	reqHandler := request.New(services.Threads, services.SysOps, cfg)
+	reqHandler := request.New(services.Threads, services.Requests, services.History, services.SysOps, cfg)
 
 	// Template renderer
 	renderer, err := templates.New()
