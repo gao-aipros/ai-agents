@@ -2013,6 +2013,24 @@ func TestHandleGlobalTokens_Empty(t *testing.T) {
 	}
 }
 
+func TestHandleGlobalTokens_Empty_HTMX(t *testing.T) {
+	th := newTestRouter(t, MiddlewareConfig{})
+	defer th.Cleanup()
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/tokens", nil)
+	r.Header.Set("HX-Request", "true")
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusOK, w.Body.String())
+	}
+	// Empty response should not render the token-stats card div.
+	if strings.Contains(w.Body.String(), "card token-stats") {
+		t.Errorf("expected no token-stats card in empty HTMX response, got: %s", w.Body.String())
+	}
+}
+
 func TestHandleGetThread_IncludesTokens(t *testing.T) {
 	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
@@ -2063,11 +2081,11 @@ func TestHandleGetThread_IncludesTokens(t *testing.T) {
 	if !ok {
 		t.Fatal("tokens missing master field")
 	}
-	if master["InputTokens"] != float64(1000) {
-		t.Errorf("master InputTokens = %v, want 1000", master["InputTokens"])
+	if master["input_tokens"] != float64(1000) {
+		t.Errorf("master InputTokens = %v, want 1000", master["input_tokens"])
 	}
-	if master["OutputTokens"] != float64(500) {
-		t.Errorf("master OutputTokens = %v, want 500", master["OutputTokens"])
+	if master["output_tokens"] != float64(500) {
+		t.Errorf("master OutputTokens = %v, want 500", master["output_tokens"])
 	}
 
 	workers, ok := tokens["workers"].(map[string]interface{})
@@ -2078,11 +2096,11 @@ func TestHandleGetThread_IncludesTokens(t *testing.T) {
 	if !ok {
 		t.Fatal("workers missing claude")
 	}
-	if claude["InputTokens"] != float64(300) {
-		t.Errorf("claude InputTokens = %v, want 300", claude["InputTokens"])
+	if claude["input_tokens"] != float64(300) {
+		t.Errorf("claude InputTokens = %v, want 300", claude["input_tokens"])
 	}
-	if claude["OutputTokens"] != float64(200) {
-		t.Errorf("claude OutputTokens = %v, want 200", claude["OutputTokens"])
+	if claude["output_tokens"] != float64(200) {
+		t.Errorf("claude OutputTokens = %v, want 200", claude["output_tokens"])
 	}
 
 	tokenRows, ok := resp["token_rows"].([]interface{})

@@ -55,7 +55,7 @@ func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *t
 		req := &requestsResource{requests: services.Requests, handler: handler, renderer: renderer}
 		thr := &threadsResource{threads: services.Threads, requests: services.Requests, threadHistory: services.History, tasks: services.Tasks, tokens: services.Tokens, renderer: renderer, paths: mwCfg.Paths}
 		tsk := &tasksResource{tasks: services.Tasks, renderer: renderer}
-			tok := &tokensResource{tokens: services.Tokens, renderer: renderer}
+		tok := &tokensResource{tokens: services.Tokens, renderer: renderer}
 
 		// Health / stats / diagnostics / events / metrics
 		r.Get("/health", sys.health)
