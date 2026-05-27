@@ -15,9 +15,9 @@ import (
 
 // newMetricsHandler creates a Prometheus HTTP handler for GET /metrics.
 // The registry and collector are created once per handler invocation.
-func newMetricsHandler(rdb *redis.Client, workers tasklib.WorkerRegistry) http.Handler {
+func newMetricsHandler(rdb *redis.Client, workers tasklib.WorkerRegistry, scanner tasklib.ThreadScanner) http.Handler {
 	reg := prometheus.NewRegistry()
-	reg.MustRegister(newRedisCollector(rdb, workers))
+	reg.MustRegister(newRedisCollector(rdb, workers, scanner))
 	return promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
 }
 
@@ -25,6 +25,7 @@ func newMetricsHandler(rdb *redis.Client, workers tasklib.WorkerRegistry) http.H
 // Histogram data is in-memory and resets on restart (per design doc).
 type redisCollector struct {
 	rdb     *redis.Client
+	scanner tasklib.ThreadScanner
 	workers tasklib.WorkerRegistry
 
 	tasksTotal    *prometheus.Desc
@@ -38,12 +39,13 @@ type redisCollector struct {
 	queueWait     *prometheus.Desc
 }
 
-func newRedisCollector(rdb *redis.Client, workers tasklib.WorkerRegistry) *redisCollector {
+func newRedisCollector(rdb *redis.Client, workers tasklib.WorkerRegistry, scanner tasklib.ThreadScanner) *redisCollector {
 	labels := func(name, help string, variableLabels ...string) *prometheus.Desc {
 		return prometheus.NewDesc("ai_agents_"+name, help, variableLabels, nil)
 	}
 	return &redisCollector{
 		rdb:           rdb,
+		scanner:       scanner,
 		workers:       workers,
 		tasksTotal:    labels("tasks_total", "Total tasks by status.", "status"),
 		threadsActive: labels("threads_active", "Non-terminal threads."),
@@ -105,7 +107,7 @@ func (c *redisCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(c.tasksPending, prometheus.GaugeValue, float64(pending))
 
 	// ── Threads ──
-	active, stuck := countActiveStuckThreads(ctx, c.rdb, tasklib.DefaultStuckThreshold)
+	active, stuck := countActiveStuckThreads(ctx, c.scanner, tasklib.DefaultStuckThreshold)
 	ch <- prometheus.MustNewConstMetric(c.threadsActive, prometheus.GaugeValue, float64(active))
 	ch <- prometheus.MustNewConstMetric(c.threadsStuck, prometheus.GaugeValue, float64(stuck))
 
@@ -129,31 +131,20 @@ func (c *redisCollector) Collect(ch chan<- prometheus.Metric) {
 }
 
 // countActiveStuckThreads scans thread state keys for active and stuck counts.
-func countActiveStuckThreads(ctx context.Context, rdb *redis.Client, stuckThreshold time.Duration) (active, stuck int) {
-	var cursor uint64
+func countActiveStuckThreads(ctx context.Context, scanner tasklib.ThreadScanner, stuckThreshold time.Duration) (active, stuck int) {
 	cutoff := time.Now().Add(-stuckThreshold)
-	for {
-		keys, nextCursor, err := rdb.Scan(ctx, cursor, "thread:*:current_state", 100).Result()
-		if err != nil {
-			return
-		}
-		for _, key := range keys {
-			status, err := rdb.HGet(ctx, key, "status").Result()
-			if err != nil {
-				continue
+	threads, err := scanner.Scan(ctx, func(ts tasklib.ThreadState) bool {
+		return ts.Status != "complete" && ts.Status != "error" && ts.Status != "cancelled"
+	})
+	if err != nil {
+		return
+	}
+	for _, ts := range threads {
+		active++
+		if ts.UpdatedAt != "" {
+			if t, err := time.Parse("2006-01-02T15:04:05Z", ts.UpdatedAt); err == nil && t.Before(cutoff) {
+				stuck++
 			}
-			if status != "complete" && status != "error" && status != "cancelled" {
-				active++
-				if updatedAt, err := rdb.HGet(ctx, key, "updated_at").Result(); err == nil && updatedAt != "" {
-					if t, err := time.Parse("2006-01-02T15:04:05Z", updatedAt); err == nil && t.Before(cutoff) {
-						stuck++
-					}
-				}
-			}
-		}
-		cursor = nextCursor
-		if cursor == 0 {
-			break
 		}
 	}
 	return

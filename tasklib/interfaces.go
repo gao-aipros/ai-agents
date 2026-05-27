@@ -83,6 +83,11 @@ type WorkerRegistry interface {
 	GetWorkerInstances(ctx context.Context, workerType string) ([]WorkerInstance, error)
 }
 
+// ThreadScanner defines thread-state scanning with a caller-supplied predicate.
+type ThreadScanner interface {
+	Scan(ctx context.Context, predicate func(ThreadState) bool) ([]ThreadState, error)
+}
+
 // TokenLedger defines token usage tracking operations.
 type TokenLedger interface {
 	GetTokenStats(ctx context.Context, key string) (*TokenStats, error)
@@ -98,4 +103,5 @@ var (
 	_ EventBus       = (*Client)(nil)
 	_ WorkerRegistry = (*Client)(nil)
 	_ TokenLedger    = (*Client)(nil)
+	_ ThreadScanner  = (*Client)(nil)
 )

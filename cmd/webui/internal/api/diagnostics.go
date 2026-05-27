@@ -15,7 +15,8 @@ import (
 )
 
 type diagnosticsResource struct {
-	rdb *redis.Client
+	rdb     *redis.Client
+	scanner tasklib.ThreadScanner
 }
 
 // GET /api/diagnostics
@@ -56,7 +57,7 @@ func (dr *diagnosticsResource) get(w http.ResponseWriter, r *http.Request) {
 	}
 	diag["queue_depths"] = queueDepths
 
-	totalThreads, activeThreads, stuckThreads := countThreads(ctx, rdb, staleThreshold)
+	totalThreads, activeThreads, stuckThreads := countThreads(ctx, dr.scanner, staleThreshold)
 	diag["threads_total"] = totalThreads
 	diag["threads_active"] = activeThreads
 	diag["threads_stuck"] = stuckThreads
@@ -171,33 +172,21 @@ func listStaleTasks(ctx context.Context, rdb *redis.Client, thresholdMinutes int
 	return stale, nil
 }
 
-func countThreads(ctx context.Context, rdb *redis.Client, staleThresholdMinutes int) (total, active, stuck int) {
-	var cursor uint64
+func countThreads(ctx context.Context, scanner tasklib.ThreadScanner, staleThresholdMinutes int) (total, active, stuck int) {
 	cutoff := time.Now().Add(-time.Duration(staleThresholdMinutes) * time.Minute)
-	for {
-		keys, nextCursor, err := rdb.Scan(ctx, cursor, "thread:*:current_state", 100).Result()
-		if err != nil {
-			return
-		}
-		for _, key := range keys {
-			total++
-			status, err := rdb.HGet(ctx, key, "status").Result()
-			if err != nil {
-				continue
-			}
-			if status != "complete" && status != "error" && status != "cancelled" {
-				active++
-				updatedAt, _ := rdb.HGet(ctx, key, "updated_at").Result()
-				if updatedAt != "" {
-					if t, err := time.Parse("2006-01-02T15:04:05Z", updatedAt); err == nil && t.Before(cutoff) {
-						stuck++
-					}
+	threads, err := scanner.Scan(ctx, func(ts tasklib.ThreadState) bool { return true })
+	if err != nil {
+		return
+	}
+	for _, ts := range threads {
+		total++
+		if ts.Status != "complete" && ts.Status != "error" && ts.Status != "cancelled" {
+			active++
+			if ts.UpdatedAt != "" {
+				if t, err := time.Parse("2006-01-02T15:04:05Z", ts.UpdatedAt); err == nil && t.Before(cutoff) {
+					stuck++
 				}
 			}
-		}
-		cursor = nextCursor
-		if cursor == 0 {
-			break
 		}
 	}
 	return
