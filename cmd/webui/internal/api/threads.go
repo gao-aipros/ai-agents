@@ -13,14 +13,13 @@ import (
 )
 
 type threadsResource struct {
-	threads           tasklib.ThreadStore
-	requests          tasklib.RequestStore
-	threadHistory     tasklib.ThreadHistory
-	tasks             tasklib.TaskStore
-	tokens            tasklib.TokenLedger
-	renderer          *templates.Renderer
-	workspaceDir      string
-	claudeSessionsDir string
+	threads       tasklib.ThreadStore
+	requests      tasklib.RequestStore
+	threadHistory tasklib.ThreadHistory
+	tasks         tasklib.TaskStore
+	tokens        tasklib.TokenLedger
+	renderer      *templates.Renderer
+	paths         *request.PathsConfig
 }
 
 // POST /api/threads
@@ -284,8 +283,8 @@ func (tr *threadsResource) deleteWorkspace(w http.ResponseWriter, r *http.Reques
 	}
 	defer tr.requests.ReleaseRequestLock(cleanupContext(), threadID)
 
-	wp := workspacePath(tr.workspaceDir, threadID)
-	if err := removeWorkspace(tr.workspaceDir, wp); err != nil {
+	wp := workspacePath(tr.paths.WorkspaceDir, threadID)
+	if err := removeWorkspace(tr.paths.WorkspaceDir, wp); err != nil {
 		slog.Warn(fmt.Sprintf("[webui] workspace delete error thread=%s dir=%s: %v", threadID, wp, err))
 		serverError(w, "failed to delete workspace", err)
 		return
@@ -445,13 +444,13 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 	// Clean up workspace directories and session files for all subtree threads.
 	// Best-effort: log errors and continue.
 	for _, tid := range allIDs {
-		wp := workspacePath(tr.workspaceDir, tid)
-		if err := removeWorkspace(tr.workspaceDir, wp); err != nil {
+		wp := workspacePath(tr.paths.WorkspaceDir, tid)
+		if err := removeWorkspace(tr.paths.WorkspaceDir, wp); err != nil {
 			slog.Warn(fmt.Sprintf("[webui] workspace delete error thread=%s dir=%s: %v", tid, wp, err))
 		}
 	}
 	for _, sid := range sessionIDs {
-		removeSessionFile(tr.claudeSessionsDir, sid)
+		removeSessionFile(tr.paths.ClaudeSessionsDir, sid)
 	}
 
 	slog.Info(fmt.Sprintf("[webui] thread deleted thread=%s (subtree=%d)", threadID, len(allIDs)))
@@ -473,7 +472,7 @@ func (tr *threadsResource) resetSession(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if sessionID != "" {
-		removeSessionFile(tr.claudeSessionsDir, sessionID)
+		removeSessionFile(tr.paths.ClaudeSessionsDir, sessionID)
 	}
 
 	if err := tr.requests.SetThreadSessionID(r.Context(), threadID, ""); err != nil {

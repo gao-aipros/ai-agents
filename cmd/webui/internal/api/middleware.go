@@ -12,6 +12,8 @@ import (
 	"time"
 
 	chimw "github.com/go-chi/chi/v5/middleware"
+
+	"github.com/noodle05/ai-agents/cmd/webui/internal/request"
 )
 
 const apiKeyCookieName = "webui_api_key"
@@ -20,13 +22,12 @@ const apiKeyCookieName = "webui_api_key"
 // All fields are required; there are no defaults at this level —
 // defaults belong to the caller (main.go).
 type MiddlewareConfig struct {
-	AuthKey           string
-	AdminKey          string
-	RequestsLimiter   *rateLimiter
-	ThreadsLimiter    *rateLimiter
-	DefaultLimiter    *rateLimiter
-	WorkspaceDir      string
-	ClaudeSessionsDir string
+	AuthKey         string
+	AdminKey        string
+	RequestsLimiter *rateLimiter
+	ThreadsLimiter  *rateLimiter
+	DefaultLimiter  *rateLimiter
+	Paths           *request.PathsConfig
 }
 
 // ── auth ──────────────────────────────────────────────────────────────────

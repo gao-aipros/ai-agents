@@ -76,19 +76,22 @@ func main() {
 	}
 
 	// ── env-derived middleware config ───────────────────────────────────
-	mwCfg := api.MiddlewareConfig{
-		AuthKey:           os.Getenv("WEBUI_API_KEY"),
-		AdminKey:          env.String("ADMIN_API_KEY", os.Getenv("WEBUI_API_KEY")),
-		RequestsLimiter:   api.NewRateLimiter(10, time.Minute),
-		ThreadsLimiter:    api.NewRateLimiter(30, time.Minute),
-		DefaultLimiter:    api.NewRateLimiter(60, time.Minute),
+	paths := &request.PathsConfig{
 		WorkspaceDir:      env.String("WORKSPACE_DIR", "/workspace"),
 		ClaudeSessionsDir: env.String("CLAUDE_SESSIONS_DIR", "/home/agent/.claude"),
 	}
 
+	mwCfg := api.MiddlewareConfig{
+		AuthKey:         os.Getenv("WEBUI_API_KEY"),
+		AdminKey:        env.String("ADMIN_API_KEY", os.Getenv("WEBUI_API_KEY")),
+		RequestsLimiter: api.NewRateLimiter(10, time.Minute),
+		ThreadsLimiter:  api.NewRateLimiter(30, time.Minute),
+		DefaultLimiter:  api.NewRateLimiter(60, time.Minute),
+		Paths:           paths,
+	}
+
 	cfg := request.DefaultConfig()
-	cfg.WorkspaceDir = mwCfg.WorkspaceDir
-	cfg.ClaudeSessionsDir = mwCfg.ClaudeSessionsDir
+	cfg.Paths = paths
 
 	port := env.String("WEBUI_PORT", "8000")
 

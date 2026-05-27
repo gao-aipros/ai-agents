@@ -52,8 +52,8 @@ func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *t
 		diag := &diagnosticsResource{sysOps: services.SysOps, scanner: services.Scanner}
 		evt := &eventsResource{events: services.Events}
 		wrk := &workersResource{workers: services.Workers, renderer: renderer}
-		req := &requestsResource{requests: services.Requests, handler: handler, renderer: renderer, workspaceDir: mwCfg.WorkspaceDir, claudeSessionsDir: mwCfg.ClaudeSessionsDir}
-		thr := &threadsResource{threads: services.Threads, requests: services.Requests, threadHistory: services.History, tasks: services.Tasks, tokens: services.Tokens, renderer: renderer, workspaceDir: mwCfg.WorkspaceDir, claudeSessionsDir: mwCfg.ClaudeSessionsDir}
+		req := &requestsResource{requests: services.Requests, handler: handler, renderer: renderer}
+		thr := &threadsResource{threads: services.Threads, requests: services.Requests, threadHistory: services.History, tasks: services.Tasks, tokens: services.Tokens, renderer: renderer, paths: mwCfg.Paths}
 		tsk := &tasksResource{tasks: services.Tasks, renderer: renderer}
 
 		// Health / stats / diagnostics / events / metrics
