@@ -1,0 +1,12 @@
+{{define "token-stats"}}
+{{if .TotalIn}}
+<div class="card token-stats">
+  <div class="flex-between mb-8">
+    <span><strong>Total usage:</strong> {{.TotalIn}} in / {{.TotalOut}} out &middot; {{.TaskCount}} tasks</span>
+  </div>
+  {{range .Rows}}
+  <span class="text-muted" style="font-size:12px">{{.Agent}} {{.Input}}/{{.Output}}</span>
+  {{end}}
+</div>
+{{end}}
+{{end}}

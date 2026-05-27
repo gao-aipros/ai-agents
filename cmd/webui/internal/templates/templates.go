@@ -119,22 +119,6 @@ type ViewModel interface {
 // DashboardView is the view model for the dashboard page.
 type DashboardView struct {
 	BaseView
-	TokenStats *DashboardTokenStats
-}
-
-// DashboardTokenStats holds the aggregated token statistics for the dashboard.
-type DashboardTokenStats struct {
-	TotalIn   string
-	TotalOut  string
-	TaskCount int64
-	Rows      []DashboardTokenStatsRow
-}
-
-// DashboardTokenStatsRow is a single row in the dashboard token table.
-type DashboardTokenStatsRow struct {
-	Agent  string
-	Input  string
-	Output string
 }
 
 func (v *DashboardView) baseView() *BaseView { return &v.BaseView }
@@ -171,6 +155,24 @@ type TokenRow struct {
 }
 
 func (v *ThreadDetailView) baseView() *BaseView { return &v.BaseView }
+
+// TokenStatsView is the view model for the token-stats HTMX partial.
+type TokenStatsView struct {
+	BaseView
+	TotalIn   string
+	TotalOut  string
+	TaskCount int64
+	Rows      []TokenStatsRow
+}
+
+// TokenStatsRow is a single row in the token-stats HTMX partial.
+type TokenStatsRow struct {
+	Agent  string
+	Input  string
+	Output string
+}
+
+func (v *TokenStatsView) baseView() *BaseView { return &v.BaseView }
 
 // TaskListView is the view model for the task list page.
 type TaskListView struct {

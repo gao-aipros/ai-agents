@@ -1,16 +1,9 @@
 {{define "page-dashboard"}}
-{{if .TokenStats}}
 <section>
-  <div class="card token-stats">
-    <div class="flex-between mb-8">
-      <span><strong>Total usage:</strong> {{.TokenStats.TotalIn}} in / {{.TokenStats.TotalOut}} out &middot; {{.TokenStats.TaskCount}} tasks</span>
-    </div>
-    {{range .TokenStats.Rows}}
-    <span class="text-muted" style="font-size:12px">{{.Agent}} {{.Input}}/{{.Output}}</span>
-    {{end}}
+  <div id="token-stats-dash" hx-get="/api/tokens" hx-trigger="load, every {{.PollDash}}s" hx-swap="innerHTML">
+    <div class="text-center text-muted"><span class="spinner"></span> Loading...</div>
   </div>
 </section>
-{{end}}
 
 <section>
   <div class="flex-between mb-16">

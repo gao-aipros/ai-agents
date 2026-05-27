@@ -141,7 +141,7 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build token rows for the token usage table
-		var tokenRows []templates.TokenRow
+	var tokenRows []templates.TokenRow
 
 	// Master agent tokens
 	masterTokens, _ := tr.tokens.GetMasterTokenStats(r.Context(), threadID)
@@ -156,37 +156,36 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Per-worker token aggregation from tasks
+	agentMap := map[string]*tasklib.TokenStats{}
+	for _, wt := range tasklib.WorkerTypes {
+		agentMap[wt] = &tasklib.TokenStats{}
+	}
 	tasks, _ := tr.tasks.ListTasks(r.Context(), "", "", threadID, 200, 0, "", "")
 	if tasks != nil {
-		type agentToks struct {
-			input, output, cacheRead, cacheWrite, reasoning int64
-		}
-		agentMap := map[string]agentToks{
-			"claude":   {},
-			"codex":    {},
-			"copilot":  {},
-			"opencode": {},
-		}
 		for _, t := range tasks {
 			at := agentMap[t.Worker]
-			at.input += t.InputTokens
-			at.output += t.OutputTokens
-			at.cacheRead += t.CacheReadTokens
-			at.cacheWrite += t.CacheWriteTokens
-			at.reasoning += t.ReasoningTokens
-			agentMap[t.Worker] = at
-		}
-		for _, wt := range []string{"claude", "codex", "copilot", "opencode"} {
-			at := agentMap[wt]
-			if at.input > 0 || at.output > 0 || at.cacheRead > 0 {
-				tokenRows = append(tokenRows, templates.TokenRow{
-					Agent:     wt,
-					Input:     tasklib.FormatTokenCount(at.input),
-					Output:    tasklib.FormatTokenCount(at.output),
-					Cache:     tasklib.FormatTokenCount(at.cacheRead),
-					Reasoning: tasklib.FormatTokenCount(at.reasoning),
-				})
+			if at != nil {
+				at.InputTokens += t.InputTokens
+				at.OutputTokens += t.OutputTokens
+				at.CacheReadTokens += t.CacheReadTokens
+				at.CacheWriteTokens += t.CacheWriteTokens
+				at.ReasoningTokens += t.ReasoningTokens
 			}
+		}
+	}
+
+	workerTokens := map[string]tasklib.TokenStats{}
+	for _, wt := range tasklib.WorkerTypes {
+		at := agentMap[wt]
+		if at != nil && at.HasAny() {
+			workerTokens[wt] = *at
+			tokenRows = append(tokenRows, templates.TokenRow{
+				Agent:     wt,
+				Input:     tasklib.FormatTokenCount(at.InputTokens),
+				Output:    tasklib.FormatTokenCount(at.OutputTokens),
+				Cache:     tasklib.FormatTokenCount(at.CacheReadTokens),
+				Reasoning: tasklib.FormatTokenCount(at.ReasoningTokens),
+			})
 		}
 	}
 
@@ -209,11 +208,16 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 			messages = nil
 		}
 		Respond(w, r, http.StatusOK, map[string]interface{}{
-			"thread":   thread,
-			"running":  running,
-			"complete": complete,
-			"messages": messages,
-			"children": children,
+			"thread":     thread,
+			"running":    running,
+			"complete":   complete,
+			"messages":   messages,
+			"children":   children,
+			"tokens": map[string]interface{}{
+				"master":  masterTokens,
+				"workers": workerTokens,
+			},
+			"token_rows": tokenRows,
 		})
 	}
 }

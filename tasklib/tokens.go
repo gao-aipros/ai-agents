@@ -17,11 +17,11 @@ import (
 
 // TokenStats holds extracted token usage counts for a single task or session.
 type TokenStats struct {
-	InputTokens      int64
-	OutputTokens     int64
-	CacheReadTokens  int64
-	CacheWriteTokens int64
-	ReasoningTokens  int64
+	InputTokens      int64 `json:"input_tokens"`
+	OutputTokens     int64 `json:"output_tokens"`
+	CacheReadTokens  int64 `json:"cache_read"`
+	CacheWriteTokens int64 `json:"cache_write"`
+	ReasoningTokens  int64 `json:"reasoning"`
 }
 
 // HasAny returns true if any token field is non-zero.
