@@ -124,7 +124,7 @@ func main() {
 	alertCfg := tasklib.LoadAlertConfig()
 	if alertCfg.IsEnabled() {
 		monitor := tasklib.NewMonitor(services.SysOps, alertCfg)
-	go monitor.Run(bgCtx)
+		go monitor.Run(bgCtx)
 	}
 
 	// Build chi router with page routes, API endpoints, and static files
