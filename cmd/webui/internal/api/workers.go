@@ -8,13 +8,13 @@ import (
 )
 
 type workersResource struct {
-	client   *tasklib.Client
+	workers  tasklib.WorkerRegistry
 	renderer *templates.Renderer
 }
 
 // GET /api/workers
 func (wr *workersResource) list(w http.ResponseWriter, r *http.Request) {
-	workers, err := wr.client.GetWorkerStats(r.Context())
+	workers, err := wr.workers.GetWorkerStats(r.Context())
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -42,7 +42,7 @@ func (wr *workersResource) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := wr.client.GetWorkerInfo(r.Context(), workerType)
+	info, err := wr.workers.GetWorkerInfo(r.Context(), workerType)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -66,7 +66,7 @@ func (wr *workersResource) instances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	instances, err := wr.client.GetWorkerInstances(r.Context(), workerType)
+	instances, err := wr.workers.GetWorkerInstances(r.Context(), workerType)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return

@@ -8,16 +8,18 @@ import (
 
 	"github.com/noodle05/ai-agents/cmd/webui/internal/request"
 	"github.com/noodle05/ai-agents/tasklib"
+	"github.com/redis/go-redis/v9"
 )
 
 type systemResource struct {
-	client  *tasklib.Client
+	rdb     *redis.Client
+	workers tasklib.WorkerRegistry
 	handler *request.Handler
 }
 
 // GET /api/health
 func (sr *systemResource) health(w http.ResponseWriter, r *http.Request) {
-	err := sr.client.Ping(r.Context())
+	err := sr.rdb.Ping(r.Context()).Err()
 	if err != nil {
 		Respond(w, r, http.StatusServiceUnavailable, map[string]string{
 			"redis":  "error",
@@ -26,7 +28,7 @@ func (sr *systemResource) health(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workers, err := sr.client.GetWorkerStats(r.Context())
+	workers, err := sr.workers.GetWorkerStats(r.Context())
 	if err != nil {
 		slog.Warn(fmt.Sprintf("[webui] health GetWorkerStats error: %v", err))
 	}
@@ -41,7 +43,7 @@ func (sr *systemResource) health(w http.ResponseWriter, r *http.Request) {
 // GET /api/stats — reads atomic counters for O(1) performance (no task scan).
 func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	rdb := sr.client.RDB()
+	rdb := sr.rdb
 
 	// Read atomic counters via MGET
 	counterKeys := []string{"stats:task_total", "stats:task_done", "stats:task_failed", "stats:task_cancelled"}

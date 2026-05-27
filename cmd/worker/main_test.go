@@ -105,7 +105,7 @@ func TestRegistersInActiveTasks(t *testing.T) {
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	if capturedEntry.Status != "running" {
@@ -135,7 +135,7 @@ func TestSetsPerTaskStatusKeys(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	if status, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "status")).Result(); status != "done" {
@@ -165,7 +165,7 @@ func TestPerTaskKeysHaveTTL(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	for _, suffix := range []string{"status", "worker", "thread_id", "description", "started_at", "last_started_at", "worker_hostname", "result", "exit_code", "completed_at"} {
@@ -205,7 +205,7 @@ func TestIncludesThreadHistoryInPrompt(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	if !strings.Contains(capturedPrompt, "## Thread History (recent)") {
@@ -250,7 +250,7 @@ func TestRespectsHistoryWindowFromPayload(t *testing.T) {
 	})
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	if !strings.Contains(capturedPrompt, "Message 17") {
@@ -290,7 +290,7 @@ func TestIncludesCurrentStateInPrompt(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	if !strings.Contains(capturedPrompt, "## Current State") {
@@ -326,7 +326,7 @@ func TestNoThreadHistoryNoCrash(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	if strings.Contains(capturedPrompt, "## Thread History") {
@@ -356,7 +356,7 @@ func TestNoCurrentStateNoCrash(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	if strings.Contains(capturedPrompt, "## Current State") {
@@ -388,7 +388,7 @@ func TestCurrentStateMissingFieldsDefaults(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	if !strings.Contains(capturedPrompt, "status: implementing") {
@@ -436,7 +436,7 @@ func TestGroupTaskFiltersHistoryByWorker(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	// Should see its own instruction
@@ -480,7 +480,7 @@ func TestSequentialTaskSeesFullHistory(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	// Should see ALL messages regardless of worker
@@ -522,7 +522,7 @@ func TestGroupTaskBackwardCompatNoWorkerMetadata(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	// Should see legacy message (no worker filter = pass through)
@@ -565,7 +565,7 @@ func TestGroupTaskAllMessagesForOtherWorkers(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	// Should still produce a valid prompt without thread history section
@@ -599,7 +599,7 @@ func TestCreatesWorkspaceForThread(t *testing.T) {
 	workspaceBase := t.TempDir()
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspaceBase, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	expected := filepath.Join(workspaceBase, testThread)
@@ -622,7 +622,7 @@ func TestSuccessfulExecutionStatusDone(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	status, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "status")).Result()
@@ -647,7 +647,7 @@ func TestFailedExecutionStatusFailed(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	status, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "status")).Result()
@@ -678,7 +678,7 @@ func TestFailedResultPrefixedWithFailedTag(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	result, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "result")).Result()
@@ -697,7 +697,7 @@ func TestTimeoutStatusFailed(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	status, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "status")).Result()
@@ -722,7 +722,7 @@ func TestTimeoutResultMessage(t *testing.T) {
 	})
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	result, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "result")).Result()
@@ -744,7 +744,7 @@ func TestStderrNotAppendedOnSuccess(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	result, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "result")).Result()
@@ -769,7 +769,7 @@ func TestStderrAppendedOnFailure(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	result, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "result")).Result()
@@ -800,7 +800,7 @@ func TestTimeoutValueFromPayload(t *testing.T) {
 	})
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	// Timeout should be approximately 3600s (allow 2s margin)
@@ -823,7 +823,7 @@ func TestResultStored(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	result, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "result")).Result()
@@ -842,7 +842,7 @@ func TestExitCodeStoredAsString(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	exitCode, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "exit_code")).Result()
@@ -861,7 +861,7 @@ func TestCompletedAtSet(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	completed, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "completed_at")).Result()
@@ -886,7 +886,7 @@ func TestResultAppendedToThreadHistory(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	msgs, _ := rdb.LRange(context.Background(), tasklib.ThreadMessagesKey(testThread), 0, -1).Result()
@@ -914,7 +914,7 @@ func TestResultCappedAt10kChars(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	// Full result in task key
@@ -948,7 +948,7 @@ func TestThreadHistoryTTLRefreshed(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	finalTTL := mr.TTL(tasklib.ThreadMessagesKey(testThread))
@@ -983,7 +983,7 @@ func TestCancelFlagDetectedBeforeSubprocess(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	if cmdCalled {
@@ -1001,7 +1001,7 @@ func TestCancelledStatusStored(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	status, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "status")).Result()
@@ -1042,7 +1042,7 @@ func TestCancelledResultMessage(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	result, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "result")).Result()
@@ -1061,7 +1061,7 @@ func TestCancelledExitCodeMinusOne(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	exitCode, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "exit_code")).Result()
@@ -1080,7 +1080,7 @@ func TestCancelledCompletedAtSet(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	completed, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "completed_at")).Result()
@@ -1099,7 +1099,7 @@ func TestCancellationMessageInThreadHistory(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	msgs, _ := rdb.LRange(context.Background(), tasklib.ThreadMessagesKey(testThread), 0, -1).Result()
@@ -1130,7 +1130,7 @@ func TestCancelledRemovedFromProcessingList(t *testing.T) {
 		t.Fatalf("expected 1 item in processing, got %d", l)
 	}
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, processingKey, "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	if l, _ := rdb.LLen(context.Background(), processingKey).Result(); l != 0 {
@@ -1148,7 +1148,7 @@ func TestCancelledRemovedFromActiveTasks(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	if rdb.HExists(context.Background(), "active_tasks", testTaskID).Val() {
@@ -1172,7 +1172,7 @@ func TestNoCancelFlagProceedsNormally(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	if !cmdCalled {
@@ -1198,7 +1198,7 @@ func TestSetsMetadataFields(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	state, _ := rdb.HGetAll(context.Background(), tasklib.ThreadStateKey(testThread)).Result()
@@ -1223,7 +1223,7 @@ func TestNeverSetsStatusField(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	state, _ := rdb.HGetAll(context.Background(), tasklib.ThreadStateKey(testThread)).Result()
@@ -1253,7 +1253,7 @@ func TestPreservesExistingStateFields(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	state, _ := rdb.HGetAll(context.Background(), tasklib.ThreadStateKey(testThread)).Result()
@@ -1283,7 +1283,7 @@ func TestThreadStateTTLSet(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	ttl := mr.TTL(tasklib.ThreadStateKey(testThread))
@@ -1313,7 +1313,7 @@ func TestRemovedFromProcessingList(t *testing.T) {
 		t.Fatalf("expected 1 item in processing, got %d", l)
 	}
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, processingKey, "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	if l, _ := rdb.LLen(context.Background(), processingKey).Result(); l != 0 {
@@ -1331,7 +1331,7 @@ func TestRemovedFromActiveTasks(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	if rdb.HExists(context.Background(), "active_tasks", testTaskID).Val() {
@@ -1350,7 +1350,7 @@ func TestCleanupAfterFailedTask(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), processingKey, payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, processingKey, "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	if l, _ := rdb.LLen(context.Background(), processingKey).Result(); l != 0 {
@@ -1372,7 +1372,7 @@ func TestCleanupAfterTimeout(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), processingKey, payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, processingKey, "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	if l, _ := rdb.LLen(context.Background(), processingKey).Result(); l != 0 {
@@ -1396,7 +1396,7 @@ func TestMalformedTaskPayloadRemovedFromProcessing(t *testing.T) {
 	badPayload := "not valid json {{{"
 	rdb.LPush(context.Background(), processingKey, badPayload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, badPayload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, badPayload, testWorker, "claude -p",
 		1800, 10, workspace, processingKey, "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	if l, _ := rdb.LLen(context.Background(), processingKey).Result(); l != 0 {
@@ -1420,7 +1420,7 @@ func TestMalformedThreadMessageSkipped(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	// Should complete without crashing
@@ -1447,7 +1447,7 @@ func TestSetsRunningStatusImmediately(t *testing.T) {
 	payload := makeTaskPayload(testTaskID, testThread, testInstruction, nil)
 	rdb.LPush(context.Background(), tasklib.ProcessingKey(testWorker), payload)
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	if statusBefore != "running" {
@@ -1492,7 +1492,7 @@ func TestCancelledBySetOnFlagCancel(t *testing.T) {
 	rdb.Set(context.Background(), tasklib.TaskKey(testTaskID, "cancelled_by"), "user", 0)
 
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	// Worker should preserve cancelled_by from the CancelTask API call
@@ -1529,7 +1529,7 @@ func TestCancelledBySystemWhenNoCancelTaskAPI(t *testing.T) {
 	rdb.Set(context.Background(), tasklib.TaskKey(testTaskID, "cancel"), "1", 0)
 
 	workspace := t.TempDir()
-	processOneTask(log, client, rdb, payload, testWorker, "claude -p",
+	processOneTask(log, client, client, rdb, payload, testWorker, "claude -p",
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	// Worker should set cancelled_by="system" when cancelling via flag

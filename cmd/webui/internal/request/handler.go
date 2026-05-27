@@ -19,6 +19,7 @@ import (
 
 	"github.com/noodle05/ai-agents/cmd/webui/internal/env"
 	"github.com/noodle05/ai-agents/tasklib"
+	"github.com/redis/go-redis/v9"
 )
 
 // Config holds configuration for the request handler.
@@ -54,7 +55,8 @@ func DefaultConfig() Config {
 // invocations per user request, reads stdout, and writes results to Redis via
 // the tasklib client.
 type Handler struct {
-	client *tasklib.Client
+	client tasklib.ThreadStore
+	rdb    *redis.Client
 	cfg    Config
 	sem    chan struct{}
 	logger *slog.Logger
@@ -65,12 +67,13 @@ type Handler struct {
 }
 
 // New creates a new Handler.
-func New(client *tasklib.Client, cfg Config) *Handler {
+func New(client tasklib.ThreadStore, rdb *redis.Client, cfg Config) *Handler {
 	if cfg.MaxConcurrent <= 0 {
 		cfg.MaxConcurrent = 5
 	}
 	return &Handler{
 		client:  client,
+		rdb:     rdb,
 		cfg:     cfg,
 		sem:     make(chan struct{}, cfg.MaxConcurrent),
 		logger:  slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})).With("component", "request"),
@@ -355,7 +358,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 
 		// Persist master token stats to thread and global counters
 		persistCtx, persistCancel := cleanupCtx()
-		pipe := h.client.RDB().Pipeline()
+		pipe := h.rdb.Pipeline()
 		tasklib.PersistMasterTokenStats(persistCtx, pipe, threadID, masterStats)
 		pipe.Exec(persistCtx)
 		persistCancel()

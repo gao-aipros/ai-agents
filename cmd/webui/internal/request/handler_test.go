@@ -96,7 +96,7 @@ func newTestHandler(t *testing.T) (*Handler, *miniredis.Miniredis, chan string) 
 		OutputFormat:      "text",
 		TestNotify:        notify,
 	}
-	handler := New(client, cfg)
+	handler := New(client, rdb, cfg)
 	return handler, mr, notify
 }
 
@@ -968,7 +968,7 @@ func newTestHandlerStreamJSON(t *testing.T) (*Handler, *miniredis.Miniredis, cha
 		OutputFormat:      "stream-json",
 		TestNotify:        notify,
 	}
-	handler := New(client, cfg)
+	handler := New(client, rdb, cfg)
 	return handler, mr, notify
 }
 
