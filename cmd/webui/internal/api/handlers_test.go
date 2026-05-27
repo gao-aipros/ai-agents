@@ -1406,6 +1406,9 @@ func TestHandleCreateThread_WithParentThreadID(t *testing.T) {
 	th := newTestRouter(t, MiddlewareConfig{})
 	defer th.Cleanup()
 
+	// Create parent thread first — validation now requires it to exist.
+	th.Client.CreateThread(context.Background(), "parent", "", "")
+
 	body := strings.NewReader(`{"thread_id":"child","repo":"owner/repo","parent_thread_id":"parent"}`)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "/api/threads", body)
@@ -1482,15 +1485,21 @@ func TestFilterRootThreads(t *testing.T) {
 		{ThreadID: "root", ParentThreadID: ""},
 		{ThreadID: "child", ParentThreadID: "root"},
 		{ThreadID: "root-2", ParentThreadID: ""},
+		{ThreadID: "orphan", ParentThreadID: "missing"},
+	}
+
+	known := make(map[string]bool)
+	for _, th := range threads {
+		known[th.ThreadID] = true
 	}
 
 	roots := filterRootThreads(threads)
-	if len(roots) != 2 {
-		t.Errorf("got %d root threads, want 2", len(roots))
+	if len(roots) != 3 {
+		t.Errorf("got %d root threads, want 3 (root, root-2, orphan)", len(roots))
 	}
 	for _, r := range roots {
-		if r.ParentThreadID != "" {
-			t.Errorf("root thread %q has ParentThreadID = %q", r.ThreadID, r.ParentThreadID)
+		if r.ParentThreadID != "" && known[r.ParentThreadID] {
+			t.Errorf("root thread %q has valid ParentThreadID = %q but was not included in set", r.ThreadID, r.ParentThreadID)
 		}
 	}
 }
@@ -1791,5 +1800,61 @@ func TestHandleDeleteThread_NoChildren(t *testing.T) {
 	}
 	if exists {
 		t.Error("thread should not exist in Redis after delete")
+	}
+}
+
+// ── parent validation tests ──────────────────────────────────────────────
+
+func TestHandleCreateThread_ParentNotFound(t *testing.T) {
+	th := newTestRouter(t, MiddlewareConfig{})
+	defer th.Cleanup()
+
+	body := strings.NewReader(`{"thread_id":"orphan-child","parent_thread_id":"nonexistent"}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/threads", body)
+	r.Header.Set("Content-Type", "application/json")
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+}
+
+func TestHandleCreateThread_SelfParent(t *testing.T) {
+	th := newTestRouter(t, MiddlewareConfig{})
+	defer th.Cleanup()
+
+	body := strings.NewReader(`{"thread_id":"self-thread","parent_thread_id":"self-thread"}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/threads", body)
+	r.Header.Set("Content-Type", "application/json")
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+}
+
+func TestHandleCreateThread_ValidParent(t *testing.T) {
+	th := newTestRouter(t, MiddlewareConfig{})
+	defer th.Cleanup()
+
+	// Create parent first
+	th.Client.CreateThread(context.Background(), "valid-parent", "", "")
+
+	body := strings.NewReader(`{"thread_id":"valid-child","parent_thread_id":"valid-parent"}`)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/threads", body)
+	r.Header.Set("Content-Type", "application/json")
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusCreated {
+		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusCreated, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	readJSON(w, &resp)
+	if resp["parent_thread_id"] != "valid-parent" {
+		t.Errorf("parent_thread_id = %q, want %q", resp["parent_thread_id"], "valid-parent")
 	}
 }

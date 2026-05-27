@@ -59,6 +59,22 @@ func (tr *threadsResource) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if b.ParentThreadID != "" {
+		if b.ParentThreadID == threadID {
+			Error(w, http.StatusBadRequest, "thread cannot be its own parent")
+			return
+		}
+		parentExists, err := tr.threads.ThreadExists(r.Context(), b.ParentThreadID)
+		if err != nil {
+			serverError(w, "internal error", err)
+			return
+		}
+		if !parentExists {
+			Error(w, http.StatusBadRequest, fmt.Sprintf("parent thread %q not found", b.ParentThreadID))
+			return
+		}
+	}
+
 	thread, err := tr.threads.CreateThread(r.Context(), threadID, b.Repo, b.ParentThreadID)
 	if err != nil {
 		serverError(w, "internal error", err)
@@ -499,10 +515,17 @@ func buildThreadTree(threads []*tasklib.Thread) map[string][]*tasklib.Thread {
 }
 
 // filterRootThreads returns threads without a parent (root-level threads).
+// Threads whose parent_thread_id references a non-existent thread (orphans)
+// are also treated as roots so they remain visible in the thread tree.
 func filterRootThreads(threads []*tasklib.Thread) []*tasklib.Thread {
+	known := make(map[string]bool, len(threads))
+	for _, t := range threads {
+		known[t.ThreadID] = true
+	}
+
 	var roots []*tasklib.Thread
 	for _, t := range threads {
-		if t.ParentThreadID == "" {
+		if t.ParentThreadID == "" || !known[t.ParentThreadID] {
 			roots = append(roots, t)
 		}
 	}

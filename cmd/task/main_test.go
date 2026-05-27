@@ -519,6 +519,9 @@ func TestCmdThreadCreate_WithParent(t *testing.T) {
 	_, cleanup := setupTestRedis(t)
 	defer cleanup()
 
+	// Create parent thread first — validation now requires it to exist.
+	getServices().Threads.CreateThread(context.Background(), "parent-thread", "", "")
+
 	cmd := &cobra.Command{}
 	cmd.Flags().StringVar(&tcID, "id", "", "")
 	cmd.Flags().StringVar(&tcRepo, "repo", "", "")
@@ -550,6 +553,9 @@ func TestCmdThreadCreate_ParentFromEnv(t *testing.T) {
 
 	os.Setenv("THREAD", "env-thread-id")
 	defer os.Unsetenv("THREAD")
+
+	// Create parent thread first — validation now requires it to exist.
+	getServices().Threads.CreateThread(context.Background(), "env-thread-id", "", "")
 
 	cmd := &cobra.Command{}
 	cmd.Flags().StringVar(&tcID, "id", "", "")
@@ -616,6 +622,9 @@ func TestCmdThreadCreate_ParentExplicitValue(t *testing.T) {
 
 	os.Setenv("THREAD", "env-thread-id")
 	defer os.Unsetenv("THREAD")
+
+	// Create parent thread first — validation now requires it to exist.
+	getServices().Threads.CreateThread(context.Background(), "custom-parent", "", "")
 
 	cmd := &cobra.Command{}
 	cmd.Flags().StringVar(&tcID, "id", "", "")
