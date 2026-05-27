@@ -527,15 +527,20 @@ func cmdRequeueStale(cmd *cobra.Command, args []string) error {
 
 	olderThan := time.Duration(requeueOlderThan) * time.Second
 
+	var errs []error
 	for _, worker := range workers {
 		requeued, err := c.RequeueStale(ctx, worker, olderThan)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
+			errs = append(errs, err)
 			continue
 		}
 		for _, taskID := range requeued {
 			fmt.Printf("Requeued: %s (worker=%s)\n", taskID, worker)
 		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%d worker(s) had errors during requeue-stale", len(errs))
 	}
 	return nil
 }

@@ -175,7 +175,80 @@ func TestFakeTaskStore(t *testing.T) {
 		t.Errorf("expected cancelled status, got %s", cancelled.Status)
 	}
 
-	// Verify the fake satisfies the interface at compile time
-	var _ TaskStore = store
-	_ = store // use store to suppress unused variable warning
+	// EnqueueGroup creates task with correct thread/worker
+	gt, err := store.EnqueueGroup(ctx, "claude", "thread-2", "review-group", "review code")
+	if err != nil {
+		t.Fatalf("EnqueueGroup: %v", err)
+	}
+	if gt.ThreadID != "thread-2" {
+		t.Errorf("expected thread-2, got %s", gt.ThreadID)
+	}
+	if gt.Worker != "claude" {
+		t.Errorf("expected worker claude, got %s", gt.Worker)
+	}
+
+	// GetTaskResult
+	if _, err := store.GetTaskResult(ctx, task.TaskID, 0); err != nil {
+		t.Fatalf("GetTaskResult: %v", err)
+	}
+
+	// WaitTask for existing task
+	wt, err := store.WaitTask(ctx, task.TaskID, "thread-1", time.Second)
+	if err != nil {
+		t.Fatalf("WaitTask: %v", err)
+	}
+	if wt.TaskID != task.TaskID {
+		t.Errorf("expected task ID %s, got %s", task.TaskID, wt.TaskID)
+	}
+
+	// WaitTask for unknown task returns error
+	if _, err := store.WaitTask(ctx, "nonexistent", "thread-1", time.Second); err == nil {
+		t.Error("expected error for unknown task, got nil")
+	}
+
+	// GroupWait
+	gr, err := store.GroupWait(ctx, "thread-2", "review-group", time.Second)
+	if err != nil {
+		t.Fatalf("GroupWait: %v", err)
+	}
+	if gr.Status != "complete" {
+		t.Errorf("expected status complete, got %s", gr.Status)
+	}
+
+	// RequeueStale
+	requeued, err := store.RequeueStale(ctx, "claude", time.Hour)
+	if err != nil {
+		t.Fatalf("RequeueStale: %v", err)
+	}
+	if requeued != nil {
+		t.Errorf("expected nil requeued, got %v", requeued)
+	}
+
+	// ListTasks filtering by worker
+	allTasks, err := store.ListTasks(ctx, "claude", "", "", 10, 0, "", "")
+	if err != nil {
+		t.Fatalf("ListTasks by worker: %v", err)
+	}
+	if len(allTasks) < 2 {
+		t.Errorf("expected at least 2 tasks for worker claude, got %d", len(allTasks))
+	}
+
+	// ListTasks filtering by status
+	pendingTasks, err := store.ListTasks(ctx, "", "pending", "", 10, 0, "", "")
+	if err != nil {
+		t.Fatalf("ListTasks by status: %v", err)
+	}
+	if len(pendingTasks) < 1 {
+		t.Errorf("expected at least 1 pending task, got %d", len(pendingTasks))
+	}
+
+	// ListTasks filtering by threadID
+	threadTasks, err := store.ListTasks(ctx, "", "", "thread-2", 10, 0, "", "")
+	if err != nil {
+		t.Fatalf("ListTasks by thread: %v", err)
+	}
+	if len(threadTasks) != 1 {
+		t.Errorf("expected 1 task for thread-2, got %d", len(threadTasks))
+	}
+
 }
