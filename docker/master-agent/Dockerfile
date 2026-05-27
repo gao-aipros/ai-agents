@@ -81,12 +81,6 @@ COPY --chown=agent:agent --chmod=755 docker/master-agent/guard.py /home/agent/gu
 COPY --from=skills-download --chown=agent:agent /tmp/skills-out /home/agent/.claude/skills/
 COPY --chown=agent:agent docs/agents/ /home/agent/.claude/agents-config/
 
-# Reference copies outside the volume so config files update on redeploy
-RUN mkdir -p /opt/claude-reference && chown agent:agent /opt/claude-reference
-COPY --chown=agent:agent docker/master-agent/CLAUDE.md /opt/claude-reference/CLAUDE.md
-COPY --from=skills-download --chown=agent:agent /tmp/skills-out /opt/claude-reference/skills/
-COPY --chown=agent:agent docs/agents/ /opt/claude-reference/agents-config/
-
 # Symlink .claude.json into the persisted volume so config survives restarts
 RUN ln -sf /home/agent/.claude/claude.json /home/agent/.claude.json \
     && chown -h agent:agent /home/agent/.claude.json

@@ -1,25 +1,6 @@
 #!/bin/bash
 set -e
 
-# Sync reference config files into the volume on every start.
-# This ensures CLAUDE.md, skills, and agents-config from the new image
-# replace any stale copies in the persisted volume after a redeploy.
-# Runtime data (sessions, claude.json, backups) is not touched.
-REF_DIR="/opt/claude-reference"
-CLAUDE_DIR="/home/agent/.claude"
-
-if [ -d "$REF_DIR" ] && [ -f "$REF_DIR/CLAUDE.md" ]; then
-    cp "$REF_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
-fi
-if [ -d "$REF_DIR/skills" ] && ls -A "$REF_DIR/skills" >/dev/null 2>&1; then
-    rm -rf "$CLAUDE_DIR/skills"
-    cp -r "$REF_DIR/skills" "$CLAUDE_DIR/skills"
-fi
-if [ -d "$REF_DIR/agents-config" ] && ls -A "$REF_DIR/agents-config" >/dev/null 2>&1; then
-    rm -rf "$CLAUDE_DIR/agents-config"
-    cp -r "$REF_DIR/agents-config" "$CLAUDE_DIR/agents-config"
-fi
-
 CONFIG_FILE="/home/agent/.claude/claude.json"
 SYMLINK="/home/agent/.claude.json"
 BACKUP_DIR="/home/agent/.claude/backups"
