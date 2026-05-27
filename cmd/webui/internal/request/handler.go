@@ -149,7 +149,7 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 	}
 	if err := h.threads.AppendMessage(ctx, threadID, userMsg); err != nil {
-		h.rdb.Del(ctx, tasklib.ThreadRunningKey(threadID))
+		h.rdb.Del(ctx, tasklib.ThreadRunningKey(threadID)).Err()
 		<-h.sem
 		return nil, fmt.Errorf("append user message: %w", err)
 	}
@@ -160,7 +160,7 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 		sessionID, err = "", nil
 	}
 	if err != nil {
-		h.rdb.Del(ctx, tasklib.ThreadRunningKey(threadID))
+		h.rdb.Del(ctx, tasklib.ThreadRunningKey(threadID)).Err()
 		<-h.sem
 		return nil, fmt.Errorf("get session id: %w", err)
 	}
@@ -178,7 +178,7 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 	if sessionID == "" {
 		sessionID = mustUUID()
 		if err := h.rdb.Set(ctx, tasklib.ThreadSessionIDKey(threadID), sessionID, tasklib.TTLThread).Err(); err != nil {
-			h.rdb.Del(ctx, tasklib.ThreadRunningKey(threadID))
+			h.rdb.Del(ctx, tasklib.ThreadRunningKey(threadID)).Err()
 			<-h.sem
 			return nil, fmt.Errorf("set session id: %w", err)
 		}
@@ -226,7 +226,7 @@ func (h *Handler) Submit(ctx context.Context, threadID, userRequest, repo string
 	h.wg.Add(1)
 	go h.runSubprocess(procCtx, cancel, threadID, requestID, args)
 
-	h.rdb.Set(ctx, tasklib.ThreadLastActivityKey(threadID), ts(), tasklib.TTLThread)
+	h.rdb.Set(ctx, tasklib.ThreadLastActivityKey(threadID), tasklib.Ts(), tasklib.TTLThread).Err()
 
 	return &SubmitResult{
 		ThreadID:  threadID,
@@ -304,8 +304,8 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		<-h.sem
 		cleanCtx, cleanCancel := cleanupCtx()
 		defer cleanCancel()
-		h.rdb.Del(cleanCtx, tasklib.ThreadRunningKey(threadID))
-		h.rdb.Set(cleanCtx, tasklib.ThreadLastActivityKey(threadID), ts(), tasklib.TTLThread)
+		h.rdb.Del(cleanCtx, tasklib.ThreadRunningKey(threadID)).Err()
+		h.rdb.Set(cleanCtx, tasklib.ThreadLastActivityKey(threadID), tasklib.Ts(), tasklib.TTLThread).Err()
 
 		h.mu.Lock()
 		delete(h.cancels, threadID)
@@ -590,7 +590,7 @@ func (h *Handler) writeResponseMessage(ctx context.Context, threadID, content st
 	cleanCtx, cleanCancel := cleanupCtx()
 	defer cleanCancel()
 
-	h.rdb.Set(cleanCtx, tasklib.ThreadCompleteKey(threadID), "1", tasklib.TTLThread)
+	h.rdb.Set(cleanCtx, tasklib.ThreadCompleteKey(threadID), "1", tasklib.TTLThread).Err()
 
 	h.threads.AppendMessage(cleanCtx, threadID, tasklib.Message{
 		Role:      "master",
@@ -616,7 +616,7 @@ func (h *Handler) writeErrorMessage(ctx context.Context, threadID, content strin
 	cleanCtx, cleanCancel := cleanupCtx()
 	defer cleanCancel()
 
-	h.rdb.Set(cleanCtx, tasklib.ThreadCompleteKey(threadID), "1", tasklib.TTLThread)
+	h.rdb.Set(cleanCtx, tasklib.ThreadCompleteKey(threadID), "1", tasklib.TTLThread).Err()
 
 	h.threads.AppendMessage(cleanCtx, threadID, tasklib.Message{
 		Role:      "master",
@@ -643,7 +643,7 @@ func (h *Handler) completeThread(ctx context.Context, threadID string) {
 	cleanCtx, cleanCancel := cleanupCtx()
 	defer cleanCancel()
 
-	h.rdb.Set(cleanCtx, tasklib.ThreadCompleteKey(threadID), "1", tasklib.TTLThread)
+	h.rdb.Set(cleanCtx, tasklib.ThreadCompleteKey(threadID), "1", tasklib.TTLThread).Err()
 	locked, err := h.threads.IsThreadLocked(cleanCtx, threadID)
 	if err != nil {
 		h.logger.Info(fmt.Sprintf("thread=%s IsThreadLocked error: %v", threadID, err))
@@ -753,10 +753,6 @@ type RequestError struct {
 func (e *RequestError) Error() string { return e.Message }
 
 // ── helpers ────────────────────────────────────────────────────────────────
-
-func ts() string {
-	return time.Now().UTC().Format("2006-01-02T15:04:05Z")
-}
 
 func mustUUID() string {
 	id, err := tasklib.NewUUID()

@@ -149,8 +149,8 @@ end
 return 0
 `)
 
-// ts returns the current time as an ISO8601 UTC string (same format as task.py).
-func ts() string {
+// Ts returns the current time as an ISO8601 UTC string (same format as task.py).
+func Ts() string {
 	return time.Now().UTC().Format("2006-01-02T15:04:05Z")
 }
 
@@ -197,7 +197,7 @@ func (c *Client) CancelRequest(ctx context.Context, threadID string) error {
 	}
 
 	pipe := c.rdb.Pipeline()
-	pipe.HSet(ctx, key, "status", "cancelled", "updated_at", ts())
+	pipe.HSet(ctx, key, "status", "cancelled", "updated_at", Ts())
 	pipe.Expire(ctx, key, TTLThread)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("cancel request: %w", err)
@@ -225,7 +225,7 @@ func (c *Client) IsThreadComplete(ctx context.Context, threadID string) (bool, e
 
 // UpdateThreadLastActivity sets the last-activity timestamp for a thread.
 func (c *Client) UpdateThreadLastActivity(ctx context.Context, threadID string) error {
-	return c.rdb.Set(ctx, ThreadLastActivityKey(threadID), ts(), TTLThread).Err()
+	return c.rdb.Set(ctx, ThreadLastActivityKey(threadID), Ts(), TTLThread).Err()
 }
 
 // GetThreadLastActivity retrieves the last-activity timestamp for a thread.

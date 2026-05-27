@@ -40,7 +40,7 @@ func (c *Client) CreateThread(ctx context.Context, threadID, repo, parentThreadI
 		return nil, fmt.Errorf("generate correlation_id: %w", err)
 	}
 
-	now := ts()
+	now := Ts()
 	mapping := map[string]interface{}{
 		"status":         "initiated",
 		"created_at":     now,
@@ -336,7 +336,7 @@ func (c *Client) UpdateThread(ctx context.Context, threadID string, fields map[s
 	}
 
 	mapping := make(map[string]interface{}, len(fields)+1)
-	mapping["updated_at"] = ts()
+	mapping["updated_at"] = Ts()
 	for k, v := range fields {
 		switch k {
 		case "status":

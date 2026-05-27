@@ -73,7 +73,7 @@ func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction stri
 	if err != nil {
 		return nil, fmt.Errorf("generate task id: %w", err)
 	}
-	now := ts()
+	now := Ts()
 
 	// Acquire thread lock (serialize tasks on the same thread).
 	// Auto-clear stale locks where the holder task no longer exists or has
@@ -202,7 +202,7 @@ func (c *Client) EnqueueGroup(ctx context.Context, worker, threadID, groupLabel,
 	if err != nil {
 		return nil, fmt.Errorf("generate task id: %w", err)
 	}
-	now := ts()
+	now := Ts()
 
 	// Gate-check: acquire thread lock momentarily to ensure no sequential
 	// task holds it, then release immediately. Short TTL (10s) prevents

@@ -92,7 +92,7 @@ type WorkerOfflineDetail struct {
 // never fails the parent operation.
 func (c *Client) PushEvent(ctx context.Context, listKey string, ev *Event) {
 	ev.EventID = mustUUID()
-	ev.Timestamp = ts()
+	ev.Timestamp = Ts()
 	data, err := json.Marshal(ev)
 	if err != nil {
 		// Use package-level log since tasklib has no slog dependency
