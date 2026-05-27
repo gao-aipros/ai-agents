@@ -63,12 +63,12 @@ var (
 	gwTimeout          int
 )
 
-var getClient = func() *tasklib.Client {
+var getServices = func() *tasklib.Services {
 	rdb := redis.NewClient(&redis.Options{
 		Addr: fmt.Sprintf("%s:%d", redisHost, redisPort),
 		DB:   redisDB,
 	})
-	return tasklib.NewClient(rdb)
+	return tasklib.NewServices(rdb)
 }
 
 var die = func(msg string) {
@@ -269,7 +269,7 @@ func main() {
 // ── command handlers (each matches task.py output exactly) ──────────────
 
 func cmdEnqueue(cmd *cobra.Command, args []string) error {
-	c := getClient()
+	s := getServices()
 	ctx := context.Background()
 
 	if enqueueGroup != "" {
@@ -277,7 +277,7 @@ func cmdEnqueue(cmd *cobra.Command, args []string) error {
 		if strings.ContainsAny(enqueueGroup, ":\t\n\r ") {
 			die(fmt.Sprintf("invalid group label %q: must not contain ':' or whitespace", enqueueGroup))
 		}
-		task, err := c.EnqueueGroup(ctx, enqueueWorker, enqueueThread, enqueueGroup, enqueueInstruction)
+		task, err := s.Tasks.EnqueueGroup(ctx, enqueueWorker, enqueueThread, enqueueGroup, enqueueInstruction)
 		if err != nil {
 			die(err.Error())
 		}
@@ -286,7 +286,7 @@ func cmdEnqueue(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	task, err := c.Enqueue(ctx, enqueueWorker, enqueueThread, enqueueInstruction)
+	task, err := s.Tasks.Enqueue(ctx, enqueueWorker, enqueueThread, enqueueInstruction)
 	if err != nil {
 		die(err.Error())
 	}
@@ -296,10 +296,10 @@ func cmdEnqueue(cmd *cobra.Command, args []string) error {
 }
 
 func cmdStatus(cmd *cobra.Command, args []string) error {
-	c := getClient()
+	s := getServices()
 	ctx := context.Background()
 
-	task, err := c.GetTask(ctx, statusID)
+	task, err := s.Tasks.GetTask(ctx, statusID)
 	if err != nil {
 		die(err.Error())
 	}
@@ -312,139 +312,53 @@ func cmdStatus(cmd *cobra.Command, args []string) error {
 }
 
 func cmdResult(cmd *cobra.Command, args []string) error {
-	c := getClient()
+	s := getServices()
 	ctx := context.Background()
 
-	result, err := c.RDB().Get(ctx, tasklib.TaskKey(resultID, "result")).Result()
-	if err == redis.Nil {
-		result = ""
-	} else if err != nil {
-		die(err.Error())
+	tail := resultTail
+	if !cmd.Flags().Changed("tail") {
+		tail = -1 // -1 means full result (matching task.py default=None)
 	}
-
-	// cmdResult was invoked without --tail (cobra default -1) → no tail flag set.
-	// task.py uses default=None and checks `if args.tail is not None`.
-	// We use -1 to signal "not set" (since 0 is a valid tail value meaning "empty").
-	tailFlag := cmd.Flags().Changed("tail")
-	if tailFlag {
-		if resultTail == 0 {
-			result = ""
-		} else if resultTail > 0 {
-			lines := strings.Split(result, "\n")
-			if len(lines) > resultTail {
-				result = strings.Join(lines[len(lines)-resultTail:], "\n")
-			}
-		}
-		// resultTail < 0 means invalid input; treat as full
+	result, err := s.Tasks.GetTaskResult(ctx, resultID, tail)
+	if err != nil {
+		die(err.Error())
 	}
 	fmt.Println(result)
 	return nil
 }
 
 func cmdList(cmd *cobra.Command, args []string) error {
-	c := getClient()
+	s := getServices()
 	ctx := context.Background()
 
-	rdb := c.RDB()
-	tasks := make(map[string]map[string]interface{})
-
-	// Collect from active_tasks hash
-	active, _ := rdb.HGetAll(ctx, "active_tasks").Result()
-	for taskID, raw := range active {
-		var entry map[string]interface{}
-		if err := json.Unmarshal([]byte(raw), &entry); err != nil {
-			entry = map[string]interface{}{"status": "unknown"}
-		}
-		tasks[taskID] = entry
+	// Fetch all tasks via the interface. Use a large limit so the CLI can
+	// apply its own limit-before-filter semantics (matching task.py).
+	allTasks, err := s.Tasks.ListTasks(ctx, "", "", "", 10000, 0, "task_id", "asc")
+	if err != nil {
+		die(err.Error())
 	}
-
-	// Scan task:*:status keys
-	var cursor uint64
-	for {
-		keys, nextCursor, err := rdb.Scan(ctx, cursor, "task:*:status", 100).Result()
-		if err != nil {
-			break
-		}
-		for _, key := range keys {
-			parts := strings.SplitN(key, ":", 3)
-			if len(parts) >= 2 {
-				taskID := parts[1]
-				if _, exists := tasks[taskID]; !exists {
-					tasks[taskID] = map[string]interface{}{}
-				}
-			}
-		}
-		cursor = nextCursor
-		if cursor == 0 {
-			break
-		}
-	}
-
-	// Sort task IDs
-	sortedIDs := make([]string, 0, len(tasks))
-	for id := range tasks {
-		sortedIDs = append(sortedIDs, id)
-	}
-	sort.Strings(sortedIDs)
 
 	// Replicate task.py exact behavior: limit check BEFORE filter
 	limit := listLimit
 	if limit <= 0 {
 		limit = 50
 	}
-	var rows []map[string]interface{}
-	for _, taskID := range sortedIDs {
+	var rows []*tasklib.Task
+	for _, task := range allTasks {
 		if len(rows) >= limit {
 			break
 		}
-		entry := tasks[taskID]
-		entry["task_id"] = taskID
-
-		// Populate missing fields from Redis
-		if _, ok := entry["status"]; !ok {
-			val, _ := rdb.Get(ctx, tasklib.TaskKey(taskID, "status")).Result()
-			if val == "" {
-				val = "unknown"
-			}
-			entry["status"] = val
-		}
-		if _, ok := entry["worker"]; !ok {
-			val, _ := rdb.Get(ctx, tasklib.TaskKey(taskID, "worker")).Result()
-			if val == "" {
-				val = "-"
-			}
-			entry["worker"] = val
-		}
-		if _, ok := entry["thread_id"]; !ok {
-			val, _ := rdb.Get(ctx, tasklib.TaskKey(taskID, "thread_id")).Result()
-			if val == "" {
-				val = "-"
-			}
-			entry["thread_id"] = val
-		}
-		if _, ok := entry["started_at"]; !ok {
-			val, _ := rdb.Get(ctx, tasklib.TaskKey(taskID, "started_at")).Result()
-			if val == "" {
-				val, _ = rdb.Get(ctx, tasklib.TaskKey(taskID, "enqueued_at")).Result()
-			}
-			if val == "" {
-				val = "-"
-			}
-			entry["started_at"] = val
-		}
-
-		// Apply filters (after populating, matching task.py order)
-		if listWorker != "" && entry["worker"] != listWorker {
+		// Apply filters (limit BEFORE filter, matching task.py order)
+		if listWorker != "" && task.Worker != listWorker {
 			continue
 		}
-		if listStatus != "" && entry["status"] != listStatus {
+		if listStatus != "" && task.Status != listStatus {
 			continue
 		}
-		if listThread != "" && entry["thread_id"] != listThread {
+		if listThread != "" && task.ThreadID != listThread {
 			continue
 		}
-
-		rows = append(rows, entry)
+		rows = append(rows, task)
 	}
 
 	if len(rows) == 0 {
@@ -453,16 +367,14 @@ func cmdList(cmd *cobra.Command, args []string) error {
 	}
 
 	if listVerbose {
-		// Verbose: show enriched fields
-		for _, entry := range rows {
-			taskID := fmt.Sprintf("%v", entry["task_id"])
-			task, err := c.GetTask(ctx, taskID)
+		for _, task := range rows {
+			fullTask, err := s.Tasks.GetTask(ctx, task.TaskID)
 			if err != nil {
-				data, _ := json.MarshalIndent(entry, "", "  ")
+				data, _ := json.MarshalIndent(task, "", "  ")
 				fmt.Println(string(data))
 				continue
 			}
-			data, _ := json.MarshalIndent(task, "", "  ")
+			data, _ := json.MarshalIndent(fullTask, "", "  ")
 			fmt.Println(string(data))
 			fmt.Println("---")
 		}
@@ -472,32 +384,36 @@ func cmdList(cmd *cobra.Command, args []string) error {
 	header := fmt.Sprintf("%-38s %-12s %-10s %-20s %-20s", "TASK ID", "STATUS", "WORKER", "THREAD", "STARTED")
 	fmt.Println(header)
 	fmt.Println(strings.Repeat("-", len(header)))
-	for _, entry := range rows {
-		tid := fmt.Sprintf("%v", entry["task_id"])
+	for _, task := range rows {
+		tid := task.TaskID
 		if len(tid) > 36 {
 			tid = tid[:36]
 		}
-		status := fmt.Sprintf("%v", entry["status"])
-		worker := fmt.Sprintf("%v", entry["worker"])
-		thread := fmt.Sprintf("%v", entry["thread_id"])
+		status := task.Status
+		worker := task.Worker
+		thread := task.ThreadID
 		if len(thread) > 18 {
 			thread = thread[:18]
 		}
-		started := fmt.Sprintf("%v", entry["started_at"])
+		started := task.StartedAt
 		fmt.Printf("%-38s %-12s %-10s %-20s %-20s\n", tid, status, worker, thread, started)
 	}
 	return nil
 }
 
 func cmdWait(cmd *cobra.Command, args []string) error {
-	c := getClient()
+	s := getServices()
 	ctx := context.Background()
 
 	// Read thread_id from the task so the lock can be released on timeout
 	// (matching task.py's finally block that reads thread_id from Redis).
-	threadID, _ := c.RDB().Get(ctx, tasklib.TaskKey(waitID, "thread_id")).Result()
+	task, _ := s.Tasks.GetTask(ctx, waitID)
+	threadID := ""
+	if task != nil {
+		threadID = task.ThreadID
+	}
 
-	task, err := c.WaitTask(ctx, waitID, threadID, time.Duration(waitTimeout)*time.Second)
+	task, err := s.Tasks.WaitTask(ctx, waitID, threadID, time.Duration(waitTimeout)*time.Second)
 	if err != nil {
 		die(err.Error())
 	}
@@ -517,7 +433,7 @@ func cmdWait(cmd *cobra.Command, args []string) error {
 }
 
 func cmdRequeueStale(cmd *cobra.Command, args []string) error {
-	c := getClient()
+	s := getServices()
 	ctx := context.Background()
 
 	workers := tasklib.WorkerTypes
@@ -529,7 +445,7 @@ func cmdRequeueStale(cmd *cobra.Command, args []string) error {
 
 	var errs []error
 	for _, worker := range workers {
-		requeued, err := c.RequeueStale(ctx, worker, olderThan)
+		requeued, err := s.Tasks.RequeueStale(ctx, worker, olderThan)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR: %v\n", err)
 			errs = append(errs, err)
@@ -546,10 +462,10 @@ func cmdRequeueStale(cmd *cobra.Command, args []string) error {
 }
 
 func cmdCancel(cmd *cobra.Command, args []string) error {
-	c := getClient()
+	s := getServices()
 	ctx := context.Background()
 
-	if err := c.CancelTask(ctx, cancelID, "user"); err != nil {
+	if err := s.Tasks.CancelTask(ctx, cancelID, "user"); err != nil {
 		die(err.Error())
 	}
 	fmt.Printf("Cancel flag set for task %s\n", cancelID)
@@ -557,24 +473,27 @@ func cmdCancel(cmd *cobra.Command, args []string) error {
 }
 
 func cmdUnlock(cmd *cobra.Command, args []string) error {
-	c := getClient()
+	s := getServices()
 	ctx := context.Background()
 
-	key := tasklib.ThreadLockKey(unlockThread)
-	deleted, err := c.RDB().Del(ctx, key).Result()
+	// Check if lock exists before unlocking (preserves "no lock found" message)
+	locked, err := s.Threads.IsThreadLocked(ctx, unlockThread)
 	if err != nil {
 		die(err.Error())
 	}
-	if deleted > 0 {
-		fmt.Printf("Lock released for thread '%s'\n", unlockThread)
-	} else {
+	if !locked {
 		fmt.Printf("No lock found for thread '%s'\n", unlockThread)
+		return nil
 	}
+	if err := s.Threads.UnlockThread(ctx, unlockThread); err != nil {
+		die(err.Error())
+	}
+	fmt.Printf("Lock released for thread '%s'\n", unlockThread)
 	return nil
 }
 
 func cmdThreadCreate(cmd *cobra.Command, args []string) error {
-	c := getClient()
+	s := getServices()
 	ctx := context.Background()
 
 	parent := tcParent
@@ -584,7 +503,7 @@ func cmdThreadCreate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	_, err := c.CreateThread(ctx, tcID, tcRepo, parent)
+	_, err := s.Threads.CreateThread(ctx, tcID, tcRepo, parent)
 	if err != nil {
 		die(err.Error())
 	}
@@ -593,11 +512,10 @@ func cmdThreadCreate(cmd *cobra.Command, args []string) error {
 }
 
 func cmdThreadHistory(cmd *cobra.Command, args []string) error {
-	c := getClient()
+	s := getServices()
 	ctx := context.Background()
 
-	key := tasklib.ThreadMessagesKey(thID)
-	var msgs []string
+	var msgs []tasklib.Message
 	var err error
 
 	tailFlag := cmd.Flags().Changed("tail")
@@ -606,9 +524,9 @@ func cmdThreadHistory(cmd *cobra.Command, args []string) error {
 			fmt.Println("(no messages)")
 			return nil
 		}
-		msgs, err = c.RDB().LRange(ctx, key, int64(-thTail), -1).Result()
+		msgs, err = s.Threads.GetThreadHistoryTail(ctx, thID, thTail)
 	} else {
-		msgs, err = c.RDB().LRange(ctx, key, 0, -1).Result()
+		msgs, err = s.Threads.GetThreadHistory(ctx, thID, 0, 0)
 	}
 	if err != nil {
 		die(err.Error())
@@ -618,25 +536,19 @@ func cmdThreadHistory(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	for _, msg := range msgs {
-		var data map[string]interface{}
-		if err := json.Unmarshal([]byte(msg), &data); err != nil {
-			fmt.Println(msg)
-			fmt.Println("---")
-			continue
-		}
-		fmt.Printf("[%v] %v\n", data["role"], data["timestamp"])
-		fmt.Printf("%v\n", data["content"])
+	for _, m := range msgs {
+		fmt.Printf("[%s] %s\n", m.Role, m.Timestamp)
+		fmt.Printf("%s\n", m.Content)
 		fmt.Println("---")
 	}
 	return nil
 }
 
 func cmdThreadState(cmd *cobra.Command, args []string) error {
-	c := getClient()
+	s := getServices()
 	ctx := context.Background()
 
-	thread, err := c.GetThread(ctx, tsID)
+	thread, err := s.Threads.GetThread(ctx, tsID)
 	if err != nil {
 		die(err.Error())
 	}
@@ -645,7 +557,7 @@ func cmdThreadState(cmd *cobra.Command, args []string) error {
 	fmt.Println(string(data))
 
 	// Show recent events
-	events, err := c.GetThreadEvents(ctx, tsID, 20)
+	events, err := s.Events.GetThreadEvents(ctx, tsID, 20)
 	if err == nil && len(events) > 0 {
 		fmt.Println("\nRecent events:")
 		for _, ev := range events {
@@ -661,7 +573,7 @@ func cmdThreadState(cmd *cobra.Command, args []string) error {
 	}
 
 	// Task summary for this thread
-	tasks, err := c.ListTasks(ctx, "", "", tsID, 200, 0, "", "")
+	tasks, err := s.Tasks.ListTasks(ctx, "", "", tsID, 200, 0, "", "")
 	if err == nil && len(tasks) > 0 {
 		counts := make(map[string]int)
 		for _, t := range tasks {
@@ -677,14 +589,14 @@ func cmdThreadState(cmd *cobra.Command, args []string) error {
 }
 
 func cmdThreadUpdate(cmd *cobra.Command, args []string) error {
-	c := getClient()
+	s := getServices()
 	ctx := context.Background()
 
 	fields := tasklib.ParseThreadUpdateFields(tuStatus, tuDesign, "")
 	if tuPR >= 0 {
 		fields["gh_pr_number"] = fmt.Sprintf("%d", tuPR)
 	}
-	if err := c.UpdateThread(ctx, tuID, fields); err != nil {
+	if err := s.Threads.UpdateThread(ctx, tuID, fields); err != nil {
 		die(err.Error())
 	}
 	fmt.Printf("Thread '%s' updated\n", tuID)
@@ -692,10 +604,10 @@ func cmdThreadUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func cmdThreadList(cmd *cobra.Command, args []string) error {
-	c := getClient()
+	s := getServices()
 	ctx := context.Background()
 
-	threads, err := c.ListThreads(ctx, "", "")
+	threads, err := s.Threads.ListThreads(ctx, "", "")
 	if err != nil {
 		die(err.Error())
 	}
@@ -752,10 +664,10 @@ func cmdThreadCleanup(cmd *cobra.Command, args []string) error {
 }
 
 func cmdGroupWait(cmd *cobra.Command, args []string) error {
-	c := getClient()
+	s := getServices()
 	ctx := context.Background()
 
-	result, err := c.GroupWait(ctx, gwThread, gwGroup, time.Duration(gwTimeout)*time.Second)
+	result, err := s.Tasks.GroupWait(ctx, gwThread, gwGroup, time.Duration(gwTimeout)*time.Second)
 	if err != nil {
 		die(err.Error())
 	}
@@ -775,7 +687,7 @@ func cmdGroupWait(cmd *cobra.Command, args []string) error {
 // ── task events ────────────────────────────────────────────────────────────
 
 func cmdEvents(cmd *cobra.Command, args []string) error {
-	c := getClient()
+	s := getServices()
 	ctx := context.Background()
 
 	limit := eventsLimit
@@ -793,7 +705,7 @@ func cmdEvents(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	events, err := c.GetSystemEvents(ctx, fetchLimit)
+	events, err := s.Events.GetSystemEvents(ctx, fetchLimit)
 	if err != nil {
 		die(err.Error())
 	}
@@ -829,10 +741,10 @@ func cmdEvents(cmd *cobra.Command, args []string) error {
 // ── task why ──────────────────────────────────────────────────────────────
 
 func cmdWhy(cmd *cobra.Command, args []string) error {
-	c := getClient()
+	s := getServices()
 	ctx := context.Background()
 
-	d, err := c.GetThreadDiagnostics(ctx, whyThread)
+	d, err := s.Threads.GetThreadDiagnostics(ctx, whyThread)
 	if err != nil {
 		die(err.Error())
 	}
