@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/noodle05/ai-agents/cmd/webui/internal/templates"
+	"github.com/noodle05/ai-agents/tasklib"
 )
 
 func TestIsHTMX(t *testing.T) {
@@ -91,7 +92,7 @@ func TestPage_RenderErrorReturns500(t *testing.T) {
 	}
 	// Render a full page through the API-level Page wrapper with buffer-then-write.
 	w := httptest.NewRecorder()
-	Page(w, r, "page-thread-list", map[string]interface{}{"Threads": []interface{}{}})
+	Page(w, r, "page-thread-list", &templates.ThreadListView{Threads: []*tasklib.Thread{}})
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}

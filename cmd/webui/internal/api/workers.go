@@ -20,7 +20,7 @@ func (wr *workersResource) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if IsHTMX(r) {
-		Partial(w, wr.renderer, "worker-cards", map[string]interface{}{"Workers": workers})
+		Partial(w, wr.renderer, "worker-cards", &templates.WorkerView{Workers: workers})
 	} else {
 		Respond(w, r, http.StatusOK, workers)
 	}

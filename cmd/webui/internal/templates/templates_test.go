@@ -3,9 +3,11 @@ package templates
 import (
 	"strings"
 	"testing"
+
+	"github.com/noodle05/ai-agents/tasklib"
 )
 
-func TestBaseData_AllocatesNewMap(t *testing.T) {
+func TestPrepareData_PreservesCallerMap(t *testing.T) {
 	r := &Renderer{
 		Theme:       "light",
 		HtmxSrc:     "/static/htmx.min.js",
@@ -18,14 +20,14 @@ func TestBaseData_AllocatesNewMap(t *testing.T) {
 
 	// Pass a map with caller-owned keys.
 	callerMap := map[string]interface{}{"custom": "value"}
-	result := r.baseData(callerMap)
+	result := r.prepareData(callerMap).(map[string]interface{})
 
 	// Caller's map should be unchanged.
 	if _, ok := callerMap["Theme"]; ok {
-		t.Error("baseData mutated the caller's map — Theme key leaked into original")
+		t.Error("prepareData mutated the caller's map — Theme key leaked into original")
 	}
 	if _, ok := callerMap["CSRFToken"]; ok {
-		t.Error("baseData mutated the caller's map — CSRFToken key leaked into original")
+		t.Error("prepareData mutated the caller's map — CSRFToken key leaked into original")
 	}
 
 	// Result should contain both the caller's keys and the base keys.
@@ -37,14 +39,14 @@ func TestBaseData_AllocatesNewMap(t *testing.T) {
 	}
 }
 
-func TestBaseData_NilInput(t *testing.T) {
+func TestPrepareData_NilInput(t *testing.T) {
 	r := &Renderer{
 		Theme:       "dark",
 		CSRFToken:   "csrf-nil-test",
 		WorkerTypes: []string{},
 	}
 
-	result := r.baseData(nil)
+	result := r.prepareData(nil).(map[string]interface{})
 
 	if result["Theme"] != "dark" {
 		t.Errorf("Theme = %v, want 'dark'", result["Theme"])
@@ -54,11 +56,11 @@ func TestBaseData_NilInput(t *testing.T) {
 	}
 }
 
-func TestBaseData_NonMapInput(t *testing.T) {
+func TestPrepareData_NonMapInput(t *testing.T) {
 	r := &Renderer{Theme: "light", CSRFToken: "tok", WorkerTypes: []string{}}
 
 	// Passing a non-map type should store it under the "Data" key.
-	result := r.baseData("not a map")
+	result := r.prepareData("not a map").(map[string]interface{})
 
 	if result["Theme"] != "light" {
 		t.Errorf("Theme = %v, want 'light'", result["Theme"])
@@ -68,7 +70,7 @@ func TestBaseData_NonMapInput(t *testing.T) {
 	}
 }
 
-func TestBaseData_SubmitResult(t *testing.T) {
+func TestPrepareData_SubmitResult(t *testing.T) {
 	r := &Renderer{Theme: "dark", CSRFToken: "tok", WorkerTypes: []string{}}
 
 	// The request-submitted template receives a *request.SubmitResult struct.
@@ -83,7 +85,7 @@ func TestBaseData_SubmitResult(t *testing.T) {
 		RequestID: "req-xyz-456",
 		Status:    "submitted",
 	}
-	result := r.baseData(sr)
+	result := r.prepareData(sr).(map[string]interface{})
 
 	if result["Data"] != sr {
 		t.Error("Data should be the SubmitResult pointer itself")
@@ -98,10 +100,10 @@ func TestBaseData_SubmitResult(t *testing.T) {
 	}
 }
 
-func TestBaseData_IncludesNowUnix(t *testing.T) {
+func TestPrepareData_IncludesNowUnix(t *testing.T) {
 	r := &Renderer{Theme: "light", CSRFToken: "tok", WorkerTypes: []string{}}
 
-	result := r.baseData(nil)
+	result := r.prepareData(nil).(map[string]interface{})
 
 	nowUnix, ok := result["NowUnix"].(int64)
 	if !ok {
@@ -112,7 +114,7 @@ func TestBaseData_IncludesNowUnix(t *testing.T) {
 	}
 }
 
-func TestBaseData_CopiesAllCallerKeys(t *testing.T) {
+func TestPrepareData_CopiesAllCallerKeys(t *testing.T) {
 	r := &Renderer{
 		Theme:       "light",
 		CSRFToken:   "tok",
@@ -124,7 +126,7 @@ func TestBaseData_CopiesAllCallerKeys(t *testing.T) {
 		"Running": true,
 		"Task":    nil,
 	}
-	result := r.baseData(callerMap)
+	result := r.prepareData(callerMap).(map[string]interface{})
 
 	for k, v := range callerMap {
 		if result[k] != v {
@@ -135,7 +137,7 @@ func TestBaseData_CopiesAllCallerKeys(t *testing.T) {
 	// Modifying result should not affect caller.
 	result["Thread"] = "modified"
 	if callerMap["Thread"] != "thread-value" {
-		t.Error("modifying baseData result affected caller's map")
+		t.Error("modifying prepareData result affected caller's map")
 	}
 }
 
@@ -168,7 +170,7 @@ func TestNew_LoadsTemplates(t *testing.T) {
 
 	// Verify that page and partial templates are parsed and executable.
 	var buf mockWriter
-	if err := r.Page(&buf, "page-dashboard", nil); err != nil {
+	if err := r.Page(&buf, "page-dashboard", &DashboardView{}); err != nil {
 		t.Fatalf("Page returned error: %v", err)
 	}
 	output := string(buf.data)
@@ -203,39 +205,39 @@ func TestPage_RendersCorrectTemplate(t *testing.T) {
 	tests := []struct {
 		name     string
 		template string
-		data     map[string]interface{}
+		data     ViewModel
 		contains string
 		excludes string
 	}{
 		{
 			name:     "dashboard",
 			template: "page-dashboard",
-			data:     nil,
+			data:     &DashboardView{},
 			contains: "Recent Tasks",
 			excludes: "Thread not found",
 		},
 		{
 			name:     "thread list",
 			template: "page-thread-list",
-			data:     map[string]interface{}{"Threads": []interface{}{}},
+			data:     &ThreadListView{Threads: []*tasklib.Thread{}},
 			contains: "Threads",
 		},
 		{
 			name:     "thread detail not found",
 			template: "page-thread-detail",
-			data:     map[string]interface{}{"Thread": nil},
+			data:     &ThreadDetailView{},
 			contains: "Thread not found",
 		},
 		{
 			name:     "task list",
 			template: "page-task-list",
-			data:     nil,
+			data:     &TaskListView{},
 			contains: "Tasks",
 		},
 		{
 			name:     "task detail not found",
 			template: "page-task-detail",
-			data:     map[string]interface{}{"Task": nil},
+			data:     &TaskDetailView{},
 			contains: "Task not found",
 		},
 	}
@@ -734,7 +736,7 @@ func TestTimeElement_BasePage_IncludesLocalizeTimestamps(t *testing.T) {
 	}
 
 	var buf mockWriter
-	if err := r.Page(&buf, "page-dashboard", nil); err != nil {
+	if err := r.Page(&buf, "page-dashboard", &DashboardView{}); err != nil {
 		t.Fatalf("Page: %v", err)
 	}
 	output := string(buf.data)
@@ -1004,4 +1006,100 @@ func TestStatusBadgeReviewingWarningNotInfo(t *testing.T) {
 	if strings.Contains(string(got), "badge-info") {
 		t.Errorf("statusBadge(reviewing) should not contain badge-info, got: %s", got)
 	}
+}
+
+// ── prepareData ViewModel tests ────────────────────────────────────────────
+
+func TestPrepareData_FillsViewModel(t *testing.T) {
+	r := &Renderer{
+		Theme:       "dark",
+		HtmxSrc:     "/static/htmx.js",
+		PollDash:    "10",
+		PollThread:  "5",
+		PollWorkers: "8",
+		WorkerTypes: []string{"claude", "codex"},
+		CSRFToken:   "test-token",
+	}
+
+	vm := &DashboardView{}
+	r.prepareData(vm)
+
+	bv := vm.baseView()
+	if bv.Theme != "dark" {
+		t.Errorf("Theme = %q, want \"dark\"", bv.Theme)
+	}
+	if bv.HtmxSrc != "/static/htmx.js" {
+		t.Errorf("HtmxSrc = %q, want \"/static/htmx.js\"", bv.HtmxSrc)
+	}
+	if bv.PollDash != "10" {
+		t.Errorf("PollDash = %q, want \"10\"", bv.PollDash)
+	}
+	if bv.PollThread != "5" {
+		t.Errorf("PollThread = %q, want \"5\"", bv.PollThread)
+	}
+	if bv.PollWorkers != "8" {
+		t.Errorf("PollWorkers = %q, want \"8\"", bv.PollWorkers)
+	}
+	if len(bv.WorkerTypes) != 2 || bv.WorkerTypes[0] != "claude" {
+		t.Errorf("WorkerTypes = %v, want [claude codex]", bv.WorkerTypes)
+	}
+	if bv.CSRFToken != "test-token" {
+		t.Errorf("CSRFToken = %q, want \"test-token\"", bv.CSRFToken)
+	}
+	if bv.NowUnix <= 0 {
+		t.Errorf("NowUnix = %d, want positive timestamp", bv.NowUnix)
+	}
+}
+
+func TestPage_TypoInFieldName(t *testing.T) {
+	r, err := New()
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	var buf mockWriter
+	// page-thread-list references {{.Threads}}, which does not exist on
+	// DashboardView. This should return an execution-time error.
+	err = r.Page(&buf, "page-thread-list", &DashboardView{})
+	if err == nil {
+		t.Error("Page should error when template references a field that doesn't exist on the struct")
+	}
+}
+
+func TestPrepareData_NoAllocForViewModel(t *testing.T) {
+	r := &Renderer{
+		Theme:       "dark",
+		CSRFToken:   "tok",
+		WorkerTypes: []string{"claude"},
+	}
+	vm := &DashboardView{}
+	n := testing.AllocsPerRun(100, func() {
+		r.prepareData(vm)
+	})
+	if n > 0 {
+		t.Errorf("prepareData(ViewModel) allocated %.0f times, want 0", n)
+	}
+}
+
+func TestPrepareData_NilViewModel(t *testing.T) {
+	r := &Renderer{
+		Theme:       "dark",
+		CSRFToken:   "tok",
+		WorkerTypes: []string{},
+	}
+	// Typed nil — fillBaseView returns early, no panic.
+	var vm ViewModel = (*DashboardView)(nil)
+	result := r.prepareData(vm)
+	// The nil ViewModel passes through unchanged (fillBaseView guards but
+	// prepareData's ViewModel path still returns the vm as-is).
+	if result != vm {
+		t.Errorf("expected nil ViewModel to pass through, got %v", result)
+	}
+}
+
+func TestFillBaseView_NilViewModel(t *testing.T) {
+	r := &Renderer{Theme: "dark", CSRFToken: "tok", WorkerTypes: []string{}}
+	var vm ViewModel = (*DashboardView)(nil)
+	// Should not panic.
+	r.fillBaseView(vm)
 }
