@@ -124,19 +124,12 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build token rows for the token usage table
-	type tokenRow struct {
-		Agent     string
-		Input     string
-		Output    string
-		Cache     string
-		Reasoning string
-	}
-	var tokenRows []tokenRow
+		var tokenRows []templates.TokenRow
 
 	// Master agent tokens
 	masterTokens, _ := tr.tokens.GetMasterTokenStats(r.Context(), threadID)
 	if masterTokens.HasAny() {
-		tokenRows = append(tokenRows, tokenRow{
+		tokenRows = append(tokenRows, templates.TokenRow{
 			Agent:     "master",
 			Input:     tasklib.FormatTokenCount(masterTokens.InputTokens),
 			Output:    tasklib.FormatTokenCount(masterTokens.OutputTokens),
@@ -169,7 +162,7 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 		for _, wt := range []string{"claude", "codex", "copilot", "opencode"} {
 			at := agentMap[wt]
 			if at.input > 0 || at.output > 0 || at.cacheRead > 0 {
-				tokenRows = append(tokenRows, tokenRow{
+				tokenRows = append(tokenRows, templates.TokenRow{
 					Agent:     wt,
 					Input:     tasklib.FormatTokenCount(at.input),
 					Output:    tasklib.FormatTokenCount(at.output),

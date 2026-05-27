@@ -1065,3 +1065,41 @@ func TestPage_TypoInFieldName(t *testing.T) {
 		t.Error("Page should error when template references a field that doesn't exist on the struct")
 	}
 }
+
+func TestPrepareData_NoAllocForViewModel(t *testing.T) {
+	r := &Renderer{
+		Theme:       "dark",
+		CSRFToken:   "tok",
+		WorkerTypes: []string{"claude"},
+	}
+	vm := &DashboardView{}
+	n := testing.AllocsPerRun(100, func() {
+		r.prepareData(vm)
+	})
+	if n > 0 {
+		t.Errorf("prepareData(ViewModel) allocated %.0f times, want 0", n)
+	}
+}
+
+func TestPrepareData_NilViewModel(t *testing.T) {
+	r := &Renderer{
+		Theme:       "dark",
+		CSRFToken:   "tok",
+		WorkerTypes: []string{},
+	}
+	// Typed nil — fillBaseView returns early, no panic.
+	var vm ViewModel = (*DashboardView)(nil)
+	result := r.prepareData(vm)
+	// The nil ViewModel passes through unchanged (fillBaseView guards but
+	// prepareData's ViewModel path still returns the vm as-is).
+	if result != vm {
+		t.Errorf("expected nil ViewModel to pass through, got %v", result)
+	}
+}
+
+func TestFillBaseView_NilViewModel(t *testing.T) {
+	r := &Renderer{Theme: "dark", CSRFToken: "tok", WorkerTypes: []string{}}
+	var vm ViewModel = (*DashboardView)(nil)
+	// Should not panic.
+	r.fillBaseView(vm)
+}

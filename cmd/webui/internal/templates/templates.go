@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"path/filepath"
+	"reflect"
 	"time"
 
 	"github.com/noodle05/ai-agents/cmd/webui/internal/env"
@@ -92,6 +93,7 @@ func New() (*Renderer, error) {
 // promotes its fields to the top level (e.g. {{.Theme}} works alongside
 // {{.Threads}}).
 type BaseView struct {
+	// Renderer-config fields — copied from Renderer at render time.
 	Theme       string
 	HtmxSrc     string
 	PollDash    string
@@ -99,7 +101,11 @@ type BaseView struct {
 	PollWorkers string
 	WorkerTypes []string
 	CSRFToken   string
-	NowUnix     int64
+
+	// Per-request field — set by fillBaseView for each render.
+	NowUnix int64
+
+	// Page-output field — set by Page() after rendering the content template.
 	PageContent template.HTML
 }
 
@@ -186,26 +192,36 @@ func (v *TaskDetailView) baseView() *BaseView { return &v.BaseView }
 // WorkerView is the view model for the worker cards partial.
 type WorkerView struct {
 	BaseView
-	Workers map[string]*tasklib.WorkerStats
+	Workers tasklib.WorkerStats
 }
 
 func (v *WorkerView) baseView() *BaseView { return &v.BaseView }
 
+// fillBaseView populates the embedded BaseView fields from the Renderer.
+// Guard: if vm is a typed nil (e.g. var vm ViewModel = (*DashboardView)(nil)),
+// the call is silently ignored — no fields are populated and no panic occurs.
+func (r *Renderer) fillBaseView(vm ViewModel) {
+	if reflect.ValueOf(vm).IsNil() {
+		return
+	}
+	bv := vm.baseView()
+	bv.Theme = r.Theme
+	bv.HtmxSrc = r.HtmxSrc
+	bv.PollDash = r.PollDash
+	bv.PollThread = r.PollThread
+	bv.PollWorkers = r.PollWorkers
+	bv.WorkerTypes = r.WorkerTypes
+	bv.CSRFToken = r.CSRFToken
+	bv.NowUnix = time.Now().Unix()
+}
+
 // prepareData returns template-ready data.
-// For ViewModel: populates BaseView fields in-place, returns the vm (zero allocs).
+// For ViewModel: delegates to fillBaseView (mutates in-place, zero allocs).
 // For map[string]interface{}: creates merged map with base keys (one alloc).
 // For nil/other: creates base-only map (one alloc).
 func (r *Renderer) prepareData(data interface{}) interface{} {
 	if vm, ok := data.(ViewModel); ok {
-		bv := vm.baseView()
-		bv.Theme = r.Theme
-		bv.HtmxSrc = r.HtmxSrc
-		bv.PollDash = r.PollDash
-		bv.PollThread = r.PollThread
-		bv.PollWorkers = r.PollWorkers
-		bv.WorkerTypes = r.WorkerTypes
-		bv.CSRFToken = r.CSRFToken
-		bv.NowUnix = time.Now().Unix()
+		r.fillBaseView(vm)
 		return vm
 	}
 	m := make(map[string]interface{})
@@ -230,7 +246,7 @@ func (r *Renderer) prepareData(data interface{}) interface{} {
 // Page renders a full HTML page. The content template is rendered first and
 // passed as PageContent to base.html, which injects it via {{.PageContent}}.
 func (r *Renderer) Page(w io.Writer, contentTemplate string, vm ViewModel) error {
-	r.prepareData(vm)
+	r.fillBaseView(vm)
 	var content bytes.Buffer
 	if err := r.tmpl.ExecuteTemplate(&content, contentTemplate, vm); err != nil {
 		return err
