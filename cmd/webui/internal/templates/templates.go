@@ -157,6 +157,7 @@ type ThreadDetailView struct {
 	Running   bool
 	Complete  bool
 	TokenRows []TokenRow
+	Tasks     []*tasklib.Task
 	Children  []*tasklib.Thread
 }
 

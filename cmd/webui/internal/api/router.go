@@ -203,10 +203,14 @@ func (pr *pageResource) threadDetail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Fetch tasks for this thread
+	tasks, _ := pr.tasks.ListTasks(r.Context(), "", "", threadID, 500, 0, "enqueued_at", "desc")
+
 	Page(w, pr.renderer, "page-thread-detail", &templates.ThreadDetailView{
 		Thread:   thread,
 		Running:  running,
 		Complete: complete,
+		Tasks:    tasks,
 		Children: children,
 	})
 }
