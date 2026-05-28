@@ -163,9 +163,9 @@ func StatsWorkerKey(workerType string) string { return "stats:total_tokens:" + w
 
 // PersistTokenStats writes token counts to persistent global counters and
 // per-task keys via an active Redis pipeline. The caller must Exec the pipeline.
-func PersistTokenStats(ctx context.Context, pipe redis.Pipeliner, taskID, workerType string, stats TokenStats) {
+func PersistTokenStats(ctx context.Context, pipe redis.Pipeliner, taskID, agentType string, stats TokenStats) {
 	totalKey := StatsTotalKey()
-	workerKey := StatsWorkerKey(workerType)
+	workerKey := StatsWorkerKey(agentType)
 
 	pipe.HIncrBy(ctx, totalKey, "input_tokens", stats.InputTokens)
 	pipe.HIncrBy(ctx, totalKey, "output_tokens", stats.OutputTokens)

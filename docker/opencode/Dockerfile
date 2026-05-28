@@ -73,4 +73,4 @@ COPY --from=skills-download --chown=agent:agent /tmp/skills-out /home/agent/.con
 COPY --chown=agent:agent docs/agents/ /home/agent/.config/opencode/agents-config/
 
 USER agent
-ENTRYPOINT ["/usr/local/bin/worker-go", "opencode"]
+ENTRYPOINT ["/usr/local/bin/worker-go"]

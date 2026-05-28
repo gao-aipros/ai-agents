@@ -620,13 +620,13 @@ func TestActiveTasks(t *testing.T) {
 func TestWorkerHeartbeat(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	err := c.UpdateWorkerHeartbeat(ctx(), "claude", "host1", HeartbeatData{Hostname: "host1"})
+	err := c.UpdateWorkerHeartbeat(ctx(), "claude", HeartbeatData{Hostname: "host1"})
 	if err != nil {
 		t.Fatalf("UpdateWorkerHeartbeat failed: %v", err)
 	}
 
 	// Verify key exists with TTL
-	key := HeartbeatKey("claude", "host1")
+	key := HeartbeatKey("claude")
 	val, _ := c.rdb.Get(ctx(), key).Result()
 	if val == "" {
 		t.Error("expected non-empty heartbeat value")
@@ -643,27 +643,27 @@ func TestWorkerHeartbeat(t *testing.T) {
 func TestGetWorkerStats(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	// Set heartbeats
-	c.UpdateWorkerHeartbeat(ctx(), "claude", "host1", HeartbeatData{Hostname: "host1"})
-	c.UpdateWorkerHeartbeat(ctx(), "claude", "host2", HeartbeatData{Hostname: "host2"})
-	c.UpdateWorkerHeartbeat(ctx(), "copilot", "host3", HeartbeatData{Hostname: "host3"})
+	// Set heartbeats — each worker name is a separate identity
+	c.UpdateWorkerHeartbeat(ctx(), "claude-1", HeartbeatData{Hostname: "host1"})
+	c.UpdateWorkerHeartbeat(ctx(), "claude-2", HeartbeatData{Hostname: "host2"})
+	c.UpdateWorkerHeartbeat(ctx(), "copilot-1", HeartbeatData{Hostname: "host3"})
 
 	stats, err := c.GetWorkerStats(ctx())
 	if err != nil {
 		t.Fatalf("GetWorkerStats failed: %v", err)
 	}
 
-	if stats["claude"].Instances != 2 {
-		t.Errorf("expected 2 claude instances, got %d", stats["claude"].Instances)
+	if stats["claude-1"].Instances != 1 {
+		t.Errorf("expected 1 claude-1 instance, got %d", stats["claude-1"].Instances)
 	}
-	if stats["claude"].Online != 2 {
-		t.Errorf("expected 2 claude online, got %d", stats["claude"].Online)
+	if stats["claude-1"].Online != 1 {
+		t.Errorf("expected 1 claude-1 online, got %d", stats["claude-1"].Online)
 	}
-	if stats["copilot"].Instances != 1 {
-		t.Errorf("expected 1 copilot instance, got %d", stats["copilot"].Instances)
+	if stats["claude-2"].Instances != 1 {
+		t.Errorf("expected 1 claude-2 instance, got %d", stats["claude-2"].Instances)
 	}
-	if stats["opencode"].Instances != 0 {
-		t.Errorf("expected 0 opencode instances, got %d", stats["opencode"].Instances)
+	if stats["copilot-1"].Instances != 1 {
+		t.Errorf("expected 1 copilot-1 instance, got %d", stats["copilot-1"].Instances)
 	}
 }
 
@@ -1299,8 +1299,8 @@ func TestGetWorkerStatsThreadCount(t *testing.T) {
 	c, _ := setupTestClient(t)
 
 	// Set up heartbeats for two worker types
-	c.UpdateWorkerHeartbeat(ctx(), "claude", "host1", HeartbeatData{Hostname: "host1"})
-	c.UpdateWorkerHeartbeat(ctx(), "codex", "host2", HeartbeatData{Hostname: "host2"})
+	c.UpdateWorkerHeartbeat(ctx(), "claude", HeartbeatData{Hostname: "host1"})
+	c.UpdateWorkerHeartbeat(ctx(), "codex", HeartbeatData{Hostname: "host2"})
 
 	// Create tasks with thread associations in active_tasks
 	c.SetActiveTask(ctx(), "t1", TaskInfo{Worker: "claude", ThreadID: "thr1", Status: "running"})
@@ -1313,25 +1313,33 @@ func TestGetWorkerStatsThreadCount(t *testing.T) {
 	}
 
 	// claude has tasks on thr1 and thr2 = 2 threads
-	if stats["claude"].TotalThreads != 2 {
-		t.Errorf("expected 2 threads for claude, got %d", stats["claude"].TotalThreads)
+	if s, ok := stats["claude"]; !ok || s.TotalThreads != 2 {
+		if ok {
+			t.Errorf("expected 2 threads for claude, got %d", s.TotalThreads)
+		} else {
+			t.Error("claude not found in stats")
+		}
 	}
 
 	// codex has tasks on thr1 = 1 thread
-	if stats["codex"].TotalThreads != 1 {
-		t.Errorf("expected 1 thread for codex, got %d", stats["codex"].TotalThreads)
+	if s, ok := stats["codex"]; !ok || s.TotalThreads != 1 {
+		if ok {
+			t.Errorf("expected 1 thread for codex, got %d", s.TotalThreads)
+		} else {
+			t.Error("codex not found in stats")
+		}
 	}
 
-	// copilot has no tasks
-	if stats["copilot"].TotalThreads != 0 {
-		t.Errorf("expected 0 threads for copilot, got %d", stats["copilot"].TotalThreads)
+	// copilot has no heartbeat → not in stats (dynamic discovery)
+	if _, ok := stats["copilot"]; ok {
+		t.Error("copilot should not be in stats (no heartbeat)")
 	}
 }
 
 func TestGetWorkerStatsThreadCountFromTaskKeys(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.UpdateWorkerHeartbeat(ctx(), "claude", "host1", HeartbeatData{Hostname: "host1"})
+	c.UpdateWorkerHeartbeat(ctx(), "claude", HeartbeatData{Hostname: "host1"})
 
 	// Set task keys directly (non-active tasks that still have thread info in Redis)
 	c.rdb.Set(ctx(), TaskKey("old-task", "status"), "done", 0)
@@ -1344,8 +1352,12 @@ func TestGetWorkerStatsThreadCountFromTaskKeys(t *testing.T) {
 	}
 
 	// claude should have 1 thread from the task key scan
-	if stats["claude"].TotalThreads != 1 {
-		t.Errorf("expected 1 thread for claude (from task keys), got %d", stats["claude"].TotalThreads)
+	if s, ok := stats["claude"]; !ok || s.TotalThreads != 1 {
+		if ok {
+			t.Errorf("expected 1 thread for claude (from task keys), got %d", s.TotalThreads)
+		} else {
+			t.Error("claude not found in stats")
+		}
 	}
 }
 
@@ -1490,8 +1502,8 @@ func TestListTasksSortByEnqueuedAt(t *testing.T) {
 func TestGetWorkerStatsSharedThreadCount(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.UpdateWorkerHeartbeat(ctx(), "claude", "host1", HeartbeatData{Hostname: "host1"})
-	c.UpdateWorkerHeartbeat(ctx(), "codex", "host2", HeartbeatData{Hostname: "host2"})
+	c.UpdateWorkerHeartbeat(ctx(), "claude", HeartbeatData{Hostname: "host1"})
+	c.UpdateWorkerHeartbeat(ctx(), "codex", HeartbeatData{Hostname: "host2"})
 
 	// Set task keys directly (not in active_tasks) — second scan path.
 	// Both tasks share thread "shared-thr" but have different workers.

@@ -112,44 +112,46 @@ func (m *Monitor) checkLostHeartbeats(ctx context.Context) {
 	m.lastHeartbeatCheck = time.Now()
 	now := m.lastHeartbeatCheck
 
-	for _, workerType := range WorkerTypes {
-		keys, err := m.sysOps.ScanKeys(ctx, "worker:"+workerType+":*:heartbeat", 100)
+	keys, err := m.sysOps.ScanKeys(ctx, "worker:*:heartbeat", 100)
+	if err != nil {
+		return
+	}
+	for _, key := range keys {
+		workerName := parseHeartbeatWorkerName(key)
+		if workerName == "" {
+			continue
+		}
+		val, err := m.sysOps.GetKey(ctx, key)
 		if err != nil {
 			continue
 		}
-		for _, key := range keys {
-			val, err := m.sysOps.GetKey(ctx, key)
-			if err != nil {
-				continue
-			}
-			var hb HeartbeatData
-			if err := json.Unmarshal([]byte(val), &hb); err != nil {
-				continue
-			}
-			if hb.LastHeartbeatAt == "" {
-				continue
-			}
-			lastHB, err := time.Parse("2006-01-02T15:04:05Z", hb.LastHeartbeatAt)
-			if err != nil {
-				continue
-			}
-			if now.Sub(lastHB) < m.cfg.WorkerLostThreshold {
-				continue
-			}
-
-			keyStr := workerType + ":" + hb.Hostname
-			if prev, ok := m.lastOfflineAlert[keyStr]; ok && now.Sub(prev) < m.cooldown {
-				continue
-			}
-			m.lastOfflineAlert[keyStr] = now
-
-			slog.Warn("worker heartbeat lost", "worker_type", workerType, "hostname", hb.Hostname, "last_heartbeat", hb.LastHeartbeatAt)
-			m.cfg.SendAlert(ctx, AlertWorkerLost, map[string]any{
-				"worker_type":       workerType,
-				"hostname":          hb.Hostname,
-				"last_heartbeat_at": hb.LastHeartbeatAt,
-				"since_seconds":     int64(now.Sub(lastHB).Seconds()),
-			})
+		var hb HeartbeatData
+		if err := json.Unmarshal([]byte(val), &hb); err != nil {
+			continue
 		}
+		if hb.LastHeartbeatAt == "" {
+			continue
+		}
+		lastHB, err := time.Parse("2006-01-02T15:04:05Z", hb.LastHeartbeatAt)
+		if err != nil {
+			continue
+		}
+		if now.Sub(lastHB) < m.cfg.WorkerLostThreshold {
+			continue
+		}
+
+		keyStr := workerName + ":" + hb.Hostname
+		if prev, ok := m.lastOfflineAlert[keyStr]; ok && now.Sub(prev) < m.cooldown {
+			continue
+		}
+		m.lastOfflineAlert[keyStr] = now
+
+		slog.Warn("worker heartbeat lost", "worker_name", workerName, "hostname", hb.Hostname, "last_heartbeat", hb.LastHeartbeatAt)
+		m.cfg.SendAlert(ctx, AlertWorkerLost, map[string]any{
+			"worker_name":       workerName,
+			"hostname":          hb.Hostname,
+			"last_heartbeat_at": hb.LastHeartbeatAt,
+			"since_seconds":     int64(now.Sub(lastHB).Seconds()),
+		})
 	}
 }

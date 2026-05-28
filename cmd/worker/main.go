@@ -50,13 +50,11 @@ var execCommand = func(ctx context.Context, args []string, dir string) (stdout, 
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		die("usage: worker <claude|copilot|opencode|codex>")
+	hostname, _ := os.Hostname()
+	if hostname == "" {
+		hostname = "worker"
 	}
-	workerType := os.Args[1]
-	if !validWorker(workerType) {
-		die("invalid worker type: " + workerType)
-	}
+	workerName := envDefault("WORKER_NAME", hostname)
 
 	logLevel := new(slog.LevelVar)
 	switch strings.ToLower(os.Getenv("LOG_LEVEL")) {
@@ -82,7 +80,7 @@ func main() {
 		Level:       logLevel,
 		ReplaceAttr: replaceAttr,
 	})
-	log := slog.New(handler).With("worker", workerType)
+	log := slog.New(handler).With("worker", workerName)
 
 	redisHost := envDefault("REDIS_HOST", "redis")
 	redisPort := envIntDefault("REDIS_PORT", 6379)
@@ -97,15 +95,10 @@ func main() {
 	})
 	client := tasklib.NewServices(rdb)
 
-	hostname, _ := os.Hostname()
-	if hostname == "" {
-		hostname = "worker"
-	}
-
 	alertCfg := tasklib.LoadAlertConfig()
 
-	queueKey := tasklib.QueueKey(workerType)
-	processingKey := tasklib.ProcessingKey(workerType)
+	queueKey := tasklib.QueueKey(workerName)
+	processingKey := tasklib.ProcessingKey(workerName)
 
 	var running atomic.Bool
 	running.Store(true)
@@ -126,18 +119,20 @@ func main() {
 			// Compute queue depth
 			qd, _ := rdb.LLen(context.Background(), queueKey).Result()
 			hb := tasklib.HeartbeatData{
+				WorkerName:     workerName,
+				AgentType:      agentType,
 				Hostname:       hostname,
 				TasksProcessed: int(tasksProcessed.Load()),
 				QueueDepth:     int(qd),
 				UptimeSeconds:  int64(time.Since(startTime).Seconds()),
 			}
-			if err := client.Workers.UpdateWorkerHeartbeat(context.Background(), workerType, hostname, hb); err != nil {
+			if err := client.Workers.UpdateWorkerHeartbeat(context.Background(), workerName, hb); err != nil {
 				log.Warn("heartbeat failed", "error", err.Error())
 			} else if !heartbeatOnlineSent {
 				// Best-effort event: worker_online on first successful heartbeat
 				client.Events.PushSystemEvent(context.Background(), &tasklib.Event{
 					Type:           tasklib.EventWorkerOnline,
-					WorkerType:     workerType,
+					WorkerType:     workerName,
 					WorkerHostname: hostname,
 				})
 				heartbeatOnlineSent = true
@@ -179,7 +174,7 @@ func main() {
 			continue
 		}
 
-		processOneTask(log, client.Threads, client.History, client.Events, rdb, result, workerType, agentType, agentCmd,
+		processOneTask(log, client.Threads, client.History, client.Events, rdb, result, workerName, agentType, agentCmd,
 			taskTimeout, historyWindow, workspaceDir, processingKey, hostname, &tasksProcessed, alertCfg)
 	}
 
@@ -188,7 +183,7 @@ func main() {
 	// Best-effort event: worker_offline on shutdown
 	client.Events.PushSystemEvent(context.Background(), &tasklib.Event{
 		Type:           tasklib.EventWorkerOffline,
-		WorkerType:     workerType,
+		WorkerType:     workerName,
 		WorkerHostname: hostname,
 	})
 }
@@ -201,7 +196,7 @@ func processOneTask(
 	history tasklib.ThreadHistory,
 	events tasklib.EventBus,
 	rdb *redis.Client,
-	taskJSON, workerType, agentType, agentCmd string,
+	taskJSON, workerName, agentType, agentCmd string,
 	defaultTimeout, defaultHistoryWindow int,
 	workspaceDir, processingKey, hostname string,
 	tasksProcessed *atomic.Int64,
@@ -243,7 +238,7 @@ func processOneTask(
 	events.PushThreadEvent(context.Background(), threadID, &tasklib.Event{
 		Type:           tasklib.EventTaskStarted,
 		TaskID:         taskID,
-		WorkerType:     workerType,
+		WorkerType:     agentType,
 		WorkerHostname: hostname,
 		CorrelationID:  correlationID,
 	})
@@ -251,7 +246,7 @@ func processOneTask(
 	// Register in active_tasks
 	threads.SetActiveTask(context.Background(), taskID, tasklib.TaskInfo{
 		Status:     "running",
-		Worker:     workerType,
+		Worker:     workerName,
 		ThreadID:   threadID,
 		StartedAt:  startedAt,
 		WorkerHost: hostname,
@@ -261,7 +256,7 @@ func processOneTask(
 	// Initialize per-task keys (started_at SETNX preserves first dequeue time across retries)
 	pipe := rdb.Pipeline()
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "status"), "running", tasklib.TTLTask)
-	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "worker"), workerType, tasklib.TTLTask)
+	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "worker"), workerName, tasklib.TTLTask)
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "thread_id"), threadID, tasklib.TTLTask)
 	pipe.Set(context.Background(), tasklib.TaskKey(taskID, "description"), instruction, tasklib.TTLTask)
 	pipe.SetNX(context.Background(), tasklib.TaskKey(taskID, "started_at"), startedAt, 0)
@@ -289,7 +284,7 @@ func processOneTask(
 	}
 	var msgs []tasklib.Message
 	if groupLabel != "" {
-		msgs, _ = history.GetThreadHistoryTailForWorker(context.Background(), threadID, window, workerType)
+		msgs, _ = history.GetThreadHistoryTailForWorker(context.Background(), threadID, window, workerName)
 	} else {
 		msgs, _ = history.GetThreadHistoryTail(context.Background(), threadID, window)
 	}
@@ -353,7 +348,7 @@ func processOneTask(
 		events.PushThreadEvent(context.Background(), threadID, &tasklib.Event{
 			Type:           tasklib.EventTaskCancelled,
 			TaskID:         taskID,
-			WorkerType:     workerType,
+			WorkerType:     agentType,
 			WorkerHostname: hostname,
 			CorrelationID:  correlationID,
 			Detail: tasklib.TaskCancelledDetail{
@@ -363,7 +358,7 @@ func processOneTask(
 		})
 
 		cancelMsg, _ := json.Marshal(map[string]interface{}{
-			"role":      workerType,
+			"role":      workerName,
 			"content":   fmt.Sprintf("[cancelled] Task %s was cancelled by master", taskID),
 			"timestamp": cancelledAt,
 			"metadata":  map[string]string{"task_id": taskID},
@@ -481,7 +476,7 @@ func processOneTask(
 	pipe.Expire(context.Background(), "stats:task_total", tasklib.TTLStats)
 
 	// Persist token stats to global counters and per-task keys
-	tasklib.PersistTokenStats(context.Background(), pipe, taskID, workerType, tokenStats)
+	tasklib.PersistTokenStats(context.Background(), pipe, taskID, agentType, tokenStats)
 
 	pipe.Exec(context.Background())
 
@@ -492,7 +487,7 @@ func processOneTask(
 		events.PushThreadEvent(context.Background(), threadID, &tasklib.Event{
 			Type:           tasklib.EventTaskCompleted,
 			TaskID:         taskID,
-			WorkerType:     workerType,
+			WorkerType:     agentType,
 			WorkerHostname: hostname,
 			CorrelationID:  correlationID,
 			Detail:         tasklib.TaskCompletedDetail{ExitCode: exitCode, DurationMs: durationMs, InputTokens: tokenStats.InputTokens, OutputTokens: tokenStats.OutputTokens, CacheReadTokens: tokenStats.CacheReadTokens, CacheWriteTokens: tokenStats.CacheWriteTokens, ReasoningTokens: tokenStats.ReasoningTokens},
@@ -505,7 +500,7 @@ func processOneTask(
 		events.PushThreadEvent(context.Background(), threadID, &tasklib.Event{
 			Type:           tasklib.EventTaskFailed,
 			TaskID:         taskID,
-			WorkerType:     workerType,
+			WorkerType:     agentType,
 			WorkerHostname: hostname,
 			CorrelationID:  correlationID,
 			Detail:         tasklib.TaskFailedDetail{ExitCode: exitCode, ErrorMessage: cappedStderr},
@@ -514,7 +509,7 @@ func processOneTask(
 			alertCfg.SendAlert(context.Background(), tasklib.AlertTaskFailed, map[string]any{
 				"task_id":         taskID,
 				"thread_id":       threadID,
-				"worker":          workerType,
+				"worker":          workerName,
 				"worker_hostname": hostname,
 				"exit_code":       exitCode,
 				"error_message":   cappedStderr,
@@ -528,7 +523,7 @@ func processOneTask(
 		cappedResult = cappedResult[:10000]
 	}
 	resultMsg, _ := json.Marshal(map[string]interface{}{
-		"role":      workerType,
+		"role":      workerName,
 		"content":   cappedResult,
 		"timestamp": completedAt,
 		"metadata":  map[string]string{"task_id": taskID},
@@ -538,7 +533,7 @@ func processOneTask(
 
 	// Update thread state (metadata only — never status)
 	rdb.HSet(context.Background(), tasklib.ThreadStateKey(threadID), map[string]interface{}{
-		"last_updated_by": workerType,
+		"last_updated_by": workerName,
 		"last_task_id":    taskID,
 		"updated_at":      completedAt,
 	})
@@ -552,15 +547,6 @@ func processOneTask(
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-
-func validWorker(w string) bool {
-	for _, v := range tasklib.WorkerTypes {
-		if w == v {
-			return true
-		}
-	}
-	return false
-}
 
 func die(msg string) {
 	fmt.Fprintf(os.Stderr, "ERROR: %s\n", msg)

@@ -19,8 +19,10 @@ type WorkerInfo struct {
 // WorkerStats is the full per-worker-type stats map.
 type WorkerStats map[string]*WorkerInfo
 
-// WorkerInstance represents a single worker instance (hostname-level).
+// WorkerInstance represents a single worker instance.
 type WorkerInstance struct {
+	WorkerName           string `json:"worker_name"`
+	AgentType            string `json:"agent_type"`
 	Hostname             string `json:"hostname"`
 	TasksProcessed       int    `json:"tasks_processed"`
 	QueueDepth           int    `json:"queue_depth"`
@@ -31,6 +33,8 @@ type WorkerInstance struct {
 
 // HeartbeatData is the JSON payload written into heartbeat keys.
 type HeartbeatData struct {
+	WorkerName      string `json:"worker_name"`
+	AgentType       string `json:"agent_type"`
 	Hostname        string `json:"hostname"`
 	TasksProcessed  int    `json:"tasks_processed"`
 	QueueDepth      int    `json:"queue_depth"`
@@ -38,46 +42,42 @@ type HeartbeatData struct {
 	LastHeartbeatAt string `json:"last_heartbeat_at"`
 }
 
-// GetWorkerStats retrieves stats for all worker types via SCAN on heartbeat keys.
+// GetWorkerStats retrieves stats for all online workers via SCAN on heartbeat keys.
 // Reports online count based on heartbeat key existence (TTL-based liveness).
 func (c *Client) GetWorkerStats(ctx context.Context) (WorkerStats, error) {
 	stats := make(WorkerStats)
-	for _, wt := range WorkerTypes {
-		stats[wt] = &WorkerInfo{}
-	}
 
-	// Scan for heartbeat keys: worker:<type>:<hostname>:heartbeat
+	// Scan for heartbeat keys: worker:<name>:heartbeat
 	var cursor uint64
 	for {
-		keys, nextCursor, err := c.rdb.Scan(ctx, cursor, "worker:*:*:heartbeat", 100).Result()
+		keys, nextCursor, err := c.rdb.Scan(ctx, cursor, "worker:*:heartbeat", 100).Result()
 		if err != nil {
 			return nil, fmt.Errorf("scan workers: %w", err)
 		}
 		for _, key := range keys {
-			// key: worker:<type>:<hostname>:heartbeat
-			parts := strings.SplitN(key, ":", 4)
-			if len(parts) < 4 {
+			workerName := parseHeartbeatWorkerName(key)
+			if workerName == "" {
 				continue
 			}
-			workerType := parts[1]
-			hostname := parts[2]
 
 			// Check TTL — keys without TTL are stale
 			ttl, err := c.rdb.TTL(ctx, key).Result()
 			if err != nil || ttl <= 0 {
-				// Best-effort event: worker_offline on expired heartbeat
 				c.PushSystemEvent(ctx, &Event{
 					Type:           EventWorkerOffline,
-					WorkerType:     workerType,
-					WorkerHostname: hostname,
+					WorkerType:     workerName,
+					WorkerHostname: "",
 				})
 				continue
 			}
 
-			if s, ok := stats[workerType]; ok {
-				s.Instances++
-				s.Online++ // heartbeat key with positive TTL means online
+			s, ok := stats[workerName]
+			if !ok {
+				s = &WorkerInfo{}
+				stats[workerName] = s
 			}
+			s.Instances++
+			s.Online++
 		}
 		cursor = nextCursor
 		if cursor == 0 {
@@ -85,7 +85,7 @@ func (c *Client) GetWorkerStats(ctx context.Context) (WorkerStats, error) {
 		}
 	}
 
-	// Augment with active_tasks counts per worker type
+	// Augment with active_tasks counts per worker
 	active, _ := c.rdb.HGetAll(ctx, "active_tasks").Result()
 	threadWorkers := make(map[string]map[string]struct{})
 
@@ -133,7 +133,7 @@ func (c *Client) GetWorkerStats(ctx context.Context) (WorkerStats, error) {
 		}
 	}
 
-	// Count threads per worker type
+	// Count threads per worker
 	for _, workers := range threadWorkers {
 		for wt := range workers {
 			if s, ok := stats[wt]; ok {
@@ -145,15 +145,32 @@ func (c *Client) GetWorkerStats(ctx context.Context) (WorkerStats, error) {
 	return stats, nil
 }
 
-// GetWorkerInfo returns detailed info for a single worker type.
-func (c *Client) GetWorkerInfo(ctx context.Context, workerType string) (*WorkerInfo, error) {
+// parseHeartbeatWorkerName extracts the worker name from a heartbeat key.
+// Handles both old format (worker:<type>:<hostname>:heartbeat, 4 parts)
+// and new format (worker:<name>:heartbeat, 3 parts).
+func parseHeartbeatWorkerName(key string) string {
+	parts := strings.SplitN(key, ":", 4)
+	if len(parts) == 4 && parts[3] == "heartbeat" {
+		// Old format: worker:<type>:<hostname>:heartbeat
+		return parts[1]
+	}
+	// New format: worker:<name>:heartbeat
+	parts = strings.SplitN(key, ":", 3)
+	if len(parts) == 3 && parts[2] == "heartbeat" {
+		return parts[1]
+	}
+	return ""
+}
+
+// GetWorkerInfo returns detailed info for a single worker.
+func (c *Client) GetWorkerInfo(ctx context.Context, workerName string) (*WorkerInfo, error) {
 	stats, err := c.GetWorkerStats(ctx)
 	if err != nil {
 		return nil, err
 	}
-	info, ok := stats[workerType]
+	info, ok := stats[workerName]
 	if !ok {
-		return nil, fmt.Errorf("unknown worker type: %s", workerType)
+		return &WorkerInfo{}, nil
 	}
 	return info, nil
 }
@@ -161,7 +178,7 @@ func (c *Client) GetWorkerInfo(ctx context.Context, workerType string) (*WorkerI
 // UpdateWorkerHeartbeat sets a heartbeat key with 30s TTL, writing a JSON
 // payload with instance-level data (hostname, tasks_processed, etc.).
 // Auto-populates LastHeartbeatAt if the caller leaves it empty.
-func (c *Client) UpdateWorkerHeartbeat(ctx context.Context, workerType, hostname string, data HeartbeatData) error {
+func (c *Client) UpdateWorkerHeartbeat(ctx context.Context, workerName string, data HeartbeatData) error {
 	if data.LastHeartbeatAt == "" {
 		data.LastHeartbeatAt = time.Now().UTC().Format("2006-01-02T15:04:05Z")
 	}
@@ -169,55 +186,37 @@ func (c *Client) UpdateWorkerHeartbeat(ctx context.Context, workerType, hostname
 	if err != nil {
 		return fmt.Errorf("marshal heartbeat: %w", err)
 	}
-	return c.rdb.SetEx(ctx, HeartbeatKey(workerType, hostname), string(payload), 30*time.Second).Err()
+	return c.rdb.SetEx(ctx, HeartbeatKey(workerName), string(payload), 30*time.Second).Err()
 }
 
-// GetWorkerInstances returns per-hostname detail for a worker type by parsing
-// heartbeat JSON values from the existing SCAN.
-func (c *Client) GetWorkerInstances(ctx context.Context, workerType string) ([]WorkerInstance, error) {
-	pattern := fmt.Sprintf("worker:%s:*:heartbeat", workerType)
-	var instances []WorkerInstance
-
-	var cursor uint64
-	for {
-		keys, nextCursor, err := c.rdb.Scan(ctx, cursor, pattern, 100).Result()
-		if err != nil {
-			return nil, fmt.Errorf("scan worker instances: %w", err)
+// GetWorkerInstances returns per-worker detail by reading the single heartbeat
+// key for this worker name.
+func (c *Client) GetWorkerInstances(ctx context.Context, workerName string) ([]WorkerInstance, error) {
+	key := HeartbeatKey(workerName)
+	raw, err := c.rdb.Get(ctx, key).Result()
+	if err != nil {
+		if err.Error() == "redis: nil" {
+			return nil, nil
 		}
-		for _, key := range keys {
-			parts := strings.SplitN(key, ":", 4)
-			if len(parts) < 4 {
-				continue
-			}
-			hostname := parts[2]
-
-			raw, err := c.rdb.Get(ctx, key).Result()
-			if err != nil {
-				continue
-			}
-
-			var hb HeartbeatData
-			if err := json.Unmarshal([]byte(raw), &hb); err != nil {
-				// Backward-compat: old format was literal "1"
-				hb = HeartbeatData{Hostname: hostname}
-			}
-
-			ttl, _ := c.rdb.TTL(ctx, key).Result()
-			online := ttl > 0
-
-			instances = append(instances, WorkerInstance{
-				Hostname:             hb.Hostname,
-				TasksProcessed:       hb.TasksProcessed,
-				QueueDepth:           hb.QueueDepth,
-				UptimeSeconds:        hb.UptimeSeconds,
-				LastHeartbeatPayload: raw,
-				Online:               online,
-			})
-		}
-		cursor = nextCursor
-		if cursor == 0 {
-			break
-		}
+		return nil, fmt.Errorf("get worker instance: %w", err)
 	}
-	return instances, nil
+
+	var hb HeartbeatData
+	if err := json.Unmarshal([]byte(raw), &hb); err != nil {
+		return nil, fmt.Errorf("unmarshal heartbeat: %w", err)
+	}
+
+	ttl, _ := c.rdb.TTL(ctx, key).Result()
+	online := ttl > 0
+
+	return []WorkerInstance{{
+		WorkerName:           hb.WorkerName,
+		AgentType:            hb.AgentType,
+		Hostname:             hb.Hostname,
+		TasksProcessed:       hb.TasksProcessed,
+		QueueDepth:           hb.QueueDepth,
+		UptimeSeconds:        hb.UptimeSeconds,
+		LastHeartbeatPayload: raw,
+		Online:               online,
+	}}, nil
 }

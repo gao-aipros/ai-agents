@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/noodle05/ai-agents/cmd/webui/internal/templates"
 	"github.com/noodle05/ai-agents/tasklib"
@@ -9,6 +10,7 @@ import (
 
 type tokensResource struct {
 	tokens   tasklib.TokenLedger
+	sysOps   tasklib.SystemOps
 	renderer *templates.Renderer
 }
 
@@ -20,17 +22,23 @@ func (tr *tokensResource) globalTokens(w http.ResponseWriter, r *http.Request) {
 
 	workers := map[string]tasklib.TokenStats{}
 
-	// Master is not in tasklib.WorkerTypes — query explicitly.
-	if s, err := tr.tokens.GetTokenStats(ctx, tasklib.StatsWorkerKey("master")); err == nil && s != nil && s.HasAny() {
-		workers["master"] = *s
-	}
-
-	for _, wt := range tasklib.WorkerTypes {
-		s, err := tr.tokens.GetTokenStats(ctx, tasklib.StatsWorkerKey(wt))
+	// Discover agent types dynamically from stats:total_tokens:* keys
+	keys, _ := tr.sysOps.ScanKeys(ctx, "stats:total_tokens:*", 100)
+	for _, key := range keys {
+		// Parse agent type from key: "stats:total_tokens:<agent_type>"
+		// Key format: stats:total_tokens:<agent_type> (3 parts)
+		if !strings.HasPrefix(key, "stats:total_tokens:") {
+			continue
+		}
+		agentType := strings.TrimPrefix(key, "stats:total_tokens:")
+		if agentType == "" {
+			continue
+		}
+		s, err := tr.tokens.GetTokenStats(ctx, tasklib.StatsWorkerKey(agentType))
 		if err != nil || s == nil || !s.HasAny() {
 			continue
 		}
-		workers[wt] = *s
+		workers[agentType] = *s
 	}
 
 	if IsHTMX(r) {
@@ -39,21 +47,12 @@ func (tr *tokensResource) globalTokens(w http.ResponseWriter, r *http.Request) {
 			vm.TotalIn = tasklib.FormatTokenCount(global.InputTokens)
 			vm.TotalOut = tasklib.FormatTokenCount(global.OutputTokens)
 			vm.TaskCount = taskCount
-			if s, ok := workers["master"]; ok {
+			for agentType, s := range workers {
 				vm.Rows = append(vm.Rows, templates.TokenStatsRow{
-					Agent:  "master",
+					Agent:  agentType,
 					Input:  tasklib.FormatTokenCount(s.InputTokens),
 					Output: tasklib.FormatTokenCount(s.OutputTokens),
 				})
-			}
-			for _, wt := range tasklib.WorkerTypes {
-				if s, ok := workers[wt]; ok {
-					vm.Rows = append(vm.Rows, templates.TokenStatsRow{
-						Agent:  wt,
-						Input:  tasklib.FormatTokenCount(s.InputTokens),
-						Output: tasklib.FormatTokenCount(s.OutputTokens),
-					})
-				}
 			}
 		}
 		Partial(w, tr.renderer, "token-stats", vm)

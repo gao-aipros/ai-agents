@@ -44,10 +44,7 @@
 {{end}}
 
 {{define "worker-cards-loading"}}
-  {{range .WorkerTypes}}
-  <div class="card worker-card">
-    <div class="card-header">{{.}}</div>
-    <div class="text-muted"><span class="spinner"></span> Loading...</div>
+  <div class="card">
+    <div class="text-center text-muted" style="padding:24px"><span class="spinner"></span> Loading worker data...</div>
   </div>
-  {{end}}
 {{end}}

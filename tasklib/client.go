@@ -48,9 +48,6 @@ func computeLockTTL(lookup func(string) (string, bool)) time.Duration {
 // Configurable via LOCK_TTL env var (in seconds), e.g. LOCK_TTL=9300.
 var LockTTL time.Duration
 
-// Valid worker types.
-var WorkerTypes = []string{"claude", "copilot", "opencode", "codex"}
-
 // KeyName helpers produce the same Redis key names as task.py.
 func TaskKey(taskID, field string) string          { return "task:" + taskID + ":" + field }
 func QueueKey(worker string) string                { return "tasks:queue:" + worker }
@@ -67,8 +64,8 @@ func GroupTasksKey(threadID, label string) string {
 }
 func ThreadEventsKey(threadID string) string   { return "thread:" + threadID + ":events" }
 func ThreadLockedAtKey(threadID string) string { return "thread:" + threadID + ":locked_at" }
-func HeartbeatKey(workerType, hostname string) string {
-	return "worker:" + workerType + ":" + hostname + ":heartbeat"
+func HeartbeatKey(workerName string) string {
+	return "worker:" + workerName + ":heartbeat"
 }
 
 // Client wraps *redis.Client and provides all task/thread/worker operations.

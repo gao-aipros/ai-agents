@@ -250,8 +250,9 @@ func TestHandleGetWorker_Unknown(t *testing.T) {
 	r := httptest.NewRequest("GET", "/api/workers/nonexistent", nil)
 	th.Router.ServeHTTP(w, r)
 
-	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
+	// Unknown workers return 200 with zero stats (dynamic discovery — any name is valid)
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
 }
 
@@ -1325,6 +1326,10 @@ func TestMetricsEndpoint_Returns200(t *testing.T) {
 	rdb.Set(context.Background(), "stats:task_cancelled", "1", 0)
 	rdb.HSet(context.Background(), "active_tasks", "task-1", `{"status":"running"}`)
 
+	// Set up heartbeat and queue keys so metrics have workers to report
+	rdb.LPush(context.Background(), tasklib.QueueKey("claude"), "t1")
+	rdb.SetEx(context.Background(), tasklib.HeartbeatKey("claude"), `{"worker_name":"claude","hostname":"h1","last_heartbeat_at":"2026-01-01T00:00:00Z"}`, 30*time.Second)
+
 	req := httptest.NewRequest(http.MethodGet, "/api/metrics", nil)
 	req.Header.Set("Authorization", "Bearer test-token")
 	w := httptest.NewRecorder()
@@ -1393,7 +1398,7 @@ func TestMetricsEndpoint_QueueDepthLabels(t *testing.T) {
 	th.Router.ServeHTTP(w, req)
 
 	body := w.Body.String()
-	for _, wt := range tasklib.WorkerTypes {
+	for _, wt := range []string{"claude", "copilot"} {
 		if !strings.Contains(body, `worker_type="`+wt+`"`) {
 			t.Errorf("expected worker_type label %q in output", wt)
 		}

@@ -73,4 +73,4 @@ COPY --from=skills-download --chown=agent:agent /tmp/skills-out /home/agent/.cop
 COPY --chown=agent:agent docs/agents/ /home/agent/.copilot/agents-config/
 
 USER agent
-ENTRYPOINT ["/usr/local/bin/worker-go", "copilot"]
+ENTRYPOINT ["/usr/local/bin/worker-go"]

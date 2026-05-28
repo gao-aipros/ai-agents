@@ -28,7 +28,6 @@ type Renderer struct {
 	PollWorkers string
 	HtmxSrc     string
 	Theme       string
-	WorkerTypes []string
 	CSRFToken   string
 }
 
@@ -44,7 +43,6 @@ func New() (*Renderer, error) {
 		PollWorkers: env.String("WEBUI_POLL_WORKERS", "5"),
 		HtmxSrc:     env.String("WEBUI_HTMX_SRC", "/static/htmx.min.js"),
 		Theme:       env.String("WEBUI_THEME", "light"),
-		WorkerTypes: tasklib.WorkerTypes,
 		CSRFToken:   hex.EncodeToString(csrf),
 	}
 
@@ -99,7 +97,6 @@ type BaseView struct {
 	PollDash    string
 	PollThread  string
 	PollWorkers string
-	WorkerTypes []string
 	CSRFToken   string
 
 	// Per-request field — set by fillBaseView for each render.
@@ -213,7 +210,6 @@ func (r *Renderer) fillBaseView(vm ViewModel) {
 	bv.PollDash = r.PollDash
 	bv.PollThread = r.PollThread
 	bv.PollWorkers = r.PollWorkers
-	bv.WorkerTypes = r.WorkerTypes
 	bv.CSRFToken = r.CSRFToken
 	bv.NowUnix = time.Now().Unix()
 }
@@ -240,7 +236,6 @@ func (r *Renderer) prepareData(data interface{}) interface{} {
 	m["PollDash"] = r.PollDash
 	m["PollThread"] = r.PollThread
 	m["PollWorkers"] = r.PollWorkers
-	m["WorkerTypes"] = r.WorkerTypes
 	m["CSRFToken"] = r.CSRFToken
 	m["NowUnix"] = time.Now().Unix()
 	return m
