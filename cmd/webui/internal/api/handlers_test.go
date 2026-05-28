@@ -1878,7 +1878,7 @@ func seedTokenData(t *testing.T, rdb *redis.Client) {
 		"reasoning":     int64(0),
 		"task_count":    int64(197),
 	})
-	rdb.HSet(ctx, tasklib.StatsWorkerKey("master"), map[string]interface{}{
+	rdb.HSet(ctx, tasklib.StatsAgentKey("master"), map[string]interface{}{
 		"input_tokens":  int64(5000),
 		"output_tokens": int64(2000),
 		"cache_read":    int64(500),
@@ -1886,7 +1886,7 @@ func seedTokenData(t *testing.T, rdb *redis.Client) {
 		"reasoning":     int64(0),
 		"task_count":    int64(50),
 	})
-	rdb.HSet(ctx, tasklib.StatsWorkerKey("claude"), map[string]interface{}{
+	rdb.HSet(ctx, tasklib.StatsAgentKey("claude"), map[string]interface{}{
 		"input_tokens":  int64(45000),
 		"output_tokens": int64(10000),
 		"cache_read":    int64(2500),

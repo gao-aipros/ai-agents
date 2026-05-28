@@ -158,14 +158,14 @@ func NewStatsProvider(agentType string) StatsProvider {
 // StatsTotalKey returns the Redis key for the global aggregate token counter.
 func StatsTotalKey() string { return "stats:total_tokens" }
 
-// StatsWorkerKey returns the Redis key for a per-worker-type token counter.
-func StatsWorkerKey(workerType string) string { return "stats:total_tokens:" + workerType }
+// StatsAgentKey returns the Redis key for a per-agent-type token counter.
+func StatsAgentKey(agentType string) string { return "stats:total_tokens:" + agentType }
 
 // PersistTokenStats writes token counts to persistent global counters and
 // per-task keys via an active Redis pipeline. The caller must Exec the pipeline.
 func PersistTokenStats(ctx context.Context, pipe redis.Pipeliner, taskID, agentType string, stats TokenStats) {
 	totalKey := StatsTotalKey()
-	workerKey := StatsWorkerKey(agentType)
+	workerKey := StatsAgentKey(agentType)
 
 	pipe.HIncrBy(ctx, totalKey, "input_tokens", stats.InputTokens)
 	pipe.HIncrBy(ctx, totalKey, "output_tokens", stats.OutputTokens)
@@ -203,7 +203,7 @@ func PersistTokenStats(ctx context.Context, pipe redis.Pipeliner, taskID, agentT
 // fields AND global counters via an active Redis pipeline.
 func PersistMasterTokenStats(ctx context.Context, pipe redis.Pipeliner, threadID string, stats TokenStats) {
 	totalKey := StatsTotalKey()
-	masterKey := StatsWorkerKey("master")
+	masterKey := StatsAgentKey("master")
 
 	pipe.HIncrBy(ctx, totalKey, "input_tokens", stats.InputTokens)
 	pipe.HIncrBy(ctx, totalKey, "output_tokens", stats.OutputTokens)

@@ -117,7 +117,7 @@ func (m *Monitor) checkLostHeartbeats(ctx context.Context) {
 		return
 	}
 	for _, key := range keys {
-		workerName := parseHeartbeatWorkerName(key)
+		workerName := ParseHeartbeatWorkerName(key)
 		if workerName == "" {
 			continue
 		}

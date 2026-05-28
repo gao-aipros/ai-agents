@@ -99,7 +99,10 @@ func (c *redisCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 
 	var pending int64
-	queueKeys, _ := c.sysOps.ScanKeys(ctx, "tasks:queue:*", 100)
+	queueKeys, err := c.sysOps.ScanKeys(ctx, "tasks:queue:*", 100)
+	if err != nil {
+		slog.Warn("metrics: ScanKeys failed", "error", err)
+	}
 	for _, key := range queueKeys {
 		dep, err := c.sysOps.QueueDepth(ctx, key)
 		if err == nil {

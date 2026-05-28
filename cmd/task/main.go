@@ -454,9 +454,9 @@ func cmdRequeueStale(cmd *cobra.Command, args []string) error {
 			die("failed to scan heartbeat keys: " + err.Error())
 		}
 		for _, key := range keys {
-			parts := strings.SplitN(key, ":", 3)
-			if len(parts) == 3 && parts[2] == "heartbeat" {
-				workers = append(workers, parts[1])
+			workerName := tasklib.ParseHeartbeatWorkerName(key)
+			if workerName != "" {
+				workers = append(workers, workerName)
 			}
 		}
 		if len(workers) == 0 {
@@ -810,7 +810,7 @@ func cmdWorkers(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	header := fmt.Sprintf("%-20s %-12s %-20s %-8s %-10s", "WORKER NAME", "AGENT TYPE", "HOSTNAME", "TASKS", "UPTIME")
+	header := fmt.Sprintf("%-20s %-12s %-20s %-8s %-10s %-8s", "WORKER NAME", "AGENT TYPE", "HOSTNAME", "TASKS", "UPTIME", "STATUS")
 	fmt.Println(header)
 	fmt.Println(strings.Repeat("-", len(header)))
 	for _, r := range rows {

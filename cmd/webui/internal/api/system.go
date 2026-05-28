@@ -85,7 +85,10 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 	// Queue depths + pending count — dynamic discovery
 	queueDepths := make(map[string]int64)
 	var pending int64
-	queueKeys, _ := sr.sysOps.ScanKeys(ctx, "tasks:queue:*", 100)
+	queueKeys, err := sr.sysOps.ScanKeys(ctx, "tasks:queue:*", 100)
+	if err != nil {
+		slog.Warn("stats: ScanKeys failed", "error", err)
+	}
 	for _, key := range queueKeys {
 		parts := strings.SplitN(key, ":", 3)
 		if len(parts) < 3 {

@@ -55,7 +55,7 @@ func (c *Client) GetWorkerStats(ctx context.Context) (WorkerStats, error) {
 			return nil, fmt.Errorf("scan workers: %w", err)
 		}
 		for _, key := range keys {
-			workerName := parseHeartbeatWorkerName(key)
+			workerName := ParseHeartbeatWorkerName(key)
 			if workerName == "" {
 				continue
 			}
@@ -145,10 +145,10 @@ func (c *Client) GetWorkerStats(ctx context.Context) (WorkerStats, error) {
 	return stats, nil
 }
 
-// parseHeartbeatWorkerName extracts the worker name from a heartbeat key.
+// ParseHeartbeatWorkerName extracts the worker name from a heartbeat key.
 // Handles both old format (worker:<type>:<hostname>:heartbeat, 4 parts)
 // and new format (worker:<name>:heartbeat, 3 parts).
-func parseHeartbeatWorkerName(key string) string {
+func ParseHeartbeatWorkerName(key string) string {
 	parts := strings.SplitN(key, ":", 4)
 	if len(parts) == 4 && parts[3] == "heartbeat" {
 		// Old format: worker:<type>:<hostname>:heartbeat
@@ -190,13 +190,16 @@ func (c *Client) UpdateWorkerHeartbeat(ctx context.Context, workerName string, d
 }
 
 // GetWorkerInstances returns per-worker detail by reading the single heartbeat
-// key for this worker name.
+// key for this worker name. Falls back to SCAN for old-format keys
+// (worker:<name>:*:heartbeat) when the new-format key is not found, for
+// backward compatibility during the 30s deployment transition window.
 func (c *Client) GetWorkerInstances(ctx context.Context, workerName string) ([]WorkerInstance, error) {
 	key := HeartbeatKey(workerName)
 	raw, err := c.rdb.Get(ctx, key).Result()
 	if err != nil {
 		if err.Error() == "redis: nil" {
-			return nil, nil
+			// Fall back to SCAN for old-format keys
+			return c.getWorkerInstancesFallback(ctx, workerName)
 		}
 		return nil, fmt.Errorf("get worker instance: %w", err)
 	}
@@ -219,4 +222,45 @@ func (c *Client) GetWorkerInstances(ctx context.Context, workerName string) ([]W
 		LastHeartbeatPayload: raw,
 		Online:               online,
 	}}, nil
+}
+
+// getWorkerInstancesFallback scans for old-format heartbeat keys
+// (worker:<name>:<hostname>:heartbeat) when the new-format key is not found.
+// Used during the 30s deployment transition window.
+func (c *Client) getWorkerInstancesFallback(ctx context.Context, workerName string) ([]WorkerInstance, error) {
+	pattern := "worker:" + workerName + ":*:heartbeat"
+	keys, err := c.rdb.Keys(ctx, pattern).Result()
+	if err != nil {
+		return nil, nil
+	}
+	var instances []WorkerInstance
+	for _, key := range keys {
+		raw, err := c.rdb.Get(ctx, key).Result()
+		if err != nil {
+			continue
+		}
+		var hb HeartbeatData
+		if err := json.Unmarshal([]byte(raw), &hb); err != nil {
+			// Old-format keys may have arbitrary payloads (e.g., just "{}")
+			// Treat as a valid instance with just the worker name filled in.
+			ttl, _ := c.rdb.TTL(ctx, key).Result()
+			instances = append(instances, WorkerInstance{
+				WorkerName: workerName,
+				Online:     ttl > 0,
+			})
+			continue
+		}
+		ttl, _ := c.rdb.TTL(ctx, key).Result()
+		instances = append(instances, WorkerInstance{
+			WorkerName:           hb.WorkerName,
+			AgentType:            hb.AgentType,
+			Hostname:             hb.Hostname,
+			TasksProcessed:       hb.TasksProcessed,
+			QueueDepth:           hb.QueueDepth,
+			UptimeSeconds:        hb.UptimeSeconds,
+			LastHeartbeatPayload: raw,
+			Online:               ttl > 0,
+		})
+	}
+	return instances, nil
 }

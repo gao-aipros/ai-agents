@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -23,7 +24,10 @@ func (tr *tokensResource) globalTokens(w http.ResponseWriter, r *http.Request) {
 	workers := map[string]tasklib.TokenStats{}
 
 	// Discover agent types dynamically from stats:total_tokens:* keys
-	keys, _ := tr.sysOps.ScanKeys(ctx, "stats:total_tokens:*", 100)
+	keys, err := tr.sysOps.ScanKeys(ctx, "stats:total_tokens:*", 100)
+	if err != nil {
+		slog.Warn("tokens: ScanKeys failed", "error", err)
+	}
 	for _, key := range keys {
 		// Parse agent type from key: "stats:total_tokens:<agent_type>"
 		// Key format: stats:total_tokens:<agent_type> (3 parts)
@@ -34,7 +38,7 @@ func (tr *tokensResource) globalTokens(w http.ResponseWriter, r *http.Request) {
 		if agentType == "" {
 			continue
 		}
-		s, err := tr.tokens.GetTokenStats(ctx, tasklib.StatsWorkerKey(agentType))
+		s, err := tr.tokens.GetTokenStats(ctx, tasklib.StatsAgentKey(agentType))
 		if err != nil || s == nil || !s.HasAny() {
 			continue
 		}
