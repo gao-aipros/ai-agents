@@ -64,7 +64,8 @@ RUN mkdir -p /home/agent/.config/opencode && chown -R agent:agent /home/agent/.c
 ENV OPENCODE_PROVIDER=deepseek \
     OPENCODE_MODEL=deepseek-v4-pro
 
-ENV AGENT_CMD="opencode -m ${OPENCODE_PROVIDER}/${OPENCODE_MODEL} run --dangerously-skip-permissions --format json"
+ENV AGENT_CMD="opencode -m ${OPENCODE_PROVIDER}/${OPENCODE_MODEL} run --dangerously-skip-permissions --format json" \
+    AGENT_TYPE=opencode
 
 COPY --chown=agent:agent docker/opencode/AGENTS.md /home/agent/.config/opencode/AGENTS.md
 COPY --chown=agent:agent docker/opencode/opencode.json /home/agent/.config/opencode/opencode.json

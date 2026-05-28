@@ -67,7 +67,8 @@ ENV ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic \
     CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash \
     CLAUDE_CODE_EFFORT_LEVEL=max
 
-ENV AGENT_CMD="claude -p --output-format stream-json --verbose --dangerously-skip-permissions"
+ENV AGENT_CMD="claude -p --output-format stream-json --verbose --dangerously-skip-permissions" \
+    AGENT_TYPE=claude
 
 RUN mkdir -p /home/agent/.claude \
     && chown -R agent:agent /home/agent/.claude

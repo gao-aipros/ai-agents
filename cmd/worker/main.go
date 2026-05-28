@@ -90,6 +90,10 @@ func main() {
 	if agentCmd == "" {
 		die("AGENT_CMD not set")
 	}
+	agentType := os.Getenv("AGENT_TYPE")
+	if agentType == "" {
+		die("AGENT_TYPE not set")
+	}
 	taskTimeout := envIntDefault("TASK_TIMEOUT", 1800)
 	historyWindow := envIntDefault("HISTORY_WINDOW", 10)
 	workspaceDir := envDefault("WORKSPACE_DIR", "/workspace")
@@ -181,7 +185,7 @@ func main() {
 			continue
 		}
 
-		processOneTask(log, client.Threads, client.History, client.Events, rdb, result, workerType, agentCmd,
+		processOneTask(log, client.Threads, client.History, client.Events, rdb, result, workerType, agentType, agentCmd,
 			taskTimeout, historyWindow, workspaceDir, processingKey, hostname, &tasksProcessed, alertCfg)
 	}
 
@@ -203,7 +207,7 @@ func processOneTask(
 	history tasklib.ThreadHistory,
 	events tasklib.EventBus,
 	rdb *redis.Client,
-	taskJSON, workerType, agentCmd string,
+	taskJSON, workerType, agentType, agentCmd string,
 	defaultTimeout, defaultHistoryWindow int,
 	workspaceDir, processingKey, hostname string,
 	tasksProcessed *atomic.Int64,
@@ -231,7 +235,7 @@ func processOneTask(
 	log.Info("task dequeued", "task_id", taskID, "thread_id", threadID)
 
 	// Select stats provider for this agent type
-	provider := tasklib.NewStatsProvider(workerType)
+	provider := tasklib.NewStatsProvider(agentType)
 
 	// Read correlation_id from thread state
 	correlationID := ""
