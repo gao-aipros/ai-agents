@@ -86,14 +86,8 @@ func main() {
 
 	redisHost := envDefault("REDIS_HOST", "redis")
 	redisPort := envIntDefault("REDIS_PORT", 6379)
-	agentCmd := os.Getenv("AGENT_CMD")
-	if agentCmd == "" {
-		die("AGENT_CMD not set")
-	}
-	agentType := os.Getenv("AGENT_TYPE")
-	if agentType == "" {
-		die("AGENT_TYPE not set")
-	}
+	agentCmd := mustEnv("AGENT_CMD")
+	agentType := mustEnv("AGENT_TYPE")
 	taskTimeout := envIntDefault("TASK_TIMEOUT", 1800)
 	historyWindow := envIntDefault("HISTORY_WINDOW", 10)
 	workspaceDir := envDefault("WORKSPACE_DIR", "/workspace")
@@ -428,7 +422,7 @@ func processOneTask(
 
 	// Copilot outputs token stats to stderr, not stdout JSONL.
 	// Parse stderr to extract token counts for persistence.
-	if workerType == "copilot" && stderr != "" {
+	if agentType == "copilot" && stderr != "" {
 		if cs := tasklib.ParseCopilotStderr(stderr); cs.HasAny() {
 			tokenStats = cs
 		}
@@ -571,6 +565,14 @@ func validWorker(w string) bool {
 func die(msg string) {
 	fmt.Fprintf(os.Stderr, "ERROR: %s\n", msg)
 	os.Exit(1)
+}
+
+func mustEnv(key string) string {
+	v := os.Getenv(key)
+	if v == "" {
+		die(key + " not set")
+	}
+	return v
 }
 
 func envDefault(key, def string) string {

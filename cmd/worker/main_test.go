@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1487,4 +1488,31 @@ func TestCancelledBySystemWhenNoCancelTaskAPI(t *testing.T) {
 	if who != "system" {
 		t.Errorf("expected cancelled_by='system' when no prior CancelTask call, got '%s'", who)
 	}
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// mustEnv Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+func TestMustEnvSet(t *testing.T) {
+	os.Setenv("TEST_MUSTENV_SET", "hello")
+	defer os.Unsetenv("TEST_MUSTENV_SET")
+
+	if v := mustEnv("TEST_MUSTENV_SET"); v != "hello" {
+		t.Errorf("expected 'hello', got '%s'", v)
+	}
+}
+
+func TestMustEnvMissingDies(t *testing.T) {
+	if os.Getenv("GO_WANT_MUSTENV_DIE") == "1" {
+		mustEnv("GO_WANT_MUSTENV_DIE_TARGET")
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=TestMustEnvMissingDies")
+	cmd.Env = append(os.Environ(), "GO_WANT_MUSTENV_DIE=1")
+	err := cmd.Run()
+	if e, ok := err.(*exec.ExitError); ok && !e.Success() {
+		return
+	}
+	t.Fatal("expected non-zero exit from mustEnv with missing env var")
 }
