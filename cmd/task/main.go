@@ -251,6 +251,14 @@ func main() {
 	eventsCmd.Flags().StringVar(&eventsType, "type", "", "")
 	root.AddCommand(eventsCmd)
 
+	// ── task workers ────────────────────────────────────────────────────────
+	workersCmd := &cobra.Command{
+		Use:   "workers",
+		Short: "List online workers discovered from heartbeats",
+		RunE:  cmdWorkers,
+	}
+	root.AddCommand(workersCmd)
+
 	// ── task why ─────────────────────────────────────────────────────────
 	whyCmd := &cobra.Command{
 		Use:  "why",
@@ -436,9 +444,25 @@ func cmdRequeueStale(cmd *cobra.Command, args []string) error {
 	s := getServices()
 	ctx := context.Background()
 
-	workers := tasklib.WorkerTypes
+	var workers []string
 	if requeueWorker != "" {
 		workers = []string{requeueWorker}
+	} else {
+		// Discover online workers from heartbeat keys
+		keys, err := s.SysOps.ScanKeys(ctx, "worker:*:heartbeat", 100)
+		if err != nil {
+			die("failed to scan heartbeat keys: " + err.Error())
+		}
+		for _, key := range keys {
+			workerName := tasklib.ParseHeartbeatWorkerName(key)
+			if workerName != "" {
+				workers = append(workers, workerName)
+			}
+		}
+		if len(workers) == 0 {
+			fmt.Println("No workers online")
+			return nil
+		}
 	}
 
 	olderThan := time.Duration(requeueOlderThan) * time.Second
@@ -734,6 +758,88 @@ func cmdEvents(cmd *cobra.Command, args []string) error {
 		data, _ := json.MarshalIndent(ev, "", "  ")
 		fmt.Println(string(data))
 		fmt.Println("---")
+	}
+	return nil
+}
+
+// ── task workers ──────────────────────────────────────────────────────────
+
+func cmdWorkers(cmd *cobra.Command, args []string) error {
+	s := getServices()
+	ctx := context.Background()
+
+	stats, err := s.Workers.GetWorkerStats(ctx)
+	if err != nil {
+		die(err.Error())
+	}
+
+	if len(stats) == 0 {
+		fmt.Println("No workers online")
+		return nil
+	}
+
+	// Collect worker instances for agent_type + hostname detail
+	type row struct {
+		name      string
+		agentType string
+		hostname  string
+		tasks     int
+		uptime    int64
+		online    bool
+	}
+
+	var rows []row
+	for workerName, info := range stats {
+		instances, _ := s.Workers.GetWorkerInstances(ctx, workerName)
+		for _, inst := range instances {
+			rows = append(rows, row{
+				name:      inst.WorkerName,
+				agentType: inst.AgentType,
+				hostname:  inst.Hostname,
+				tasks:     inst.TasksProcessed,
+				uptime:    inst.UptimeSeconds,
+				online:    inst.Online,
+			})
+		}
+		if len(instances) == 0 {
+			rows = append(rows, row{
+				name:   workerName,
+				online: info.Online > 0,
+				tasks:  info.TotalActive,
+			})
+		}
+	}
+
+	header := fmt.Sprintf("%-20s %-12s %-20s %-8s %-10s %-8s", "WORKER NAME", "AGENT TYPE", "HOSTNAME", "TASKS", "UPTIME", "STATUS")
+	fmt.Println(header)
+	fmt.Println(strings.Repeat("-", len(header)))
+	for _, r := range rows {
+		status := "offline"
+		if r.online {
+			status = "online"
+		}
+		uptimeStr := "-"
+		if r.uptime > 0 {
+			d := time.Duration(r.uptime) * time.Second
+			switch {
+			case d < time.Hour:
+				uptimeStr = fmt.Sprintf("%dm", int(d.Minutes()))
+			case d < 24*time.Hour:
+				h := int(d.Hours())
+				m := int(d.Minutes()) % 60
+				uptimeStr = fmt.Sprintf("%dh %dm", h, m)
+			default:
+				days := int(d.Hours() / 24)
+				h := int(d.Hours()) % 24
+				uptimeStr = fmt.Sprintf("%dd %dh", days, h)
+			}
+		}
+		at := r.agentType
+		if at == "" {
+			at = "-"
+		}
+		fmt.Printf("%-20s %-12s %-20s %-8s %-10s %s\n",
+			r.name, at, r.hostname, fmt.Sprintf("%d", r.tasks), uptimeStr, status)
 	}
 	return nil
 }

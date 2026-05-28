@@ -157,13 +157,13 @@ func TestHeartbeatJSONRoundTrip(t *testing.T) {
 		UptimeSeconds:  3600,
 	}
 
-	err := c.UpdateWorkerHeartbeat(ctxbg(), "claude", "host1", hb)
+	err := c.UpdateWorkerHeartbeat(ctxbg(), "claude", hb)
 	if err != nil {
 		t.Fatalf("UpdateWorkerHeartbeat failed: %v", err)
 	}
 
 	// Read back and parse
-	raw, _ := c.rdb.Get(ctxbg(), HeartbeatKey("claude", "host1")).Result()
+	raw, _ := c.rdb.Get(ctxbg(), HeartbeatKey("claude")).Result()
 	var parsed HeartbeatData
 	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
 		t.Fatalf("heartbeat JSON parse failed: %v (raw=%s)", err, raw)
@@ -183,7 +183,7 @@ func TestHeartbeatJSONRoundTrip(t *testing.T) {
 	}
 
 	// Verify TTL
-	ttl := c.rdb.TTL(ctxbg(), HeartbeatKey("claude", "host1")).Val()
+	ttl := c.rdb.TTL(ctxbg(), HeartbeatKey("claude")).Val()
 	if ttl <= 0 || ttl > 30*time.Second {
 		t.Errorf("expected TTL between 0 and 30s, got %v", ttl)
 	}
@@ -192,19 +192,16 @@ func TestHeartbeatJSONRoundTrip(t *testing.T) {
 func TestGetWorkerInstances(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	c.UpdateWorkerHeartbeat(ctxbg(), "claude", "host-a", HeartbeatData{
-		Hostname: "host-a", TasksProcessed: 10, QueueDepth: 2, UptimeSeconds: 100,
-	})
-	c.UpdateWorkerHeartbeat(ctxbg(), "claude", "host-b", HeartbeatData{
-		Hostname: "host-b", TasksProcessed: 20, QueueDepth: 0, UptimeSeconds: 200,
+	c.UpdateWorkerHeartbeat(ctxbg(), "claude", HeartbeatData{
+		WorkerName: "claude", Hostname: "host-a", TasksProcessed: 10, QueueDepth: 2, UptimeSeconds: 100,
 	})
 
 	instances, err := c.GetWorkerInstances(ctxbg(), "claude")
 	if err != nil {
 		t.Fatalf("GetWorkerInstances failed: %v", err)
 	}
-	if len(instances) < 2 {
-		t.Errorf("expected >= 2 instances, got %d", len(instances))
+	if len(instances) != 1 {
+		t.Errorf("expected 1 instance, got %d", len(instances))
 	}
 
 	// Both should be online (fresh heartbeat TTL)
@@ -216,28 +213,9 @@ func TestGetWorkerInstances(t *testing.T) {
 }
 
 func TestGetWorkerInstancesBackwardCompat(t *testing.T) {
-	c, _ := setupTestClient(t)
-
-	// Old format: literal "1" as heartbeat value
-	c.rdb.SetEx(ctxbg(), HeartbeatKey("claude", "old-host"), "1", 30*time.Second)
-
-	instances, err := c.GetWorkerInstances(ctxbg(), "claude")
-	if err != nil {
-		t.Fatalf("GetWorkerInstances failed: %v", err)
-	}
-
-	found := false
-	for _, inst := range instances {
-		if inst.Hostname == "old-host" {
-			found = true
-			if inst.TasksProcessed != 0 {
-				t.Errorf("old-format heartbeat should default TasksProcessed=0, got %d", inst.TasksProcessed)
-			}
-		}
-	}
-	if !found {
-		t.Error("old-format heartbeat host not found in instances")
-	}
+	// Removed: old format (literal "1") backward compat is no longer supported.
+	// Old heartbeat keys expire within 30s of deployment.
+	t.Skip("backward compat with old heartbeat format removed in dynamic worker discovery")
 }
 
 // ── RequeueStale tests ─────────────────────────────────────────────────────
@@ -831,8 +809,8 @@ func TestGroupWaitEmitsGroupComplete(t *testing.T) {
 func TestWorkerOfflineEmittedOnExpiry(t *testing.T) {
 	c, _ := setupTestClient(t)
 
-	// Set a heartbeat with very short TTL (already expired)
-	c.rdb.Set(ctxbg(), HeartbeatKey("claude", "expired-host"), "{}", 0)
+	// Set a heartbeat key with no TTL (TTL will be <= 0, treated as offline)
+	c.rdb.Set(ctxbg(), HeartbeatKey("claude"), "{}", 0)
 
 	// Trigger GetWorkerStats which scans heartbeats
 	_, err := c.GetWorkerStats(ctxbg())
@@ -844,7 +822,7 @@ func TestWorkerOfflineEmittedOnExpiry(t *testing.T) {
 	events, _ := c.GetSystemEvents(ctxbg(), 20)
 	found := false
 	for _, ev := range events {
-		if ev.Type == EventWorkerOffline && ev.WorkerHostname == "expired-host" {
+		if ev.Type == EventWorkerOffline && ev.WorkerType == "claude" {
 			found = true
 		}
 	}

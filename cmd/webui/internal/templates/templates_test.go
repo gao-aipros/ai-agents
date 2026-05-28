@@ -14,7 +14,6 @@ func TestPrepareData_PreservesCallerMap(t *testing.T) {
 		PollDash:    "5",
 		PollThread:  "3",
 		PollWorkers: "5",
-		WorkerTypes: []string{"claude", "copilot", "opencode", "codex"},
 		CSRFToken:   "test-csrf",
 	}
 
@@ -43,7 +42,6 @@ func TestPrepareData_NilInput(t *testing.T) {
 	r := &Renderer{
 		Theme:       "dark",
 		CSRFToken:   "csrf-nil-test",
-		WorkerTypes: []string{},
 	}
 
 	result := r.prepareData(nil).(map[string]interface{})
@@ -57,7 +55,7 @@ func TestPrepareData_NilInput(t *testing.T) {
 }
 
 func TestPrepareData_NonMapInput(t *testing.T) {
-	r := &Renderer{Theme: "light", CSRFToken: "tok", WorkerTypes: []string{}}
+	r := &Renderer{Theme: "light", CSRFToken: "tok", }
 
 	// Passing a non-map type should store it under the "Data" key.
 	result := r.prepareData("not a map").(map[string]interface{})
@@ -71,7 +69,7 @@ func TestPrepareData_NonMapInput(t *testing.T) {
 }
 
 func TestPrepareData_SubmitResult(t *testing.T) {
-	r := &Renderer{Theme: "dark", CSRFToken: "tok", WorkerTypes: []string{}}
+	r := &Renderer{Theme: "dark", CSRFToken: "tok", }
 
 	// The request-submitted template receives a *request.SubmitResult struct.
 	// Verify that its fields are accessible via .Data.
@@ -101,7 +99,7 @@ func TestPrepareData_SubmitResult(t *testing.T) {
 }
 
 func TestPrepareData_IncludesNowUnix(t *testing.T) {
-	r := &Renderer{Theme: "light", CSRFToken: "tok", WorkerTypes: []string{}}
+	r := &Renderer{Theme: "light", CSRFToken: "tok", }
 
 	result := r.prepareData(nil).(map[string]interface{})
 
@@ -118,7 +116,6 @@ func TestPrepareData_CopiesAllCallerKeys(t *testing.T) {
 	r := &Renderer{
 		Theme:       "light",
 		CSRFToken:   "tok",
-		WorkerTypes: []string{"claude"},
 	}
 
 	callerMap := map[string]interface{}{
@@ -301,9 +298,6 @@ func TestNew_DefaultsFromEnv(t *testing.T) {
 	}
 	if r.Theme == "" {
 		t.Error("Theme should have a default")
-	}
-	if len(r.WorkerTypes) == 0 {
-		t.Error("WorkerTypes should not be empty")
 	}
 }
 
@@ -1017,8 +1011,7 @@ func TestPrepareData_FillsViewModel(t *testing.T) {
 		PollDash:    "10",
 		PollThread:  "5",
 		PollWorkers: "8",
-		WorkerTypes: []string{"claude", "codex"},
-		CSRFToken:   "test-token",
+				CSRFToken:   "test-token",
 	}
 
 	vm := &DashboardView{}
@@ -1039,9 +1032,6 @@ func TestPrepareData_FillsViewModel(t *testing.T) {
 	}
 	if bv.PollWorkers != "8" {
 		t.Errorf("PollWorkers = %q, want \"8\"", bv.PollWorkers)
-	}
-	if len(bv.WorkerTypes) != 2 || bv.WorkerTypes[0] != "claude" {
-		t.Errorf("WorkerTypes = %v, want [claude codex]", bv.WorkerTypes)
 	}
 	if bv.CSRFToken != "test-token" {
 		t.Errorf("CSRFToken = %q, want \"test-token\"", bv.CSRFToken)
@@ -1070,7 +1060,6 @@ func TestPrepareData_NoAllocForViewModel(t *testing.T) {
 	r := &Renderer{
 		Theme:       "dark",
 		CSRFToken:   "tok",
-		WorkerTypes: []string{"claude"},
 	}
 	vm := &DashboardView{}
 	n := testing.AllocsPerRun(100, func() {
@@ -1085,7 +1074,6 @@ func TestPrepareData_NilViewModel(t *testing.T) {
 	r := &Renderer{
 		Theme:       "dark",
 		CSRFToken:   "tok",
-		WorkerTypes: []string{},
 	}
 	// Typed nil — fillBaseView returns early, no panic.
 	var vm ViewModel = (*DashboardView)(nil)
@@ -1098,7 +1086,7 @@ func TestPrepareData_NilViewModel(t *testing.T) {
 }
 
 func TestFillBaseView_NilViewModel(t *testing.T) {
-	r := &Renderer{Theme: "dark", CSRFToken: "tok", WorkerTypes: []string{}}
+	r := &Renderer{Theme: "dark", CSRFToken: "tok", }
 	var vm ViewModel = (*DashboardView)(nil)
 	// Should not panic.
 	r.fillBaseView(vm)

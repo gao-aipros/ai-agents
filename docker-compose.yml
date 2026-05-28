@@ -52,6 +52,8 @@ services:
     volumes:
       - workspace:/workspace
     environment:
+      WORKER_NAME: claude
+      AGENT_TYPE: claude
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       TASK_TIMEOUT: "3600"
@@ -73,6 +75,8 @@ services:
     volumes:
       - workspace:/workspace
     environment:
+      WORKER_NAME: copilot
+      AGENT_TYPE: copilot
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       TASK_TIMEOUT: "3600"
@@ -94,6 +98,8 @@ services:
     volumes:
       - workspace:/workspace
     environment:
+      WORKER_NAME: opencode
+      AGENT_TYPE: opencode
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       TASK_TIMEOUT: "3600"
@@ -135,6 +141,8 @@ services:
     volumes:
       - workspace:/workspace
     environment:
+      WORKER_NAME: codex
+      AGENT_TYPE: codex
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       TASK_TIMEOUT: "3600"

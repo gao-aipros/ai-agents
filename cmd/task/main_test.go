@@ -999,3 +999,148 @@ func getEventsRootForTest() *cobra.Command {
 	root.AddCommand(eventsCmd)
 	return root
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// requeue-stale — dynamic discovery (--worker not set)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+func TestCmdRequeueStale_DynamicDiscovery(t *testing.T) {
+	mr, cleanup := setupTestRedis(t)
+	defer cleanup()
+
+	// Seed a stale task with old-format heartbeat key (deployment transition)
+	taskID := "stale-task-dyn"
+	oldTime := time.Now().UTC().Add(-1 * time.Hour).Format("2006-01-02T15:04:05Z")
+	mr.Set(tasklib.TaskKey(taskID, "status"), "running")
+	mr.Set(tasklib.TaskKey(taskID, "last_started_at"), oldTime)
+
+	payload, _ := json.Marshal(tasklib.TaskPayload{TaskID: taskID, ThreadID: "th", Instruction: "x"})
+	mr.Lpush(tasklib.ProcessingKey("claude"), string(payload))
+
+	// Create a heartbeat key so the worker is discovered
+	getServices()
+	testRdb.SetEx(context.Background(), tasklib.HeartbeatKey("claude"), `{"worker_name":"claude","hostname":"h1"}`, 30*time.Second)
+
+	cmd := &cobra.Command{}
+	cmd.Flags().StringVar(&requeueWorker, "worker", "", "")
+	cmd.Flags().IntVar(&requeueOlderThan, "older-than", 600, "")
+	requeueWorker = "" // dynamic discovery path
+	requeueOlderThan = 600
+
+	output := captureOutput(func() {
+		if err := cmdRequeueStale(cmd, nil); err != nil {
+			t.Fatalf("cmdRequeueStale: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "Requeued") {
+		t.Errorf("expected 'Requeued' in output, got: %s", output)
+	}
+	if !strings.Contains(output, taskID) {
+		t.Errorf("expected task ID in output, got: %s", output)
+	}
+}
+
+func TestCmdRequeueStale_DynamicDiscoveryNoWorkers(t *testing.T) {
+	_, cleanup := setupTestRedis(t)
+	defer cleanup()
+
+	cmd := &cobra.Command{}
+	cmd.Flags().StringVar(&requeueWorker, "worker", "", "")
+	cmd.Flags().IntVar(&requeueOlderThan, "older-than", 600, "")
+	requeueWorker = ""
+	requeueOlderThan = 600
+
+	output := captureOutput(func() {
+		if err := cmdRequeueStale(cmd, nil); err != nil {
+			t.Fatalf("cmdRequeueStale: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "No workers online") {
+		t.Errorf("expected 'No workers online', got: %s", output)
+	}
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// task workers command
+// ═══════════════════════════════════════════════════════════════════════════════
+
+func TestCmdWorkers_Empty(t *testing.T) {
+	_, cleanup := setupTestRedis(t)
+	defer cleanup()
+
+	output := captureOutput(func() {
+		cmd := &cobra.Command{Use: "workers", RunE: cmdWorkers}
+		cmd.Execute()
+	})
+
+	if !strings.Contains(output, "No workers online") {
+		t.Errorf("expected 'No workers online', got: %s", output)
+	}
+}
+
+func TestCmdWorkers_WithWorkers(t *testing.T) {
+	_, cleanup := setupTestRedis(t)
+	defer cleanup()
+
+	// Seed heartbeat keys so GetWorkerStats discovers workers
+	getServices()
+	testRdb.SetEx(context.Background(), tasklib.HeartbeatKey("claude"), `{"worker_name":"claude","agent_type":"claude","hostname":"host-a","tasks_processed":5,"uptime_seconds":3600,"last_heartbeat_at":"2026-01-01T00:00:00Z"}`, 30*time.Second)
+	testRdb.SetEx(context.Background(), tasklib.HeartbeatKey("copilot"), `{"worker_name":"copilot","agent_type":"copilot","hostname":"host-b","tasks_processed":12,"uptime_seconds":7200,"last_heartbeat_at":"2026-01-01T00:00:00Z"}`, 30*time.Second)
+
+	output := captureOutput(func() {
+		cmd := &cobra.Command{Use: "workers", RunE: cmdWorkers}
+		cmd.Execute()
+	})
+
+	if !strings.Contains(output, "WORKER NAME") {
+		t.Errorf("expected header in output, got: %s", output)
+	}
+	if !strings.Contains(output, "claude") {
+		t.Errorf("expected 'claude' in output, got: %s", output)
+	}
+	if !strings.Contains(output, "copilot") {
+		t.Errorf("expected 'copilot' in output, got: %s", output)
+	}
+	if !strings.Contains(output, "STATUS") {
+		t.Errorf("expected 'STATUS' column in header, got: %s", output)
+	}
+}
+
+func TestCmdWorkers_WorkerWithoutInstances(t *testing.T) {
+	_, cleanup := setupTestRedis(t)
+	defer cleanup()
+
+	// Seed a heartbeat key without matching instance data (empty key payload)
+	getServices()
+	testRdb.Set(context.Background(), tasklib.HeartbeatKey("codex"), `{"worker_name":"codex","agent_type":"codex"}`, 30*time.Second)
+
+	output := captureOutput(func() {
+		cmd := &cobra.Command{Use: "workers", RunE: cmdWorkers}
+		cmd.Execute()
+	})
+
+	if !strings.Contains(output, "codex") {
+		t.Errorf("expected 'codex' in output, got: %s", output)
+	}
+}
+
+func TestCmdWorkers_OldFormatHeartbeat(t *testing.T) {
+	_, cleanup := setupTestRedis(t)
+	defer cleanup()
+
+	// Simulate old-format heartbeat key (worker:type:host:heartbeat) via scan
+	// GetWorkerStats uses SCAN "worker:*:heartbeat" — miniredis supports this
+	getServices()
+	testRdb.Set(context.Background(), "worker:claude:old-host:heartbeat", `{"worker_name":"claude","agent_type":"claude","hostname":"old-host"}`, 30*time.Second)
+
+	output := captureOutput(func() {
+		cmd := &cobra.Command{Use: "workers", RunE: cmdWorkers}
+		cmd.Execute()
+	})
+
+	if !strings.Contains(output, "claude") {
+		t.Errorf("expected 'claude' from old-format key, got: %s", output)
+	}
+}

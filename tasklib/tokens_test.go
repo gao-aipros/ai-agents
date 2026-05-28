@@ -299,7 +299,7 @@ func TestPersistTokenStats(t *testing.T) {
 		t.Errorf("total = %v", total)
 	}
 	// Per-worker
-	worker, _ := rdb.HGetAll(ctx, StatsWorkerKey("claude")).Result()
+	worker, _ := rdb.HGetAll(ctx, StatsAgentKey("claude")).Result()
 	if worker["input_tokens"] != "1000" {
 		t.Errorf("worker = %v", worker)
 	}
@@ -352,7 +352,7 @@ func TestPersistMasterTokenStats(t *testing.T) {
 		t.Errorf("thread fields = %v", th)
 	}
 	// Master counter
-	m, _ := rdb.HGetAll(ctx, StatsWorkerKey("master")).Result()
+	m, _ := rdb.HGetAll(ctx, StatsAgentKey("master")).Result()
 	if m["input_tokens"] != "2000" || m["task_count"] != "1" {
 		t.Errorf("master counter = %v", m)
 	}
@@ -648,7 +648,7 @@ func TestPersistTokenStats_RealRedis(t *testing.T) {
 	}
 
 	// Clean up any leftover keys from previous runs
-	rdb.Del(ctx, StatsTotalKey(), StatsWorkerKey("copilot"))
+	rdb.Del(ctx, StatsTotalKey(), StatsAgentKey("copilot"))
 	rdb.Del(ctx, TaskKey("real-task-001", "input_tokens"))
 	rdb.Del(ctx, TaskKey("real-task-001", "output_tokens"))
 	rdb.Del(ctx, TaskKey("real-task-001", "cache_read_tokens"))
@@ -680,7 +680,7 @@ func TestPersistTokenStats_RealRedis(t *testing.T) {
 	}
 
 	// Verify per-worker
-	worker, err := rdb.HGetAll(ctx, StatsWorkerKey("copilot")).Result()
+	worker, err := rdb.HGetAll(ctx, StatsAgentKey("copilot")).Result()
 	if err != nil {
 		t.Fatalf("HGetAll worker failed: %v", err)
 	}
@@ -695,7 +695,7 @@ func TestPersistTokenStats_RealRedis(t *testing.T) {
 	}
 
 	// Clean up
-	rdb.Del(ctx, StatsTotalKey(), StatsWorkerKey("copilot"))
+	rdb.Del(ctx, StatsTotalKey(), StatsAgentKey("copilot"))
 	rdb.Del(ctx, TaskKey("real-task-001", "input_tokens"))
 	rdb.Del(ctx, TaskKey("real-task-001", "output_tokens"))
 	rdb.Del(ctx, TaskKey("real-task-001", "cache_read_tokens"))
@@ -721,7 +721,7 @@ func TestParseCopilotStderr_Integration(t *testing.T) {
 	}
 
 	// Clean up
-	rdb.Del(ctx, StatsTotalKey(), StatsWorkerKey("copilot"))
+	rdb.Del(ctx, StatsTotalKey(), StatsAgentKey("copilot"))
 	for _, f := range []string{"input_tokens", "output_tokens", "cache_read_tokens"} {
 		rdb.Del(ctx, TaskKey("copilot-int-001", f))
 	}
@@ -739,7 +739,7 @@ func TestParseCopilotStderr_Integration(t *testing.T) {
 	}
 
 	// Clean up
-	rdb.Del(ctx, StatsTotalKey(), StatsWorkerKey("copilot"))
+	rdb.Del(ctx, StatsTotalKey(), StatsAgentKey("copilot"))
 	for _, f := range []string{"input_tokens", "output_tokens", "cache_read_tokens"} {
 		rdb.Del(ctx, TaskKey("copilot-int-001", f))
 	}

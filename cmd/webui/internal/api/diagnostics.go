@@ -46,12 +46,21 @@ func (dr *diagnosticsResource) get(w http.ResponseWriter, r *http.Request) {
 	diag["stale_tasks"] = staleTasks
 
 	queueDepths := make(map[string]int64)
-	for _, workerType := range tasklib.WorkerTypes {
-		dep, err := dr.sysOps.QueueDepth(ctx, tasklib.QueueKey(workerType))
+	queueKeys, err := dr.sysOps.ScanKeys(ctx, "tasks:queue:*", 100)
+	if err != nil {
+		slog.Warn("diagnostics: ScanKeys failed", "error", err)
+	}
+	for _, key := range queueKeys {
+		parts := strings.SplitN(key, ":", 3)
+		if len(parts) < 3 {
+			continue
+		}
+		workerName := parts[2]
+		dep, err := dr.sysOps.QueueDepth(ctx, key)
 		if err != nil {
 			dep = -1
 		}
-		queueDepths[workerType] = dep
+		queueDepths[workerName] = dep
 	}
 	diag["queue_depths"] = queueDepths
 

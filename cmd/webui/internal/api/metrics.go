@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/noodle05/ai-agents/tasklib"
@@ -98,8 +99,13 @@ func (c *redisCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 
 	var pending int64
-	for _, wt := range tasklib.WorkerTypes {
-		if dep, err := c.sysOps.QueueDepth(ctx, tasklib.QueueKey(wt)); err == nil {
+	queueKeys, err := c.sysOps.ScanKeys(ctx, "tasks:queue:*", 100)
+	if err != nil {
+		slog.Warn("metrics: ScanKeys failed", "error", err)
+	}
+	for _, key := range queueKeys {
+		dep, err := c.sysOps.QueueDepth(ctx, key)
+		if err == nil {
 			pending += dep
 		}
 	}
@@ -120,12 +126,17 @@ func (c *redisCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 
 	// ── Queue depth by worker type ──
-	for _, wt := range tasklib.WorkerTypes {
-		dep, err := c.sysOps.QueueDepth(ctx, tasklib.QueueKey(wt))
+	for _, key := range queueKeys {
+		parts := strings.SplitN(key, ":", 3)
+		if len(parts) < 3 {
+			continue
+		}
+		workerName := parts[2]
+		dep, err := c.sysOps.QueueDepth(ctx, key)
 		if err != nil {
 			dep = 0
 		}
-		ch <- prometheus.MustNewConstMetric(c.queueDepth, prometheus.GaugeValue, float64(dep), wt)
+		ch <- prometheus.MustNewConstMetric(c.queueDepth, prometheus.GaugeValue, float64(dep), workerName)
 	}
 }
 

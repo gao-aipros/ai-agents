@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/noodle05/ai-agents/cmd/webui/internal/request"
 	"github.com/noodle05/ai-agents/tasklib"
@@ -81,15 +82,24 @@ func (sr *systemResource) stats(w http.ResponseWriter, r *http.Request) {
 		running = 0
 	}
 
-	// Queue depths + pending count
+	// Queue depths + pending count — dynamic discovery
 	queueDepths := make(map[string]int64)
 	var pending int64
-	for _, workerType := range tasklib.WorkerTypes {
-		dep, err := sr.sysOps.QueueDepth(ctx, tasklib.QueueKey(workerType))
+	queueKeys, err := sr.sysOps.ScanKeys(ctx, "tasks:queue:*", 100)
+	if err != nil {
+		slog.Warn("stats: ScanKeys failed", "error", err)
+	}
+	for _, key := range queueKeys {
+		parts := strings.SplitN(key, ":", 3)
+		if len(parts) < 3 {
+			continue
+		}
+		workerName := parts[2]
+		dep, err := sr.sysOps.QueueDepth(ctx, key)
 		if err != nil {
 			dep = -1
 		}
-		queueDepths[workerType] = dep
+		queueDepths[workerName] = dep
 		pending += dep
 	}
 

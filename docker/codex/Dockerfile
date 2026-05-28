@@ -74,4 +74,4 @@ ENV AGENT_CMD="codex exec --json --yolo --sandbox danger-full-access --skip-git-
     AGENT_TYPE=codex
 
 USER agent
-ENTRYPOINT ["worker-go", "codex"]
+ENTRYPOINT ["worker-go"]

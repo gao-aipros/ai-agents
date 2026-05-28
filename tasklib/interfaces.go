@@ -85,10 +85,10 @@ type EventBus interface {
 
 // WorkerRegistry defines worker heartbeat and stats operations.
 type WorkerRegistry interface {
-	UpdateWorkerHeartbeat(ctx context.Context, workerType, hostname string, data HeartbeatData) error
+	UpdateWorkerHeartbeat(ctx context.Context, workerName string, data HeartbeatData) error
 	GetWorkerStats(ctx context.Context) (WorkerStats, error)
-	GetWorkerInfo(ctx context.Context, workerType string) (*WorkerInfo, error)
-	GetWorkerInstances(ctx context.Context, workerType string) ([]WorkerInstance, error)
+	GetWorkerInfo(ctx context.Context, workerName string) (*WorkerInfo, error)
+	GetWorkerInstances(ctx context.Context, workerName string) ([]WorkerInstance, error)
 }
 
 // ThreadScanner defines thread-state scanning with a caller-supplied predicate.

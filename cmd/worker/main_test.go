@@ -1408,24 +1408,6 @@ func TestSetsRunningStatusImmediately(t *testing.T) {
 	}
 }
 
-func TestValidWorker(t *testing.T) {
-	if !validWorker("claude") {
-		t.Error("claude should be valid")
-	}
-	if !validWorker("copilot") {
-		t.Error("copilot should be valid")
-	}
-	if !validWorker("opencode") {
-		t.Error("opencode should be valid")
-	}
-	if !validWorker("codex") {
-		t.Error("codex should be valid")
-	}
-	if validWorker("invalid") {
-		t.Error("invalid should not be valid")
-	}
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
 // Observability — cancelled_by audit field
 // ═══════════════════════════════════════════════════════════════════════════════

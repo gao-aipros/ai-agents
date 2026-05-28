@@ -84,4 +84,4 @@ RUN ln -sf /home/agent/.claude/claude.json /home/agent/.claude.json \
     && chown -h agent:agent /home/agent/.claude.json
 
 USER agent
-ENTRYPOINT ["entrypoint.sh", "claude"]
+ENTRYPOINT ["entrypoint.sh"]

@@ -155,32 +155,33 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Per-worker token aggregation from tasks
+	// Per-worker token aggregation from tasks — dynamic discovery
 	agentMap := map[string]*tasklib.TokenStats{}
-	for _, wt := range tasklib.WorkerTypes {
-		agentMap[wt] = &tasklib.TokenStats{}
-	}
 	tasks, _ := tr.tasks.ListTasks(r.Context(), "", "", threadID, 200, 0, "", "")
 	if tasks != nil {
 		for _, t := range tasks {
-			at := agentMap[t.Worker]
-			if at != nil {
-				at.InputTokens += t.InputTokens
-				at.OutputTokens += t.OutputTokens
-				at.CacheReadTokens += t.CacheReadTokens
-				at.CacheWriteTokens += t.CacheWriteTokens
-				at.ReasoningTokens += t.ReasoningTokens
+			if t.Worker == "" {
+				continue
 			}
+			at, ok := agentMap[t.Worker]
+			if !ok {
+				at = &tasklib.TokenStats{}
+				agentMap[t.Worker] = at
+			}
+			at.InputTokens += t.InputTokens
+			at.OutputTokens += t.OutputTokens
+			at.CacheReadTokens += t.CacheReadTokens
+			at.CacheWriteTokens += t.CacheWriteTokens
+			at.ReasoningTokens += t.ReasoningTokens
 		}
 	}
 
 	workerTokens := map[string]tasklib.TokenStats{}
-	for _, wt := range tasklib.WorkerTypes {
-		at := agentMap[wt]
-		if at != nil && at.HasAny() {
-			workerTokens[wt] = *at
+	for worker, at := range agentMap {
+		if at.HasAny() {
+			workerTokens[worker] = *at
 			tokenRows = append(tokenRows, templates.TokenRow{
-				Agent:     wt,
+				Agent:     worker,
 				Input:     tasklib.FormatTokenCount(at.InputTokens),
 				Output:    tasklib.FormatTokenCount(at.OutputTokens),
 				Cache:     tasklib.FormatTokenCount(at.CacheReadTokens),
