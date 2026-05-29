@@ -1399,8 +1399,8 @@ func TestMetricsEndpoint_QueueDepthLabels(t *testing.T) {
 
 	body := w.Body.String()
 	for _, wt := range []string{"claude", "copilot"} {
-		if !strings.Contains(body, `worker_type="`+wt+`"`) {
-			t.Errorf("expected worker_type label %q in output", wt)
+		if !strings.Contains(body, `worker_name="`+wt+`"`) {
+			t.Errorf("expected worker_name label %q in output", wt)
 		}
 	}
 }

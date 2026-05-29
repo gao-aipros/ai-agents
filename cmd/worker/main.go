@@ -238,7 +238,8 @@ func processOneTask(
 	events.PushThreadEvent(context.Background(), threadID, &tasklib.Event{
 		Type:           tasklib.EventTaskStarted,
 		TaskID:         taskID,
-		WorkerType:     agentType,
+		WorkerType:     workerName,
+			AgentType:      agentType,
 		WorkerHostname: hostname,
 		CorrelationID:  correlationID,
 	})
@@ -348,7 +349,8 @@ func processOneTask(
 		events.PushThreadEvent(context.Background(), threadID, &tasklib.Event{
 			Type:           tasklib.EventTaskCancelled,
 			TaskID:         taskID,
-			WorkerType:     agentType,
+			WorkerType:     workerName,
+			AgentType:      agentType,
 			WorkerHostname: hostname,
 			CorrelationID:  correlationID,
 			Detail: tasklib.TaskCancelledDetail{
@@ -487,7 +489,8 @@ func processOneTask(
 		events.PushThreadEvent(context.Background(), threadID, &tasklib.Event{
 			Type:           tasklib.EventTaskCompleted,
 			TaskID:         taskID,
-			WorkerType:     agentType,
+			WorkerType:     workerName,
+			AgentType:      agentType,
 			WorkerHostname: hostname,
 			CorrelationID:  correlationID,
 			Detail:         tasklib.TaskCompletedDetail{ExitCode: exitCode, DurationMs: durationMs, InputTokens: tokenStats.InputTokens, OutputTokens: tokenStats.OutputTokens, CacheReadTokens: tokenStats.CacheReadTokens, CacheWriteTokens: tokenStats.CacheWriteTokens, ReasoningTokens: tokenStats.ReasoningTokens},
@@ -500,7 +503,8 @@ func processOneTask(
 		events.PushThreadEvent(context.Background(), threadID, &tasklib.Event{
 			Type:           tasklib.EventTaskFailed,
 			TaskID:         taskID,
-			WorkerType:     agentType,
+			WorkerType:     workerName,
+			AgentType:      agentType,
 			WorkerHostname: hostname,
 			CorrelationID:  correlationID,
 			Detail:         tasklib.TaskFailedDetail{ExitCode: exitCode, ErrorMessage: cappedStderr},

@@ -174,6 +174,7 @@ func (v *TokenStatsView) baseView() *BaseView { return &v.BaseView }
 // TaskListView is the view model for the task list page.
 type TaskListView struct {
 	BaseView
+	Workers []string
 	SortBy  string
 	SortDir string
 }
