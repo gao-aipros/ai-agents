@@ -3,7 +3,7 @@ ARG BASE_IMAGE=ai-base:latest
 # Build stage: download Claude CLI
 FROM debian:trixie AS claude-build
 
-ARG CLAUDE_VERSION=2.1.153
+ARG CLAUDE_VERSION=2.1.154
 ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -65,7 +65,9 @@ ENV ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic \
     ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-v4-pro[1m] \
     ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-flash \
     CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash \
-    CLAUDE_CODE_EFFORT_LEVEL=max
+    CLAUDE_CODE_EFFORT_LEVEL=max \
+    DISABLE_UPDATES=1 \
+    DISABLE_AUTOUPDATER=1
 
 # Pre-built Go binaries
 ARG TARGETARCH
