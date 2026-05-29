@@ -26,11 +26,11 @@ func (wr *workersResource) list(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// GET /api/workers/{worker_type}
+// GET /api/workers/{worker_name}
 func (wr *workersResource) get(w http.ResponseWriter, r *http.Request) {
-	workerType := r.PathValue("worker_type")
+	workerName := r.PathValue("worker_name")
 
-	info, err := wr.workers.GetWorkerInfo(r.Context(), workerType)
+	info, err := wr.workers.GetWorkerInfo(r.Context(), workerName)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return
@@ -38,11 +38,11 @@ func (wr *workersResource) get(w http.ResponseWriter, r *http.Request) {
 	Respond(w, r, http.StatusOK, info)
 }
 
-// GET /api/workers/{worker_type}/instances
+// GET /api/workers/{worker_name}/instances
 func (wr *workersResource) instances(w http.ResponseWriter, r *http.Request) {
-	workerType := r.PathValue("worker_type")
+	workerName := r.PathValue("worker_name")
 
-	instances, err := wr.workers.GetWorkerInstances(r.Context(), workerType)
+	instances, err := wr.workers.GetWorkerInstances(r.Context(), workerName)
 	if err != nil {
 		serverError(w, "internal error", err)
 		return

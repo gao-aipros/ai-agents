@@ -19,6 +19,9 @@
       <div class="filters">
         <select name="worker">
           <option value="">All workers</option>
+          {{range .Workers}}
+          <option value="{{.}}">{{.}}</option>
+          {{end}}
         </select>
         <select name="status">
           <option value="">All statuses</option>

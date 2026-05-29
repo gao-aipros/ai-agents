@@ -33,6 +33,7 @@ type Event struct {
 	CorrelationID  string      `json:"correlation_id,omitempty"`
 	TaskID         string      `json:"task_id,omitempty"`
 	WorkerType     string      `json:"worker_type,omitempty"`
+	AgentType      string      `json:"agent_type,omitempty"`
 	WorkerHostname string      `json:"worker_hostname,omitempty"`
 	Detail         interface{} `json:"detail"`
 }

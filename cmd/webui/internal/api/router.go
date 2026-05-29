@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"sync/atomic"
 
@@ -35,7 +36,7 @@ func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *t
 	r.Handle("/static/*", http.StripPrefix("/static/", fileServer))
 
 	// Page resources
-	pages := &pageResource{tasks: services.Tasks, threads: services.Threads, requests: services.Requests, handler: handler, renderer: renderer}
+	pages := &pageResource{tasks: services.Tasks, threads: services.Threads, requests: services.Requests, handler: handler, renderer: renderer, workers: services.Workers}
 
 	// Page routes (full HTML pages)
 	r.Get("/", pages.dashboard)
@@ -66,8 +67,8 @@ func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *t
 
 		// Workers
 		r.Get("/workers", wrk.list)
-		r.Get("/workers/{worker_type}", wrk.get)
-		r.Get("/workers/{worker_type}/instances", wrk.instances)
+		r.Get("/workers/{worker_name}", wrk.get)
+		r.Get("/workers/{worker_name}/instances", wrk.instances)
 
 		// Requests — strict rate limits
 		r.With(rateLimitMiddleware(mwCfg.RequestsLimiter), maxBytesMiddleware(32*1024)).
@@ -120,6 +121,7 @@ type pageResource struct {
 	requests tasklib.RequestStore
 	handler  *request.Handler
 	renderer *templates.Renderer
+	workers  tasklib.WorkerRegistry
 }
 
 // GET /
@@ -196,7 +198,15 @@ func (pr *pageResource) threadDetail(w http.ResponseWriter, r *http.Request) {
 // GET /tasks
 func (pr *pageResource) taskList(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	var workerNames []string
+	if stats, err := pr.workers.GetWorkerStats(r.Context()); err == nil {
+		for name := range stats {
+			workerNames = append(workerNames, name)
+		}
+	}
+	sort.Strings(workerNames)
 	Page(w, pr.renderer, "page-task-list", &templates.TaskListView{
+		Workers: workerNames,
 		SortBy:  q.Get("sort_by"),
 		SortDir: q.Get("sort_dir"),
 	})

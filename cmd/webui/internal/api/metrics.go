@@ -50,12 +50,12 @@ func newRedisCollector(sysOps tasklib.SystemOps, workers tasklib.WorkerRegistry,
 		tasksTotal:    labels("tasks_total", "Total tasks by status.", "status"),
 		threadsActive: labels("threads_active", "Non-terminal threads."),
 		threadsStuck:  labels("threads_stuck", "Active threads with no recent update."),
-		workersOnline: labels("workers_online", "Online worker instances by type.", "worker_type"),
-		queueDepth:    labels("queue_depth", "Tasks waiting in queue per worker type.", "worker_type"),
+		workersOnline: labels("workers_online", "Online worker instances by name.", "worker_name"),
+		queueDepth:    labels("queue_depth", "Tasks waiting in queue per worker name.", "worker_name"),
 		tasksRunning:  labels("tasks_running", "Tasks currently executing."),
 		tasksPending:  labels("tasks_pending", "Tasks waiting in all queues."),
-		taskDuration:  labels("task_duration_seconds", "Task execution time (in-memory, resets on restart).", "worker_type"),
-		queueWait:     labels("queue_wait_seconds", "Queue wait time (in-memory, resets on restart).", "worker_type"),
+		taskDuration:  labels("task_duration_seconds", "Task execution time (in-memory, resets on restart).", "worker_name"),
+		queueWait:     labels("queue_wait_seconds", "Queue wait time (in-memory, resets on restart).", "worker_name"),
 	}
 }
 
