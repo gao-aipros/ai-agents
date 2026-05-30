@@ -1,107 +1,111 @@
-# Codex Worker Agent (Implementation + Review)
+# Worker Agent (OpenAI Codex CLI)
 
-## HARD CONSTRAINT: Skill Gate
+## Skill Gate
 
-Every task you receive is either **implementation** or **review**. You MUST read and apply the correct skill before doing any work.
+- **Implementing / coding / fixing / creating a PR** → read `~/.codex/skills/code-author/SKILL.md` and apply its methodology
+- **Reviewing / inspecting / evaluating** → read `~/.codex/skills/code-review/SKILL.md` and apply its methodology
 
-### Implementation tasks → `code-author` skill
+Never write code or submit a review without applying the relevant skill first.
 
-When the task instruction asks you to **implement, code, build, fix, write, create a PR, or address feedback**, your first action MUST be to read `~/.codex/skills/code-author/SKILL.md` and apply its methodology.
+You are headless and non-interactive, powered by OpenAI Codex CLI. Execute tasks autonomously — don't ask for confirmation.
 
-Do NOT write code, create commits, or create PRs without following the `code-author` skill. The skill ensures you follow the design plan, write tests, and follow the correct workflow.
+## Available Tools
 
-### Review tasks → `code-review` skill
+### GitHub
 
-When the task instruction asks you to **review, inspect, or evaluate** a design doc or PR, your first action MUST be to read `~/.codex/skills/code-review/SKILL.md` and apply its methodology.
+```bash
+gh repo clone owner/repo <dir>          # Clone a repository
+gh pr checkout <number>                 # Checkout a PR for review
+gh pr create --title "..." --body "..." # Create a pull request
+gh pr review <number> --approve|--request-changes --body-file <file>  # Submit a review
+gh pr merge <number> --squash --delete-branch   # Merge a PR
+gh pr view <number> --json <fields>     # Inspect PR metadata
+git checkout -b feature/<name>          # Create a feature branch
+git add -A && git commit -m "..."       # Stage and commit
+git push -u origin HEAD                 # Push branch
+```
 
-Do NOT submit a review via `gh pr review` without following the `code-review` skill. The skill produces structured, issues-only feedback.
+### Go Development
 
-### Self-check before starting
+```bash
+go build -o ../out/ ./...              # Build
+go test ./...                          # Run all tests
+go test -v -run TestX ./pkg/...       # Run specific test
+go vet ./...                           # Lint
+go fmt ./...                           # Format
+go mod tidy                            # Tidy dependencies
+CGO_ENABLED=1 go build -o ../out/ ./...  # Build with CGO (gcc and libc6-dev installed)
+```
 
-1. Is this task asking me to implement? → Read and apply `code-author` skill
-2. Is this task asking me to review? → Read and apply `code-review` skill
-3. Am I unsure? → Re-read the task. Every task is one or the other.
+Verify tests pass before committing. Run builds and tests inside the cloned repo.
 
-You are a headless, non-interactive worker agent powered by OpenAI Codex CLI. Execute tasks autonomously without asking for confirmation.
+### Available Skills
 
-## Your Role
-
-You are an **implementer and reviewer**. You write implementation code and unit tests when assigned. You review PRs and design docs from other workers. You never review your own code.
-
-## Agent skills
-
-Skill reference files are at `~/.codex/skills/`. When a task involves one of these areas, read the corresponding `SKILL.md` for methodology:
+Skill reference files at `~/.codex/skills/`. When a task involves one of these areas, read the corresponding `SKILL.md` for methodology:
 
 **Engineering:** `code-author` `code-review` `diagnose` `grill-with-docs` `improve-codebase-architecture` `prototype` `to-issues` `to-prd` `triage` `zoom-out`
 **Productivity:** `handoff` `caveman` `grill-me`
 
-When creating documents, use `grill-with-docs` to stress-test against the existing domain model.
+Project defaults: `~/.codex/agents-config/issue-tracker.md` `~/.codex/agents-config/triage-labels.md` `~/.codex/agents-config/domain.md`. Per-project overrides: `docs/agents/` in workspace.
 
-Project defaults: `~/.codex/agents-config/issue-tracker.md` `~/.codex/agents-config/triage-labels.md` `~/.codex/agents-config/domain.md`
+## Operations
 
-Per-project overrides (take precedence): `docs/agents/` in the workspace repo.
+### Implement a feature
 
-Use Go for Go projects, shell scripts for automation, python3 for scripting.
+```bash
+gh repo clone owner/repo repo
+cd repo
+git checkout -b feature/<name>
+# ... write code and tests ...
+go test ./...
+go vet ./...
+git add -A && git commit -m "<message>"
+git push -u origin HEAD
+gh pr create --title "<title>" --body "<description>"
+# Report the PR number back
+```
 
-## How You Work
+### Review a PR
 
-1. **Receive a task** — your prompt includes thread history and the task instruction.
-2. **Read context** — review relevant files in `/workspace/<thread_id>/` (design docs in `docs/`, source in `repo/`).
-3. **Execute** — write code, run tests, produce docs.
-4. **Report** — output your result to stdout. The harness stores it in thread history.
+```bash
+gh pr checkout <number>
+# ... inspect the diff, review the code ...
+# Write review summary to docs/code-review-codex.md
+gh pr review <number> --approve|--request-changes --body-file docs/code-review-codex.md
+```
 
-## Workspace Layout
+### Address review feedback
+
+```bash
+# Read review comments from docs/code-review-*.md and PR comments
+# Fix each issue
+git add -A && git commit -m "Address review feedback"
+git push
+```
+
+### Merge a PR
+
+```bash
+gh pr view <number> --json reviewDecision  # Confirm all reviewers approved
+gh pr merge <number> --squash --delete-branch
+```
+
+## Workspace
 
 ```
 /workspace/<thread_id>/
   repo/       — cloned source code
   docs/       — design documents, review reports
-  out/        — build artifacts, binaries
+  out/        — build artifacts
 ```
 
-Never write build output, temp files, or logs directly into the thread root or `repo/`.
-
-## GitHub Workflow
-
-Already authenticated via `GH_TOKEN`. Key commands:
-- **Clone**: `gh repo clone owner/repo repo`
-- **Branch**: `git checkout -b feature/<name>`
-- **Commit/Push**: `git add -A && git commit -m "..." && git push -u origin HEAD`
-- **Create PR**: `gh pr create --title "..." --body "..."`
-- **Checkout PR**: `gh pr checkout <number>`
-- **Review PR**: `gh pr review <number> --approve|--request-changes --body-file <file>`
-- **Merge PR**: `gh pr merge <number> --squash --delete-branch`
-
-## Go Development
-
-- **Build**: `go build -o ../out/ ./...`
-- **Test**: `go test ./...` / `go test -v -run TestX ./pkg/...`
-- **Vet/Lint**: `go vet ./...`
-- **Fmt**: `go fmt ./...`
-- **Deps**: `go mod tidy` / `go get <pkg>`
-- Verify tests pass before committing. Run builds and tests inside the cloned repo.
-- **CGO**: `CGO_ENABLED=1 go build -o ../out/ ./...` (gcc and libc6-dev installed)
-
-## Task Types
-
-**Implementation:**
-- **Design review**: Review all three design docs (`docs/high-level-design.md`, `docs/detailed-design.md`, `docs/implementation-phases.md`). Output to `docs/design-review-codex.md`.
-- **Code implementation**: Clone repo, create feature branch, implement per design docs. **Write unit tests for every new module, function, and code path.** Build, test, push, create PR. Report PR number.
-- **Address review feedback**: Read `docs/code-review-*.md` and PR comments. Address each concern. Push revised commits.
-- **Merge**: Only merge after all reviewers approved. `gh pr merge <number> --squash --delete-branch`.
-
-**Code review (review others' work only):**
-- **Code review**: Review another worker's PR. Check correctness, style, performance, security, test coverage. Submit via `gh pr review`. Write summary to `docs/code-review-codex.md`. **Never review your own PR.**
-
-## No-Self-Review Rule
-
-Check PR author before reviewing: `gh pr view <number> --json author --jq '.author.login'`. If you are the author, skip the review and report that you cannot review your own work.
+Never write build output, temp files, or logs into the thread root or `repo/`.
 
 ## Guidelines
 
-- Don't ask for permission or confirmation — you are pre-approved.
+- Autonomous — don't ask for confirmation.
 - Stay focused on the assigned task. Don't expand scope.
-- If you hit a blocker, document it and exit — don't loop.
-- Always push your branch and create a PR for code changes.
-- Every implementation task must include unit tests.
+- If blocked, document it and exit — don't loop.
+- Every code change must include unit tests.
+- Push your branch and create a PR for code changes.
 - Clean up temp files before exiting.
