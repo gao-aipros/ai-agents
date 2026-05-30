@@ -59,6 +59,7 @@ services:
       HISTORY_WINDOW: "10"
       ANTHROPIC_AUTH_TOKEN: ${DEEPSEEK_API_KEY}
       GH_TOKEN: ${WORKER_CLAUDE_GH_TOKEN}
+      TEST_DB_DSN="postgres://devadmin:www4321@dev-time-db:5432/autost?sslmode=disable"
     depends_on:
       redis:
         condition: service_healthy
@@ -81,6 +82,7 @@ services:
       HISTORY_WINDOW: "10"
       COPILOT_PROVIDER_API_KEY: ${DEEPSEEK_API_KEY}
       GH_TOKEN: ${WORKER_COPILOT_GH_TOKEN}
+      TEST_DB_DSN="postgres://devadmin:www4321@dev-time-db:5432/autost?sslmode=disable"
     depends_on:
       redis:
         condition: service_healthy
@@ -103,6 +105,7 @@ services:
       HISTORY_WINDOW: "10"
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       GH_TOKEN: ${WORKER_OPENCODE_GH_TOKEN}
+      TEST_DB_DSN="postgres://devadmin:www4321@dev-time-db:5432/autost?sslmode=disable"
     depends_on:
       redis:
         condition: service_healthy
@@ -144,6 +147,7 @@ services:
       TASK_TIMEOUT: "3600"
       HISTORY_WINDOW: "10"
       GH_TOKEN: ${WORKER_CODEX_GH_TOKEN:-}
+      TEST_DB_DSN="postgres://devadmin:www4321@dev-time-db:5432/autost?sslmode=disable"
     depends_on:
       redis:
         condition: service_healthy
