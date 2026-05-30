@@ -59,7 +59,7 @@ services:
       HISTORY_WINDOW: "10"
       ANTHROPIC_AUTH_TOKEN: ${DEEPSEEK_API_KEY}
       GH_TOKEN: ${WORKER_CLAUDE_GH_TOKEN}
-      TEST_DB_DSN="postgres://devadmin:www4321@dev-time-db:5432/autost?sslmode=disable"
+      TEST_DB_DSN: "postgres://${DB_USER:-devadmin}:${DB_PASSWORD}@time-db:5432/autost?sslmode=disable"
     depends_on:
       redis:
         condition: service_healthy
@@ -82,7 +82,7 @@ services:
       HISTORY_WINDOW: "10"
       COPILOT_PROVIDER_API_KEY: ${DEEPSEEK_API_KEY}
       GH_TOKEN: ${WORKER_COPILOT_GH_TOKEN}
-      TEST_DB_DSN="postgres://devadmin:www4321@dev-time-db:5432/autost?sslmode=disable"
+      TEST_DB_DSN: "postgres://${DB_USER:-devadmin}:${DB_PASSWORD}@time-db:5432/autost?sslmode=disable"
     depends_on:
       redis:
         condition: service_healthy
@@ -105,7 +105,7 @@ services:
       HISTORY_WINDOW: "10"
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       GH_TOKEN: ${WORKER_OPENCODE_GH_TOKEN}
-      TEST_DB_DSN="postgres://devadmin:www4321@dev-time-db:5432/autost?sslmode=disable"
+      TEST_DB_DSN: "postgres://${DB_USER:-devadmin}:${DB_PASSWORD}@time-db:5432/autost?sslmode=disable"
     depends_on:
       redis:
         condition: service_healthy
@@ -147,7 +147,7 @@ services:
       TASK_TIMEOUT: "3600"
       HISTORY_WINDOW: "10"
       GH_TOKEN: ${WORKER_CODEX_GH_TOKEN:-}
-      TEST_DB_DSN="postgres://devadmin:www4321@dev-time-db:5432/autost?sslmode=disable"
+      TEST_DB_DSN: "postgres://${DB_USER:-devadmin}:${DB_PASSWORD}@time-db:5432/autost?sslmode=disable"
     depends_on:
       redis:
         condition: service_healthy
@@ -159,15 +159,15 @@ services:
       retries: 3
       start_period: 10s
 
-  dev-time-db:
+  time-db:
     image: timescale/timescaledb:latest-pg18
     restart: unless-stopped
     shm_size: 128mb
     volumes:
       - dev_db_data:/var/lib/postgresql
     environment:
-      POSTGRES_USER: devadmin
-      POSTGRES_PASSWORD: "www4321"
+      POSTGRES_USER: ${DB_USER:-devadmin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: "autost"
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     healthcheck:

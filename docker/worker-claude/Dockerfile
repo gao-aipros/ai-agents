@@ -58,7 +58,7 @@ USER root
 # Claude CLI
 COPY --from=claude-download /usr/local/bin/claude /usr/local/bin/claude
 
-ENV AGENT_CMD="claude -p --output-format stream-json --verbose " \
+ENV AGENT_CMD="claude -p --output-format stream-json --verbose --dangerously-skip-permissions" \
     AGENT_TYPE=claude
 
 RUN mkdir -p /home/agent/.claude \
