@@ -32,8 +32,8 @@ moon-bridge (independent, golang:1.26.3-trixie + moon-bridge binary)
 | **master-agent** | Design and planning only. Never writes implementation code or submits reviews. Creates design docs, coordinates the workflow, delegates tasks, and makes final design decisions. |
 | **worker-claude** | Implementer + reviewer. Writes code and unit tests when assigned. Reviews PRs and design docs from other workers. Never reviews own code. |
 | **codex** | Implementer + reviewer. Writes code and unit tests when assigned. Reviews PRs and design docs from other workers. Never reviews own code. |
-| **copilot** | Reviewer only. Reviews design docs and PRs. Does not write implementation code. |
-| **opencode** | Reviewer only. Reviews design docs and PRs. Does not write implementation code. |
+| **copilot** | Implementer + reviewer. Writes code and unit tests when assigned. Reviews PRs and design docs from other workers. |
+| **opencode** | Implementer + reviewer. Writes code and unit tests when assigned. Reviews PRs and design docs from other workers. |
 
 ### Workflow
 
