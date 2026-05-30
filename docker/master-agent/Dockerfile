@@ -3,7 +3,7 @@ ARG BASE_IMAGE=ai-base:latest
 # Build stage: download Claude CLI
 FROM debian:trixie AS claude-build
 
-ARG CLAUDE_VERSION=2.1.153
+ARG CLAUDE_VERSION=2.1.158
 ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -58,17 +58,6 @@ USER root
 # Claude CLI
 COPY --from=claude-build /usr/local/bin/claude /usr/local/bin/claude
 
-# DeepSeek config (non-sensitive defaults)
-ENV ANTHROPIC_BASE_URL=https://api.deepseek.com/anthropic \
-    ANTHROPIC_MODEL=deepseek-v4-pro[1m] \
-    ANTHROPIC_DEFAULT_OPUS_MODEL=deepseek-v4-pro[1m] \
-    ANTHROPIC_DEFAULT_SONNET_MODEL=deepseek-v4-pro[1m] \
-    ANTHROPIC_DEFAULT_HAIKU_MODEL=deepseek-v4-flash \
-    CLAUDE_CODE_SUBAGENT_MODEL=deepseek-v4-flash \
-    CLAUDE_CODE_EFFORT_LEVEL=max \
-    DISABLE_UPDATES=1 \
-    DISABLE_AUTOUPDATER=1
-
 # Pre-built Go binaries
 ARG TARGETARCH
 COPY out/${TARGETARCH}/task-go /usr/local/bin/task
@@ -84,6 +73,7 @@ COPY --chown=agent:agent docs/agents/ /home/agent/.claude/agents-config/
 # Reference copies outside the volume so config files update on redeploy
 RUN mkdir -p /opt/claude-reference && chown agent:agent /opt/claude-reference
 COPY --chown=agent:agent docker/master-agent/CLAUDE.md /opt/claude-reference/CLAUDE.md
+COPY --chown=agent:agent docker/master-agent/settings.json /opt/claude-reference/settings.json
 COPY --from=skills-download --chown=agent:agent /tmp/skills-out /opt/claude-reference/skills/
 COPY --chown=agent:agent docs/agents/ /opt/claude-reference/agents-config/
 

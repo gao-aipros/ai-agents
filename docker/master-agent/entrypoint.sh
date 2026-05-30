@@ -11,6 +11,9 @@ CLAUDE_DIR="/home/agent/.claude"
 if [ -d "$REF_DIR" ] && [ -f "$REF_DIR/CLAUDE.md" ]; then
     cp "$REF_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md"
 fi
+if [ -d "$REF_DIR" ] && [ -f "$REF_DIR/settings.json" ]; then
+    cp "$REF_DIR/settings.json" "$CLAUDE_DIR/settings.json"
+fi
 if [ -d "$REF_DIR/skills" ] && ls -A "$REF_DIR/skills" >/dev/null 2>&1; then
     rm -rf "$CLAUDE_DIR/skills"
     cp -r "$REF_DIR/skills" "$CLAUDE_DIR/skills"

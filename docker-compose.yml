@@ -123,15 +123,15 @@ services:
       retries: 3
       start_period: 5s
 
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    restart: unless-stopped
-    command: tunnel --no-autoupdate run
-    environment:
-      TUNNEL_TOKEN: ${CLOUDFLARED_TUNNEL_TOKEN}
-    depends_on:
-      - master
-
+#  cloudflared:
+#    image: cloudflare/cloudflared:latest
+#    restart: unless-stopped
+#    command: tunnel --no-autoupdate run
+#    environment:
+#      TUNNEL_TOKEN: ${CLOUDFLARED_TUNNEL_TOKEN}
+#    depends_on:
+#      - master
+#
   worker-codex:
     image: ${WORKER_CODEX_IMAGE:-codex:latest}
     restart: unless-stopped
