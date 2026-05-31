@@ -114,6 +114,7 @@ func (h *Handler) processPlainText(ctx context.Context, threadID string, stdout 
 				Role:      h.cfg.AgentName,
 				Type:      "plan",
 				Content:   rawLine,
+				Metadata:  orchestratorMeta(h.cfg.AgentRole),
 				Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 			}); err != nil {
 				h.logger.Warn(fmt.Sprintf("thread=%s AppendMessage error: %v", threadID, err))

@@ -176,7 +176,7 @@ func main() {
 			continue
 		}
 
-		processOneTask(log, client.Threads, client.History, client.Events, rdb, result, workerName, agentType, agentCmd,
+		processOneTask(log, client.Threads, client.History, client.Events, rdb, result, workerName, workerRole, agentType, agentCmd,
 			taskTimeout, historyWindow, workspaceDir, processingKey, hostname, &tasksProcessed, alertCfg)
 	}
 
@@ -198,7 +198,7 @@ func processOneTask(
 	history tasklib.ThreadHistory,
 	events tasklib.EventBus,
 	rdb *redis.Client,
-	taskJSON, workerName, agentType, agentCmd string,
+	taskJSON, workerName, workerRole, agentType, agentCmd string,
 	defaultTimeout, defaultHistoryWindow int,
 	workspaceDir, processingKey, hostname string,
 	tasksProcessed *atomic.Int64,
@@ -363,9 +363,9 @@ func processOneTask(
 
 		cancelMsg, _ := json.Marshal(map[string]interface{}{
 			"role":      workerName,
-			"content":   fmt.Sprintf("[cancelled] Task %s was cancelled by master", taskID),
+			"content":   fmt.Sprintf("[cancelled] Task %s was cancelled by orchestrator", taskID),
 			"timestamp": cancelledAt,
-			"metadata":  map[string]string{"task_id": taskID},
+			"metadata":  workerMsgMeta(taskID, workerRole),
 		})
 		rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(threadID), string(cancelMsg))
 		rdb.Expire(context.Background(), tasklib.ThreadMessagesKey(threadID), tasklib.TTLThread)
@@ -532,7 +532,7 @@ func processOneTask(
 		"role":      workerName,
 		"content":   cappedResult,
 		"timestamp": completedAt,
-		"metadata":  map[string]string{"task_id": taskID},
+		"metadata":  workerMsgMeta(taskID, workerRole),
 	})
 	rdb.RPush(context.Background(), tasklib.ThreadMessagesKey(threadID), string(resultMsg))
 	rdb.Expire(context.Background(), tasklib.ThreadMessagesKey(threadID), tasklib.TTLThread)
@@ -557,6 +557,15 @@ func processOneTask(
 func die(msg string) {
 	fmt.Fprintf(os.Stderr, "ERROR: %s\n", msg)
 	os.Exit(1)
+}
+
+// workerMsgMeta returns message metadata with the worker role if set.
+func workerMsgMeta(taskID, role string) map[string]string {
+	m := map[string]string{"task_id": taskID}
+	if role != "" {
+		m["worker_role"] = role
+	}
+	return m
 }
 
 func mustEnv(key string) string {

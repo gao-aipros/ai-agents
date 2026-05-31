@@ -10,10 +10,11 @@ import (
 
 // WorkerInfo represents aggregated information about a worker type.
 type WorkerInfo struct {
-	Instances    int `json:"instances"`
-	Online       int `json:"online"`
-	TotalActive  int `json:"total_active"`
-	TotalThreads int `json:"total_threads"`
+	Instances    int    `json:"instances"`
+	Online       int    `json:"online"`
+	TotalActive  int    `json:"total_active"`
+	TotalThreads int    `json:"total_threads"`
+	Role         string `json:"role,omitempty"`
 }
 
 // WorkerStats is the full per-worker-type stats map.
@@ -80,6 +81,16 @@ func (c *Client) GetWorkerStats(ctx context.Context) (WorkerStats, error) {
 			}
 			s.Instances++
 			s.Online++
+
+			// Extract role from heartbeat payload (if set)
+			if s.Role == "" {
+				if raw, err := c.rdb.Get(ctx, key).Result(); err == nil {
+					var hb HeartbeatData
+					if json.Unmarshal([]byte(raw), &hb) == nil && hb.Role != "" {
+						s.Role = hb.Role
+					}
+				}
+			}
 		}
 		cursor = nextCursor
 		if cursor == 0 {

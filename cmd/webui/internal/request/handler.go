@@ -247,6 +247,14 @@ func (h *Handler) ActiveRequests() int {
 }
 
 // cleanupCtx returns a context with a 30s deadline for Redis cleanup operations.
+// orchestratorMeta returns message metadata with the orchestrator role if set.
+func orchestratorMeta(role string) map[string]string {
+	if role == "" {
+		return nil
+	}
+	return map[string]string{"orchestrator_role": role}
+}
+
 func cleanupCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 30*time.Second)
 }
@@ -264,6 +272,7 @@ func (h *Handler) writeResponseMessage(ctx context.Context, threadID, content st
 		Type:      "response",
 		Content:   content,
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Metadata:  orchestratorMeta(h.cfg.AgentRole),
 	})
 
 	locked, err := h.threads.IsThreadLocked(cleanCtx, threadID)
@@ -290,6 +299,7 @@ func (h *Handler) writeErrorMessage(ctx context.Context, threadID, content strin
 		Type:      "error",
 		Content:   content,
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Metadata:  orchestratorMeta(h.cfg.AgentRole),
 	})
 
 	locked, err := h.threads.IsThreadLocked(cleanCtx, threadID)
