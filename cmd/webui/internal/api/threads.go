@@ -20,6 +20,7 @@ type threadsResource struct {
 	tokens        tasklib.TokenLedger
 	renderer      *templates.Renderer
 	paths         *request.PathsConfig
+	agentName     string
 }
 
 // POST /api/threads
@@ -143,11 +144,11 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 	// Build token rows for the token usage table
 	var tokenRows []templates.TokenRow
 
-	// Master agent tokens
+	// Orchestrator agent tokens
 	masterTokens, _ := tr.tokens.GetMasterTokenStats(r.Context(), threadID)
 	if masterTokens.HasAny() {
 		tokenRows = append(tokenRows, templates.TokenRow{
-			Agent:     "master",
+			Agent:     tr.agentName,
 			Input:     tasklib.FormatTokenCount(masterTokens.InputTokens),
 			Output:    tasklib.FormatTokenCount(masterTokens.OutputTokens),
 			Cache:     tasklib.FormatTokenCount(masterTokens.CacheReadTokens),
@@ -215,8 +216,8 @@ func (tr *threadsResource) get(w http.ResponseWriter, r *http.Request) {
 			"messages":   messages,
 			"children":   children,
 			"tokens": map[string]interface{}{
-				"master":  masterTokens,
-				"workers": workerTokens,
+				tr.agentName: masterTokens,
+				"workers":    workerTokens,
 			},
 			"token_rows": tokenRows,
 		})

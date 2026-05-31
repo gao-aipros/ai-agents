@@ -10,10 +10,11 @@ import (
 
 // WorkerInfo represents aggregated information about a worker type.
 type WorkerInfo struct {
-	Instances    int `json:"instances"`
-	Online       int `json:"online"`
-	TotalActive  int `json:"total_active"`
-	TotalThreads int `json:"total_threads"`
+	Instances    int    `json:"instances"`
+	Online       int    `json:"online"`
+	TotalActive  int    `json:"total_active"`
+	TotalThreads int    `json:"total_threads"`
+	Role         string `json:"role,omitempty"`
 }
 
 // WorkerStats is the full per-worker-type stats map.
@@ -23,6 +24,7 @@ type WorkerStats map[string]*WorkerInfo
 type WorkerInstance struct {
 	WorkerName           string `json:"worker_name"`
 	AgentType            string `json:"agent_type"`
+	Role                 string `json:"role"`
 	Hostname             string `json:"hostname"`
 	TasksProcessed       int    `json:"tasks_processed"`
 	QueueDepth           int    `json:"queue_depth"`
@@ -35,6 +37,7 @@ type WorkerInstance struct {
 type HeartbeatData struct {
 	WorkerName      string `json:"worker_name"`
 	AgentType       string `json:"agent_type"`
+	Role            string `json:"role"`
 	Hostname        string `json:"hostname"`
 	TasksProcessed  int    `json:"tasks_processed"`
 	QueueDepth      int    `json:"queue_depth"`
@@ -78,6 +81,16 @@ func (c *Client) GetWorkerStats(ctx context.Context) (WorkerStats, error) {
 			}
 			s.Instances++
 			s.Online++
+
+			// Extract role from heartbeat payload (if set)
+			if s.Role == "" {
+				if raw, err := c.rdb.Get(ctx, key).Result(); err == nil {
+					var hb HeartbeatData
+					if json.Unmarshal([]byte(raw), &hb) == nil && hb.Role != "" {
+						s.Role = hb.Role
+					}
+				}
+			}
 		}
 		cursor = nextCursor
 		if cursor == 0 {
@@ -215,6 +228,7 @@ func (c *Client) GetWorkerInstances(ctx context.Context, workerName string) ([]W
 	return []WorkerInstance{{
 		WorkerName:           hb.WorkerName,
 		AgentType:            hb.AgentType,
+		Role:                 hb.Role,
 		Hostname:             hb.Hostname,
 		TasksProcessed:       hb.TasksProcessed,
 		QueueDepth:           hb.QueueDepth,
@@ -254,6 +268,7 @@ func (c *Client) getWorkerInstancesFallback(ctx context.Context, workerName stri
 		instances = append(instances, WorkerInstance{
 			WorkerName:           hb.WorkerName,
 			AgentType:            hb.AgentType,
+			Role:                 hb.Role,
 			Hostname:             hb.Hostname,
 			TasksProcessed:       hb.TasksProcessed,
 			QueueDepth:           hb.QueueDepth,

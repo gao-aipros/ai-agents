@@ -1140,8 +1140,8 @@ func TestHandleThreadHistory_PollPreservesMsgCSSClasses(t *testing.T) {
 	}
 
 	// The <details> element must have the full CSS class with role and type.
-	if !strings.Contains(bodyStr, "class=\"msg role-master type-response") {
-		t.Errorf("expected <details> with class=\"msg role-master type-response\", got: %s", bodyStr)
+	if !strings.Contains(bodyStr, "class=\"msg role-orchestrator type-response") {
+		t.Errorf("expected <details> with class=\"msg role-orchestrator type-response\", got: %s", bodyStr)
 	}
 
 	// The OOB container must target thread-timeline.

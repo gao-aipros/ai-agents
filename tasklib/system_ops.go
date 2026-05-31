@@ -63,11 +63,11 @@ func (c *Client) Info(ctx context.Context, section string) (string, error) {
 	return c.rdb.Info(ctx, section).Result()
 }
 
-// PersistMasterTokenStats writes master agent token counts to thread-level
+// PersistMasterTokenStats writes orchestrator agent token counts to thread-level
 // fields and global counters in a single pipeline.
 func (c *Client) PersistMasterTokenStats(ctx context.Context, threadID string, stats TokenStats) error {
 	pipe := c.rdb.Pipeline()
-	PersistMasterTokenStats(ctx, pipe, threadID, stats)
+	PersistMasterTokenStats(ctx, pipe, threadID, stats, c.AgentName)
 	_, err := pipe.Exec(ctx)
 	return err
 }

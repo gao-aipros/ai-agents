@@ -778,10 +778,11 @@ func cmdWorkers(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// Collect worker instances for agent_type + hostname detail
+	// Collect worker instances for agent_type + hostname + role detail
 	type row struct {
 		name      string
 		agentType string
+		role      string
 		hostname  string
 		tasks     int
 		uptime    int64
@@ -795,6 +796,7 @@ func cmdWorkers(cmd *cobra.Command, args []string) error {
 			rows = append(rows, row{
 				name:      inst.WorkerName,
 				agentType: inst.AgentType,
+				role:      inst.Role,
 				hostname:  inst.Hostname,
 				tasks:     inst.TasksProcessed,
 				uptime:    inst.UptimeSeconds,
@@ -804,13 +806,14 @@ func cmdWorkers(cmd *cobra.Command, args []string) error {
 		if len(instances) == 0 {
 			rows = append(rows, row{
 				name:   workerName,
+				role:   info.Role,
 				online: info.Online > 0,
 				tasks:  info.TotalActive,
 			})
 		}
 	}
 
-	header := fmt.Sprintf("%-20s %-12s %-20s %-8s %-10s %-8s", "WORKER NAME", "AGENT TYPE", "HOSTNAME", "TASKS", "UPTIME", "STATUS")
+	header := fmt.Sprintf("%-20s %-12s %-16s %-20s %-8s %-10s %-8s", "WORKER NAME", "AGENT TYPE", "ROLE", "HOSTNAME", "TASKS", "UPTIME", "STATUS")
 	fmt.Println(header)
 	fmt.Println(strings.Repeat("-", len(header)))
 	for _, r := range rows {
@@ -838,8 +841,12 @@ func cmdWorkers(cmd *cobra.Command, args []string) error {
 		if at == "" {
 			at = "-"
 		}
-		fmt.Printf("%-20s %-12s %-20s %-8s %-10s %s\n",
-			r.name, at, r.hostname, fmt.Sprintf("%d", r.tasks), uptimeStr, status)
+		rl := r.role
+		if rl == "" {
+			rl = "-"
+		}
+		fmt.Printf("%-20s %-12s %-16s %-20s %-8s %-10s %s\n",
+			r.name, at, rl, r.hostname, fmt.Sprintf("%d", r.tasks), uptimeStr, status)
 	}
 	return nil
 }

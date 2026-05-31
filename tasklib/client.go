@@ -70,12 +70,14 @@ func HeartbeatKey(workerName string) string {
 
 // Client wraps *redis.Client and provides all task/thread/worker operations.
 type Client struct {
-	rdb *redis.Client
+	rdb       *redis.Client
+	AgentName string // orchestrator name used in thread history and stats (default "master")
+	AgentRole string // orchestrator role (e.g., "designer"), included in message metadata
 }
 
 // NewClient creates a new Client from an existing redis.Client.
 func NewClient(rdb *redis.Client) *Client {
-	return &Client{rdb: rdb}
+	return &Client{rdb: rdb, AgentName: "master"}
 }
 
 // Services composes all role interfaces for consumers that need the full
@@ -92,11 +94,24 @@ type Services struct {
 	SysOps   SystemOps
 }
 
+func agentNameFromEnv() (string, string) {
+	name := "master"
+	role := ""
+	if v := os.Getenv("AGENT_NAME"); v != "" {
+		name = v
+	}
+	if v := os.Getenv("AGENT_ROLE"); v != "" {
+		role = v
+	}
+	return name, role
+}
+
 // NewServices creates a Services that composes all role interfaces.
 // The single *Client under the hood satisfies every interface, so all
 // fields share the same underlying Redis connection.
 func NewServices(rdb *redis.Client) *Services {
 	c := NewClient(rdb)
+	c.AgentName, c.AgentRole = agentNameFromEnv()
 	return &Services{
 		Tasks:    c,
 		Threads:  c,

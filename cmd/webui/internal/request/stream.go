@@ -111,9 +111,10 @@ func (h *Handler) processPlainText(ctx context.Context, threadID string, stdout 
 
 			cleanCtx, cleanCancel := cleanupCtx()
 			if err := h.history.AppendMessage(cleanCtx, threadID, tasklib.Message{
-				Role:      "master",
+				Role:      h.cfg.AgentName,
 				Type:      "plan",
 				Content:   rawLine,
+				Metadata:  orchestratorMeta(h.cfg.AgentRole),
 				Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
 			}); err != nil {
 				h.logger.Warn(fmt.Sprintf("thread=%s AppendMessage error: %v", threadID, err))
@@ -145,10 +146,11 @@ func (h *Handler) handleAssistantMessage(ctx context.Context, threadID string, m
 	cleanCtx, cleanCancel := cleanupCtx()
 	defer cleanCancel()
 	h.history.AppendMessage(cleanCtx, threadID, tasklib.Message{
-		Role:      "master",
+		Role:      h.cfg.AgentName,
 		Type:      msgType,
 		Content:   text,
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Metadata:  orchestratorMeta(h.cfg.AgentRole),
 	})
 	return text
 }

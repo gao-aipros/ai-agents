@@ -54,7 +54,7 @@ func NewRouter(services *tasklib.Services, handler *request.Handler, renderer *t
 		evt := &eventsResource{events: services.Events}
 		wrk := &workersResource{workers: services.Workers, renderer: renderer}
 		req := &requestsResource{requests: services.Requests, handler: handler, renderer: renderer}
-		thr := &threadsResource{threads: services.Threads, requests: services.Requests, threadHistory: services.History, tasks: services.Tasks, tokens: services.Tokens, renderer: renderer, paths: mwCfg.Paths}
+		thr := &threadsResource{threads: services.Threads, requests: services.Requests, threadHistory: services.History, tasks: services.Tasks, tokens: services.Tokens, renderer: renderer, paths: mwCfg.Paths, agentName: services.SysOps.(*tasklib.Client).AgentName}
 		tsk := &tasksResource{tasks: services.Tasks, renderer: renderer}
 		tok := &tokensResource{tokens: services.Tokens, sysOps: services.SysOps, renderer: renderer}
 
