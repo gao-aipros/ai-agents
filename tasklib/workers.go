@@ -14,6 +14,7 @@ type WorkerInfo struct {
 	Online       int    `json:"online"`
 	TotalActive  int    `json:"total_active"`
 	TotalThreads int    `json:"total_threads"`
+	AgentType    string `json:"agent_type,omitempty"`
 	Role         string `json:"role,omitempty"`
 }
 
@@ -82,12 +83,17 @@ func (c *Client) GetWorkerStats(ctx context.Context) (WorkerStats, error) {
 			s.Instances++
 			s.Online++
 
-			// Extract role from heartbeat payload (if set)
-			if s.Role == "" {
+			// Extract agent_type and role from heartbeat payload (if not yet set)
+			if s.AgentType == "" || s.Role == "" {
 				if raw, err := c.rdb.Get(ctx, key).Result(); err == nil {
 					var hb HeartbeatData
-					if json.Unmarshal([]byte(raw), &hb) == nil && hb.Role != "" {
-						s.Role = hb.Role
+					if json.Unmarshal([]byte(raw), &hb) == nil {
+						if s.AgentType == "" && hb.AgentType != "" {
+							s.AgentType = hb.AgentType
+						}
+						if s.Role == "" && hb.Role != "" {
+							s.Role = hb.Role
+						}
 					}
 				}
 			}
