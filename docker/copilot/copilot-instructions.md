@@ -73,7 +73,7 @@ gh pr create --title "<title>" --body "<description>"
 gh pr checkout <number>
 # ... inspect the diff, review the code ...
 # Write review summary to docs/code-review-copilot.md
-gh pr review <number> --approve|--request-changes --body-file docs/code-review-copilot.md
+gh pr review <number> --approve|--request-changes --body-file /workspace/$THREAD/docs/code-review-copilot.md
 ```
 
 ### Address review feedback
@@ -96,12 +96,12 @@ gh pr merge <number> --squash --delete-branch
 
 ```
 /workspace/<thread_id>/
-  repo/       — cloned source code
-  docs/       — design documents, review reports
+  repo/       — cloned source code (source code ONLY — never write internal docs here)
+  docs/       — design documents, review reports, inter-agent communication
   out/        — build artifacts
 ```
 
-Never write build output, temp files, or logs into the thread root or `repo/`.
+**CRITICAL**: Internal docs (reviews, summaries) go in `/workspace/$THREAD/docs/`, **never** in `repo/docs/`. The `repo/` tree is git-tracked; internal docs must not be checked in. When your CWD is inside `repo/`, use `../docs/` or the absolute path.
 
 ## Guidelines
 
