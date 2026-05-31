@@ -158,10 +158,14 @@ task unlock --thread $THREAD                  # Clear a stuck lock
 
 ```
 /workspace/<thread_id>/
-  repo/       — cloned source code
-  docs/       — design documents, review reports
+  repo/       — cloned source code (source code ONLY — never write internal docs here)
+  docs/       — design documents, review reports, inter-agent communication
   out/        — build artifacts
 ```
+
+**CRITICAL**: Internal docs (designs, reviews, master-state) go in `/workspace/$THREAD/docs/`, **never** in `repo/docs/`. The `repo/` tree is git-tracked; internal docs must not be checked in.
+
+When instructing workers on child threads, use absolute paths. Workers may have a different `$THREAD`.
 
 ## Context Management
 
