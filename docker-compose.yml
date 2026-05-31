@@ -36,6 +36,8 @@ services:
       REQUEST_TIMEOUT: "9000"
       MAX_CONCURRENT_REQUESTS: "5"
       ANTHROPIC_AUTH_TOKEN: ${DEEPSEEK_API_KEY}
+      AGENT_NAME: ${AGENT_NAME:-master}
+      AGENT_ROLE: ${AGENT_ROLE:-}
       GH_TOKEN: ${MASTER_GH_TOKEN}
     depends_on:
       redis:
@@ -53,6 +55,7 @@ services:
       - workspace:/workspace
     environment:
       WORKER_NAME: claude
+      WORKER_ROLE: ${WORKER_CLAUDE_ROLE:-}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       TASK_TIMEOUT: "3600"
@@ -76,6 +79,7 @@ services:
       - workspace:/workspace
     environment:
       WORKER_NAME: copilot
+      WORKER_ROLE: ${WORKER_COPILOT_ROLE:-}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       TASK_TIMEOUT: "3600"
@@ -99,6 +103,7 @@ services:
       - workspace:/workspace
     environment:
       WORKER_NAME: opencode
+      WORKER_ROLE: ${WORKER_OPENCODE_ROLE:-}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       TASK_TIMEOUT: "3600"
@@ -142,6 +147,7 @@ services:
       - workspace:/workspace
     environment:
       WORKER_NAME: codex
+      WORKER_ROLE: ${WORKER_CODEX_ROLE:-}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       TASK_TIMEOUT: "3600"

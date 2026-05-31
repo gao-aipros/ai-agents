@@ -23,6 +23,7 @@ type WorkerStats map[string]*WorkerInfo
 type WorkerInstance struct {
 	WorkerName           string `json:"worker_name"`
 	AgentType            string `json:"agent_type"`
+	Role                 string `json:"role"`
 	Hostname             string `json:"hostname"`
 	TasksProcessed       int    `json:"tasks_processed"`
 	QueueDepth           int    `json:"queue_depth"`
@@ -35,6 +36,7 @@ type WorkerInstance struct {
 type HeartbeatData struct {
 	WorkerName      string `json:"worker_name"`
 	AgentType       string `json:"agent_type"`
+	Role            string `json:"role"`
 	Hostname        string `json:"hostname"`
 	TasksProcessed  int    `json:"tasks_processed"`
 	QueueDepth      int    `json:"queue_depth"`
@@ -215,6 +217,7 @@ func (c *Client) GetWorkerInstances(ctx context.Context, workerName string) ([]W
 	return []WorkerInstance{{
 		WorkerName:           hb.WorkerName,
 		AgentType:            hb.AgentType,
+		Role:                 hb.Role,
 		Hostname:             hb.Hostname,
 		TasksProcessed:       hb.TasksProcessed,
 		QueueDepth:           hb.QueueDepth,
@@ -254,6 +257,7 @@ func (c *Client) getWorkerInstancesFallback(ctx context.Context, workerName stri
 		instances = append(instances, WorkerInstance{
 			WorkerName:           hb.WorkerName,
 			AgentType:            hb.AgentType,
+			Role:                 hb.Role,
 			Hostname:             hb.Hostname,
 			TasksProcessed:       hb.TasksProcessed,
 			QueueDepth:           hb.QueueDepth,

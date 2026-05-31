@@ -199,11 +199,12 @@ func PersistTokenStats(ctx context.Context, pipe redis.Pipeliner, taskID, agentT
 	}
 }
 
-// PersistMasterTokenStats writes master agent token counts to thread-level
+// PersistMasterTokenStats writes orchestrator agent token counts to thread-level
 // fields AND global counters via an active Redis pipeline.
-func PersistMasterTokenStats(ctx context.Context, pipe redis.Pipeliner, threadID string, stats TokenStats) {
+// agentName is the configured orchestrator name (default "master").
+func PersistMasterTokenStats(ctx context.Context, pipe redis.Pipeliner, threadID string, stats TokenStats, agentName string) {
 	totalKey := StatsTotalKey()
-	masterKey := StatsAgentKey("master")
+	orchestratorKey := StatsAgentKey(agentName)
 
 	pipe.HIncrBy(ctx, totalKey, "input_tokens", stats.InputTokens)
 	pipe.HIncrBy(ctx, totalKey, "output_tokens", stats.OutputTokens)
@@ -212,12 +213,12 @@ func PersistMasterTokenStats(ctx context.Context, pipe redis.Pipeliner, threadID
 	pipe.HIncrBy(ctx, totalKey, "reasoning", stats.ReasoningTokens)
 	pipe.HIncrBy(ctx, totalKey, "task_count", 1)
 
-	pipe.HIncrBy(ctx, masterKey, "input_tokens", stats.InputTokens)
-	pipe.HIncrBy(ctx, masterKey, "output_tokens", stats.OutputTokens)
-	pipe.HIncrBy(ctx, masterKey, "cache_read", stats.CacheReadTokens)
-	pipe.HIncrBy(ctx, masterKey, "cache_write", stats.CacheWriteTokens)
-	pipe.HIncrBy(ctx, masterKey, "reasoning", stats.ReasoningTokens)
-	pipe.HIncrBy(ctx, masterKey, "task_count", 1)
+	pipe.HIncrBy(ctx, orchestratorKey, "input_tokens", stats.InputTokens)
+	pipe.HIncrBy(ctx, orchestratorKey, "output_tokens", stats.OutputTokens)
+	pipe.HIncrBy(ctx, orchestratorKey, "cache_read", stats.CacheReadTokens)
+	pipe.HIncrBy(ctx, orchestratorKey, "cache_write", stats.CacheWriteTokens)
+	pipe.HIncrBy(ctx, orchestratorKey, "reasoning", stats.ReasoningTokens)
+	pipe.HIncrBy(ctx, orchestratorKey, "task_count", 1)
 
 	// Thread-level master token fields
 	key := ThreadStateKey(threadID)

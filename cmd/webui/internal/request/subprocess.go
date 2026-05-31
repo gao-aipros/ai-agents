@@ -118,7 +118,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 			// Stream-json process exited without emitting a result message.
 			var errContent string
 			if ctx.Err() == context.DeadlineExceeded {
-				errContent = fmt.Sprintf("Master agent timed out after %s", h.cfg.RequestTimeout)
+				errContent = fmt.Sprintf("%s timed out after %s", h.cfg.AgentName, h.cfg.RequestTimeout)
 			} else if ctx.Err() == context.Canceled {
 				errContent = "Request cancelled"
 			} else {
@@ -136,7 +136,7 @@ func (h *Handler) runSubprocess(ctx context.Context, cancel context.CancelFunc, 
 		// Text mode (and any unrecognized mode, including "" default):
 		// use exit code + accumulated stdout.
 		if ctx.Err() == context.DeadlineExceeded {
-			h.writeErrorMessage(ctx, threadID, fmt.Sprintf("Master agent timed out after %s", h.cfg.RequestTimeout))
+			h.writeErrorMessage(ctx, threadID, fmt.Sprintf("timed out after %s", h.cfg.RequestTimeout))
 		} else if ctx.Err() == context.Canceled {
 			h.writeErrorMessage(ctx, threadID, "Request cancelled")
 		} else if waitErr != nil {

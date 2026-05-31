@@ -1016,8 +1016,8 @@ func TestCancelledResultMessage(t *testing.T) {
 		1800, 10, workspace, tasklib.ProcessingKey(testWorker), "testhost", &testTasksProcessed, tasklib.AlertConfig{})
 
 	result, _ := rdb.Get(context.Background(), tasklib.TaskKey(testTaskID, "result")).Result()
-	if result != "Cancelled by master" {
-		t.Errorf("expected 'Cancelled by master', got: %s", result)
+	if result != "Cancelled by orchestrator" {
+		t.Errorf("expected 'Cancelled by orchestrator', got: %s", result)
 	}
 }
 

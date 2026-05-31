@@ -29,6 +29,7 @@ type Renderer struct {
 	HtmxSrc     string
 	Theme       string
 	CSRFToken   string
+	AgentName   string
 }
 
 // New creates a new Renderer with defaults from environment variables.
@@ -44,6 +45,7 @@ func New() (*Renderer, error) {
 		HtmxSrc:     env.String("WEBUI_HTMX_SRC", "/static/htmx.min.js"),
 		Theme:       env.String("WEBUI_THEME", "light"),
 		CSRFToken:   hex.EncodeToString(csrf),
+		AgentName:   env.String("AGENT_NAME", "master"),
 	}
 
 	tmpl := template.New("").Funcs(template.FuncMap{
@@ -98,6 +100,7 @@ type BaseView struct {
 	PollThread  string
 	PollWorkers string
 	CSRFToken   string
+	AgentName   string
 
 	// Per-request field — set by fillBaseView for each render.
 	NowUnix int64
@@ -212,6 +215,7 @@ func (r *Renderer) fillBaseView(vm ViewModel) {
 	bv.PollThread = r.PollThread
 	bv.PollWorkers = r.PollWorkers
 	bv.CSRFToken = r.CSRFToken
+	bv.AgentName = r.AgentName
 	bv.NowUnix = time.Now().Unix()
 }
 
@@ -282,10 +286,10 @@ func statusBadge(status string) template.HTML {
 
 func roleClass(role, msgType string) string {
 	if msgType == "response" {
-		return "role-master type-response"
+		return "role-orchestrator type-response"
 	}
 	if msgType == "error" {
-		return "role-master type-error"
+		return "role-orchestrator type-error"
 	}
 	return "role-" + role + " type-" + msgType
 }
@@ -298,12 +302,11 @@ func badgeForRole(role, msgType string) template.HTML {
 		return template.HTML(`<span class="badge badge-danger">error</span>`)
 	case role == "user":
 		return template.HTML(`<span class="badge badge-primary">user</span>`)
-	case role == "master":
-		return template.HTML(`<span class="badge" style="background:var(--color-master-bg);color:var(--color-master)">master</span>`)
 	case role == "worker", role == "claude", role == "copilot", role == "opencode":
 		return template.HTML(`<span class="badge badge-info">` + template.HTMLEscapeString(role) + `</span>`)
 	default:
-		return template.HTML(`<span class="badge">` + template.HTMLEscapeString(role) + `</span>`)
+		// Orchestrator (formerly "master") or any unknown role
+		return template.HTML(`<span class="badge" style="background:var(--color-orchestrator-bg);color:var(--color-orchestrator)">` + template.HTMLEscapeString(role) + `</span>`)
 	}
 }
 

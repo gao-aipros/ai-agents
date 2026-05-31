@@ -55,6 +55,7 @@ func main() {
 		hostname = "worker"
 	}
 	workerName := envDefault("WORKER_NAME", hostname)
+	workerRole := os.Getenv("WORKER_ROLE")
 
 	logLevel := new(slog.LevelVar)
 	switch strings.ToLower(os.Getenv("LOG_LEVEL")) {
@@ -121,6 +122,7 @@ func main() {
 			hb := tasklib.HeartbeatData{
 				WorkerName:     workerName,
 				AgentType:      agentType,
+				Role:           workerRole,
 				Hostname:       hostname,
 				TasksProcessed: int(tasksProcessed.Load()),
 				QueueDepth:     int(qd),
@@ -333,7 +335,7 @@ func processOneTask(
 
 		pipe := rdb.Pipeline()
 		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "status"), "cancelled", tasklib.TTLTask)
-		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "result"), "Cancelled by master", tasklib.TTLTask)
+		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "result"), "Cancelled by orchestrator", tasklib.TTLTask)
 		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "exit_code"), "-1", tasklib.TTLTask)
 		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "completed_at"), cancelledAt, tasklib.TTLTask)
 		pipe.Set(context.Background(), tasklib.TaskKey(taskID, "cancelled_at"), cancelledAt, tasklib.TTLTask)

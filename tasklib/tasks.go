@@ -117,7 +117,7 @@ func (c *Client) Enqueue(ctx context.Context, worker, threadID, instruction stri
 
 	// Append instruction to thread history
 	msg, err := json.Marshal(map[string]interface{}{
-		"role":      "master",
+		"role":      c.AgentName,
 		"content":   instruction,
 		"timestamp": now,
 		"metadata":  map[string]string{"task_id": taskID, "worker": worker},
@@ -234,7 +234,7 @@ func (c *Client) EnqueueGroup(ctx context.Context, worker, threadID, groupLabel,
 
 	// Append instruction to thread history
 	msg, err := json.Marshal(map[string]interface{}{
-		"role":      "master",
+		"role":      c.AgentName,
 		"content":   instruction,
 		"timestamp": now,
 		"metadata":  map[string]string{"task_id": taskID, "worker": worker},

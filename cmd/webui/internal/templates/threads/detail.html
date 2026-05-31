@@ -4,7 +4,7 @@
 
   {{if .Complete}}
   <div class="banner banner-response" id="response-banner">
-    <strong>Response ready</strong> — the master agent has completed this thread.
+    <strong>Response ready</strong> — the {{.AgentName}} has completed this thread.
   </div>
   {{else if .Running}}
   <div class="banner banner-waiting" id="waiting-banner"
@@ -12,7 +12,7 @@
        hx-trigger="every {{.PollThread}}s"
        hx-swap="none">
     <span class="status-dot running"></span>
-    <strong>Waiting for master...</strong>
+    <strong>Waiting for {{.AgentName}}...</strong>
     <span class="elapsed" data-start="{{.NowUnix}}">0s elapsed</span>
   </div>
   {{end}}

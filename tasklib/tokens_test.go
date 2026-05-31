@@ -343,7 +343,7 @@ func TestPersistMasterTokenStats(t *testing.T) {
 
 	stats := TokenStats{InputTokens: 2000, OutputTokens: 800, CacheReadTokens: 300}
 	pipe := rdb.Pipeline()
-	PersistMasterTokenStats(ctx, pipe, threadID, stats)
+	PersistMasterTokenStats(ctx, pipe, threadID, stats, "master")
 	pipe.Exec(ctx)
 
 	// Thread fields

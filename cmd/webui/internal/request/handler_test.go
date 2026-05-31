@@ -96,6 +96,7 @@ func newTestHandler(t *testing.T) (*Handler, *miniredis.Miniredis, chan string) 
 		MaxConcurrent:  5,
 		ShutdownGrace:  5 * time.Second,
 		OutputFormat:   "text",
+		AgentName:      "master",
 		TestNotify:     notify,
 	}
 	handler := New(client, client, client, client, cfg)
@@ -968,6 +969,7 @@ func newTestHandlerStreamJSON(t *testing.T) (*Handler, *miniredis.Miniredis, cha
 		MaxConcurrent:  5,
 		ShutdownGrace:  5 * time.Second,
 		OutputFormat:   "stream-json",
+			AgentName:      "master",
 		TestNotify:     notify,
 	}
 	handler := New(client, client, client, client, cfg)

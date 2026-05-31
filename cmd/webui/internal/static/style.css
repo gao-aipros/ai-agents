@@ -34,8 +34,8 @@
   --color-info-border: #a5f3fc;
 
   /* Agent roles */
-  --color-master: #7c3aed;
-  --color-master-bg: #f5f3ff;
+  --color-orchestrator: #7c3aed;
+  --color-orchestrator-bg: #f5f3ff;
   --color-user: #2563eb;
   --color-user-bg: #eff6ff;
   --color-claude: #ea580c;
@@ -88,8 +88,8 @@
   --color-info-bg: #042f2e;
   --color-info-border: #155e75;
 
-  --color-master: #a78bfa;
-  --color-master-bg: #1e1b4b;
+  --color-orchestrator: #a78bfa;
+  --color-orchestrator-bg: #1e1b4b;
   --color-user: #60a5fa;
   --color-user-bg: #172554;
   --color-claude: #fb923c;
@@ -509,7 +509,7 @@ td.mono, th.mono { font-family: var(--font-mono); font-size: 12px; }
 }
 
 .timeline .msg.role-user       { border-left-color: var(--color-user); }
-.timeline .msg.role-master      { border-left-color: var(--color-master); }
+.timeline .msg.role-orchestrator      { border-left-color: var(--color-orchestrator); }
 .timeline .msg.role-claude      { border-left-color: var(--color-claude); }
 .timeline .msg.role-copilot     { border-left-color: var(--color-copilot); }
 .timeline .msg.role-opencode    { border-left-color: var(--color-opencode); }

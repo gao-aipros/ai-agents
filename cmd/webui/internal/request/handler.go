@@ -260,7 +260,7 @@ func (h *Handler) writeResponseMessage(ctx context.Context, threadID, content st
 	h.threads.SetThreadComplete(cleanCtx, threadID)
 
 	h.history.AppendMessage(cleanCtx, threadID, tasklib.Message{
-		Role:      "master",
+		Role:      h.cfg.AgentName,
 		Type:      "response",
 		Content:   content,
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
@@ -286,7 +286,7 @@ func (h *Handler) writeErrorMessage(ctx context.Context, threadID, content strin
 	h.threads.SetThreadComplete(cleanCtx, threadID)
 
 	h.history.AppendMessage(cleanCtx, threadID, tasklib.Message{
-		Role:      "master",
+		Role:      h.cfg.AgentName,
 		Type:      "error",
 		Content:   content,
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
