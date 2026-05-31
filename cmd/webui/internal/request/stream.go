@@ -150,6 +150,7 @@ func (h *Handler) handleAssistantMessage(ctx context.Context, threadID string, m
 		Type:      msgType,
 		Content:   text,
 		Timestamp: time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Metadata:  orchestratorMeta(h.cfg.AgentRole),
 	})
 	return text
 }
