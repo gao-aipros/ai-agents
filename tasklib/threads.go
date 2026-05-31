@@ -396,6 +396,12 @@ func (c *Client) IsThreadLocked(ctx context.Context, threadID string) (bool, err
 	return exists > 0, err
 }
 
+// GetLockHolder returns the task ID that holds the thread lock, or an empty
+// string if the lock key does not exist.
+func (c *Client) GetLockHolder(ctx context.Context, threadID string) (string, error) {
+	return c.rdb.Get(ctx, ThreadLockKey(threadID)).Result()
+}
+
 // UnlockThread releases a thread lock. Safe to call multiple times (DEL is idempotent).
 func (c *Client) UnlockThread(ctx context.Context, threadID string) error {
 	// Read holder before DEL for the lock_released event

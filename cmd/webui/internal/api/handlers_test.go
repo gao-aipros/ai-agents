@@ -630,12 +630,55 @@ func TestHandleDeleteThread_ThreadLockHeld(t *testing.T) {
 	}
 	defer th.Client.UnlockThread(context.Background(), threadID)
 
+	// Create the holder task with an active (non-terminal) status so the
+	// lock is not treated as stale.
+	th.rdb.Set(context.Background(), tasklib.TaskKey("task-1", "status"), "running", 0)
+
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("DELETE", "/api/threads/"+threadID+"?confirm=true", nil)
 	th.Router.ServeHTTP(w, r)
 
 	if w.Code != http.StatusConflict {
 		t.Errorf("status = %d, want %d (body=%s)", w.Code, http.StatusConflict, w.Body.String())
+	}
+}
+
+func TestHandleDeleteThread_StaleLockAutoClear(t *testing.T) {
+	th := newTestRouter(t, MiddlewareConfig{})
+	defer th.Cleanup()
+
+	threadID := "delete-stale-lock"
+	th.Client.CreateThread(context.Background(), threadID, "", "")
+
+	// Create a thread lock held by a task that is in terminal state (done).
+	ok, err := th.Client.LockThread(context.Background(), threadID, "task-done", tasklib.LockTTL)
+	if err != nil {
+		t.Fatalf("LockThread: %v", err)
+	}
+	if !ok {
+		t.Fatal("should have acquired thread lock")
+	}
+
+	// Set the holder task status to "done" — the lock is stale and should
+	// be auto-cleared by the delete handler.
+	th.rdb.Set(context.Background(), tasklib.TaskKey("task-done", "status"), "done", 0)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("DELETE", "/api/threads/"+threadID+"?confirm=true", nil)
+	th.Router.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (stale lock should be auto-cleared; body=%s)",
+			w.Code, http.StatusOK, w.Body.String())
+	}
+
+	// Verify the stale lock was actually cleared.
+	locked, err := th.Client.IsThreadLocked(context.Background(), threadID)
+	if err != nil {
+		t.Fatalf("IsThreadLocked after delete: %v", err)
+	}
+	if locked {
+		t.Error("stale lock should have been cleared after deletion")
 	}
 }
 

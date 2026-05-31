@@ -56,6 +56,7 @@ type ThreadStore interface {
 	// Locking
 	LockThread(ctx context.Context, threadID, taskID string, ttl time.Duration) (bool, error)
 	IsThreadLocked(ctx context.Context, threadID string) (bool, error)
+	GetLockHolder(ctx context.Context, threadID string) (string, error)
 	UnlockThread(ctx context.Context, threadID string) error
 
 	// Active tasks
