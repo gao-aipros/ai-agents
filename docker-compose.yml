@@ -54,7 +54,7 @@ services:
     volumes:
       - workspace:/workspace
     environment:
-      WORKER_NAME: claude
+      WORKER_NAME: ${WORKER_CLAUDE_NAME:-claude}
       WORKER_ROLE: ${WORKER_CLAUDE_ROLE:-}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
@@ -78,7 +78,7 @@ services:
     volumes:
       - workspace:/workspace
     environment:
-      WORKER_NAME: copilot
+      WORKER_NAME: ${WORKER_COPILOT_NAME:-copilot}
       WORKER_ROLE: ${WORKER_COPILOT_ROLE:-}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
@@ -102,7 +102,7 @@ services:
     volumes:
       - workspace:/workspace
     environment:
-      WORKER_NAME: opencode
+      WORKER_NAME: ${WORKER_OPENCODE_NAME:-opencode}
       WORKER_ROLE: ${WORKER_OPENCODE_ROLE:-}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
@@ -146,7 +146,7 @@ services:
     volumes:
       - workspace:/workspace
     environment:
-      WORKER_NAME: codex
+      WORKER_NAME: ${WORKER_CODEX_NAME:-codex}
       WORKER_ROLE: ${WORKER_CODEX_ROLE:-}
       REDIS_HOST: redis
       REDIS_PORT: "6379"
