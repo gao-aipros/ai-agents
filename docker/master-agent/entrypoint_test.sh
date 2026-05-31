@@ -13,7 +13,7 @@ HOOK_GUARD='
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Write|Edit|Bash|NotebookEdit|Create",
+        "matcher": "Write|Edit|Bash|NotebookEdit|Create|Agent",
         "hooks": [
           {
             "type": "command",
@@ -55,7 +55,7 @@ else
 fi
 
 # Verify hook structure
-if jq -e '.hooks.PreToolUse[0].matcher == "Write|Edit|Bash|NotebookEdit|Create"' "$CONFIG_FILE" >/dev/null 2>&1; then
+if jq -e '.hooks.PreToolUse[0].matcher == "Write|Edit|Bash|NotebookEdit|Create|Agent"' "$CONFIG_FILE" >/dev/null 2>&1; then
     pass_test "Hook matcher is correct"
 else
     fail_test "Hook matcher is incorrect: $(jq -r '.hooks.PreToolUse[0].matcher' "$CONFIG_FILE")"
