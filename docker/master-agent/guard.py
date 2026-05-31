@@ -257,8 +257,8 @@ def main() -> None:
 
     elif tool_name == "Agent":
         block(
-            "Agent tool is forbidden for master. Workers (Prettier, Closer, Msfter, "
-            "Opener) are independent Docker containers, not Claude sub-agents. "
+            "Agent tool is forbidden for master. "
+            "Workers are independent Docker containers, not Claude sub-agents. "
             "Use 'task enqueue' to delegate work to them."
         )
 
