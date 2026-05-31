@@ -407,6 +407,36 @@ func (tr *threadsResource) deleteThread(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if locked {
+			holder, err := tr.threads.GetLockHolder(r.Context(), tid)
+			if err != nil {
+				serverError(w, "internal error", err)
+				return
+			}
+			// If the lock holder task is terminal (done/failed/cancelled)
+			// or missing, the lock is stale — auto-clear it and proceed.
+			if holder != "" {
+				task, _ := tr.tasks.GetTask(r.Context(), holder)
+				if task == nil || task.Status == "" ||
+					task.Status == "done" || task.Status == "failed" || task.Status == "cancelled" {
+					slog.Warn("clearing stale lock for thread deletion",
+						"thread_id", tid,
+						"holder_task", holder,
+						"holder_status", func() string {
+							if task != nil {
+								return task.Status
+							}
+							return "(missing)"
+						}(),
+					)
+					if err := tr.threads.UnlockThread(r.Context(), tid); err != nil {
+						slog.Error("failed to clear stale lock", "thread_id", tid, "error", err)
+						serverError(w, "internal error", err)
+						return
+					}
+					// Lock cleared — continue to next validation check.
+					continue
+				}
+			}
 			Error(w, http.StatusConflict, fmt.Sprintf("thread %s has a pending task", tid))
 			return
 		}
