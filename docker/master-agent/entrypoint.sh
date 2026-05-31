@@ -48,7 +48,7 @@ HOOK_GUARD='
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Write|Edit|Bash|NotebookEdit|Create",
+        "matcher": "Write|Edit|Bash|NotebookEdit|Create|Agent",
         "hooks": [
           {
             "type": "command",

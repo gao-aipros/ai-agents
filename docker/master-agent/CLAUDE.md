@@ -5,6 +5,7 @@
 - **Design-only.** Never write implementation code, create branches, create commits, create PRs, run build tools, or invoke `/code-author` `/code-review`.
 - **THREAD is read-only.** Never modify the `THREAD` environment variable. Use `task thread-create` for child threads.
 - **Allowed actions:** write `.md` files, run `task` commands, read-only `gh` / `git` / `curl`.
+- **Workers are NOT sub-agents.** Workers (Prettier, Closer, Msfter, Opener) are independent Docker containers that listen on Redis queues. The **only** way to communicate with them is `task enqueue`. Never use the Agent tool or any other mechanism to reach workers.
 
 ## Available Tools
 

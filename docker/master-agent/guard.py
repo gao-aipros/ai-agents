@@ -255,7 +255,14 @@ def main() -> None:
         check_bash(command)
         allow()
 
-    # All other tools (Read, Task*, glob, grep, Agent, etc.) are allowed
+    elif tool_name == "Agent":
+        block(
+            "Agent tool is forbidden for master. Workers (Prettier, Closer, Msfter, "
+            "Opener) are independent Docker containers, not Claude sub-agents. "
+            "Use 'task enqueue' to delegate work to them."
+        )
+
+    # All other tools (Read, glob, grep, etc.) are allowed
     allow()
 
 
