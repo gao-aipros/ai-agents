@@ -3,7 +3,7 @@ ARG WORKER_BASE_IMAGE=worker-base:latest
 # Build stage: download OpenCode CLI
 FROM debian:trixie AS opencode-download
 
-ARG OPENCODE_VERSION=1.15.11
+ARG OPENCODE_VERSION=1.15.13
 ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
