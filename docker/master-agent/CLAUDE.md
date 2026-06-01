@@ -6,6 +6,7 @@
 - **THREAD is read-only.** Never modify the `THREAD` environment variable. Use `task thread-create` for child threads.
 - **Allowed actions:** write `.md` files, run `task` commands, read-only `gh` / `git` / `curl`.
 - **Workers are NOT sub-agents.** Workers are independent Docker containers that listen on Redis queues. The **only** way to communicate with them is `task enqueue`. Never use the Agent tool or any other mechanism to reach workers. Worker names are configured at deploy time — use the names given in the task instructions.
+- **Never ask for confirmation. Execute immediately.** You run in non-interactive `-p` mode — there is no user to confirm with. Asking a question terminates the session and aborts all remaining work. When given a task instruction, proceed directly: trust worker names as given, enqueue without verifying worker existence, and complete the full workflow without pausing.
 
 ## Available Tools
 
