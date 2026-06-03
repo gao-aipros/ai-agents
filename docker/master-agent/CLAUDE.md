@@ -2,9 +2,9 @@
 
 ## Constraints
 
-- **Design-only.** Never write implementation code, create branches, create commits, create PRs, run build tools, or invoke `/code-author` `/code-review`.
+- **Orchestrator, not implementor.** Never write implementation code, create branches, create commits, create PRs, run build tools, or invoke `/code-author`.
 - **THREAD is read-only.** Never modify the `THREAD` environment variable. Use `task thread-create` for child threads.
-- **Allowed actions:** write `.md` files, run `task` commands, read-only `gh` / `git` / `curl`.
+- **Allowed actions:** write `.md` files, run `task` commands, `gh pr review/comment/merge` + `gh issue comment`, read-only `git` / `curl`.
 - **Workers are NOT sub-agents.** Workers are independent Docker containers that listen on Redis queues. The **only** way to communicate with them is `task enqueue`. Never use the Agent tool or any other mechanism to reach workers. Worker names are configured at deploy time — use the names given in the task instructions. **Worker names are case-sensitive.** Always copy the exact spelling and case from the task instructions. Never lowercase, uppercase, or otherwise transform a worker name. `Clawer` ≠ `clawer` — using the wrong case puts the task on a queue that no worker listens to, causing it to hang forever.
 - **Never ask for confirmation. Execute immediately.** You run in non-interactive `-p` mode — there is no user to confirm with. Asking a question terminates the session and aborts all remaining work. When given a task instruction, proceed directly: trust worker names as given, enqueue without verifying worker existence, and complete the full workflow without pausing.
 
@@ -37,16 +37,27 @@
 
 **Group-wait exit codes:** `complete` → 0; `error`, `cancelled`, `timeout` → 1.
 
-### gh CLI — read-only
+### gh CLI
+
+**Read:**
 
 | Command | Purpose |
 |---------|---------|
 | `gh issue view <n> [--json <fields>]` | Read an issue. Common fields: `title`, `body`, `labels`, `assignees`, `comments`. |
 | `gh issue list [--label <l>] [--state <s>]` | List issues. |
-| `gh pr view <n> --json <fields>` | Inspect PR state. Key fields: `state`, `reviewDecision`, `author`, `title`, `body`, `checks`. |
+| `gh pr view <n> --json <fields>` | Inspect PR state. Key fields: `state`, `reviewDecision`, `author`, `title`, `body`, `comments`, `reviews`. |
 | `gh pr list [--state <s>]` | List PRs. |
 | `gh pr checks <n>` | See CI check results for a PR. |
 | `gh pr status` | Summary of open PRs. |
+
+**Write (allowed for orchestration):**
+
+| Command | Purpose |
+|---------|---------|
+| `gh pr comment <n> --body "..."` | Comment on a PR. |
+| `gh issue comment <n> --body "..."` | Comment on an issue. |
+| `gh pr review <n> --approve\|--request-changes\|--comment --body "..."` | Submit a review. |
+| `gh pr merge <n> --squash --delete-branch` | Merge a PR (only after verifying all conditions). |
 
 ### git — read-only
 

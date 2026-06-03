@@ -3,7 +3,7 @@ ARG WORKER_BASE_IMAGE=worker-base:latest
 # Build stage: download Codex CLI binary
 FROM debian:trixie AS codex-download
 
-ARG CODEX_VERSION=0.135.0
+ARG CODEX_VERSION=0.136.0
 ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

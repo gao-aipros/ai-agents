@@ -37,17 +37,13 @@ THREAD_MODIFY_PATTERNS = [
 ]
 
 FORBIDDEN_BASH_PATTERNS = [
-    # gh write commands the master must never run
+    # gh write commands the master must never run (implementation actions)
     r"\bgh\s+pr\s+create\b",
-    r"\bgh\s+pr\s+review\b",
-    r"\bgh\s+pr\s+merge\b",
     r"\bgh\s+pr\s+close\b",
     r"\bgh\s+pr\s+reopen\b",
-    r"\bgh\s+pr\s+comment\b",
     r"\bgh\s+pr\s+edit\b",
     r"\bgh\s+issue\s+create\b",
     r"\bgh\s+issue\s+edit\b",
-    r"\bgh\s+issue\s+comment\b",
     r"\bgh\s+api\b",                  # could POST/PUT/DELETE
     r"\bgh\s+repo\s+create\b",
     r"\bgh\s+repo\s+delete\b",
