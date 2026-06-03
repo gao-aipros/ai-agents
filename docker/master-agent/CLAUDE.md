@@ -5,7 +5,7 @@
 - **Design-only.** Never write implementation code, create branches, create commits, create PRs, run build tools, or invoke `/code-author` `/code-review`.
 - **THREAD is read-only.** Never modify the `THREAD` environment variable. Use `task thread-create` for child threads.
 - **Allowed actions:** write `.md` files, run `task` commands, read-only `gh` / `git` / `curl`.
-- **Workers are NOT sub-agents.** Workers are independent Docker containers that listen on Redis queues. The **only** way to communicate with them is `task enqueue`. Never use the Agent tool or any other mechanism to reach workers. Worker names are configured at deploy time — use the names given in the task instructions.
+- **Workers are NOT sub-agents.** Workers are independent Docker containers that listen on Redis queues. The **only** way to communicate with them is `task enqueue`. Never use the Agent tool or any other mechanism to reach workers. Worker names are configured at deploy time — use the names given in the task instructions. **Worker names are case-sensitive.** Always copy the exact spelling and case from the task instructions. Never lowercase, uppercase, or otherwise transform a worker name. `Clawer` ≠ `clawer` — using the wrong case puts the task on a queue that no worker listens to, causing it to hang forever.
 - **Never ask for confirmation. Execute immediately.** You run in non-interactive `-p` mode — there is no user to confirm with. Asking a question terminates the session and aborts all remaining work. When given a task instruction, proceed directly: trust worker names as given, enqueue without verifying worker existence, and complete the full workflow without pausing.
 
 ## Available Tools
@@ -14,14 +14,14 @@
 
 | Command | Purpose |
 |---------|---------|
-| `task enqueue --worker <w> --thread <id> [--group <g>] [--timeout <s>] --instruction "..."` | Send a task to a worker. Returns `{task_id}`. |
+| `task enqueue --worker <WorkerName> --thread <id> [--group <g>] [--timeout <s>] --instruction "..."` | Send a task to a worker. Worker names are case-sensitive — use exact case. Returns `{task_id}`. |
 | `task group-wait --thread <id> --group <g> [--timeout <s>]` | Wait for all tasks in a parallel group. Returns `{status, tasks}`. |
 | `task wait --id <id>` | Block until a single task finishes. |
 | `task result --id <id>` | Read a task's stdout output. |
 | `task status --id <id>` | Read full task state (status, worker, thread, timestamps, etc.). |
 | `task cancel --id <id>` | Cancel a running or pending task. |
-| `task requeue-stale [--worker <w>] [--older-than <s>]` | Requeue tasks stuck in `running` state. Default threshold 600s. |
-| `task list [--worker <w>] [--status <s>] [--limit <n>]` | List tasks with filters. |
+| `task requeue-stale [--worker <WorkerName>] [--older-than <s>]` | Requeue tasks stuck in `running` state. Default threshold 600s. |
+| `task list [--worker <WorkerName>] [--status <s>] [--limit <n>]` | List tasks with filters. |
 | `task thread-create --id <id> [--parent <id>] [--repo <r>]` | Create a child thread. |
 | `task thread-update --id <id> --status <s> [--pr <n>]` | Update thread status and optionally attach a PR number. |
 | `task thread-state --id <id>` | View a thread's task summary and recent events. |
@@ -66,7 +66,7 @@ Project defaults: `~/.claude/agents-config/issue-tracker.md` `~/.claude/agents-c
 ### Spawn a worker (single task)
 
 ```bash
-TASK=$(task enqueue --worker <worker> --thread $THREAD --instruction "<instruction>" | jq -r '.task_id')
+TASK=$(task enqueue --worker <WorkerName> --thread $THREAD --instruction "<instruction>" | jq -r '.task_id')
 task wait --id "$TASK"
 RESULT=$(task result --id "$TASK")
 ```
@@ -81,8 +81,8 @@ task thread-update --id $THREAD --status reviewing
 task unlock --thread $THREAD 2>/dev/null || true
 
 # 2. Enqueue each worker, capture task IDs
-T1=$(task enqueue --worker <w1> --thread $THREAD --group <group> --instruction "..." | jq -r '.task_id')
-T2=$(task enqueue --worker <w2> --thread $THREAD --group <group> --instruction "..." | jq -r '.task_id')
+T1=$(task enqueue --worker <Worker1> --thread $THREAD --group <group> --instruction "..." | jq -r '.task_id')
+T2=$(task enqueue --worker <Worker2> --thread $THREAD --group <group> --instruction "..." | jq -r '.task_id')
 # ... one per worker
 
 # 3. Verify all task IDs are non-null
