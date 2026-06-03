@@ -22,7 +22,7 @@ ai-base (debian:trixie + gh, git, jq, python3, redis-tools, curl, ssh)
        ├─ worker-claude   (worker-base + claude CLI)
        └─ codex           (worker-base + codex CLI)
 
-moon-bridge (independent, golang:1.26.3-trixie + moon-bridge binary)
+moon-bridge (independent, debian:trixie + pre-built moon-bridge binary)
 ```
 
 The master agent delegates tasks via `task enqueue` to a Redis task queue. Long-running worker containers (one per agent type) dequeue tasks via `BLMOVE`, execute them with full thread context, and post results back to Redis. All containers share a `/workspace` volume for file exchange. Auth tokens (`ANTHROPIC_AUTH_TOKEN`, per-agent `GH_TOKEN`) are passed via environment variables.
@@ -113,6 +113,13 @@ GOOS=linux go build -o out/amd64/worker-go ./cmd/worker/
 GOOS=linux go build -o out/amd64/task-go   ./cmd/task/
 GOOS=linux go build -o out/amd64/webui     ./cmd/webui/
 
+# Pre-build moon-bridge binary (external repo; ref from Dockerfile comment)
+MB_REF=$(grep '^# MOON_BRIDGE_REF=' docker/moon-bridge/Dockerfile | sed 's/.*=//')
+git clone https://github.com/ZhiYi-R/moon-bridge.git /tmp/mb-src
+cd /tmp/mb-src && git checkout $MB_REF
+CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o out/amd64/moonbridge ./cmd/moonbridge
+cd -
+
 # Phase 1 — base images (parallel, no deps)
 docker build --load -t ai-base:latest docker/base/ &
 docker build --load -t moon-bridge:latest -f docker/moon-bridge/Dockerfile . &
@@ -147,6 +154,12 @@ GOOS=linux GOARCH=amd64 go build -o out/amd64/webui     ./cmd/webui/
 GOOS=linux GOARCH=arm64 go build -o out/arm64/worker-go ./cmd/worker/
 GOOS=linux GOARCH=arm64 go build -o out/arm64/task-go   ./cmd/task/
 GOOS=linux GOARCH=arm64 go build -o out/arm64/webui     ./cmd/webui/
+
+# moon-bridge binary (external repo, separate CI job: mb-go-build)
+git clone https://github.com/ZhiYi-R/moon-bridge.git /tmp/mb-src
+cd /tmp/mb-src && git checkout f68cceb2c8
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o out/amd64/moonbridge ./cmd/moonbridge
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o out/arm64/moonbridge ./cmd/moonbridge
 
 # Phase 1 (parallel)
 docker buildx build --platform linux/amd64,linux/arm64 --push \
@@ -200,13 +213,11 @@ FROM ${BASE_IMAGE}                      # final stage (parameterized)
 ...
 ```
 
-Build stages use `debian:trixie` (Docker Hub), which is already multi-arch. Go binaries are pre-built outside Docker and copied in via `COPY out/${TARGETARCH}/<binary>` — there are no `FROM golang:latest` stages.
-
-The `moon-bridge` image is an exception: it builds from source (`FROM golang:1.26.3-trixie`) since it compiles an external Go project (moon-bridge proxy) that has no pre-built binaries or published images.
+Build stages use `debian:trixie` (Docker Hub), which is already multi-arch. Go binaries are pre-built outside Docker and copied in via `COPY out/${TARGETARCH}/<binary>` — there are no `FROM golang:latest` stages in any Dockerfile.
 
 ## CI
 
-GitHub Actions workflow at `.github/workflows/build-images.yml`. Triggers on push to `main` or manual `workflow_dispatch`. Pushes to `ghcr.io/gao-aipros/<image>:latest`. Single job builds Go binaries first, then 8 images in 3 phases (phase 1: `ai-base` and `moon-bridge` in parallel, phase 2: `worker-base` and `master-agent` in parallel, phase 3: `copilot`, `opencode`, `worker-claude`, `codex` in parallel).
+GitHub Actions workflow at `.github/workflows/build-images.yml`. Triggers on push to `main` or manual `workflow_dispatch`. Pushes to `ghcr.io/gao-aipros/<image>:latest`. Two parallel Go-build jobs (`go-build` for in-repo binaries, `mb-go-build` for the external moon-bridge binary), then 8 images in 3 phases (phase 1: `ai-base` and `moon-bridge` in parallel, phase 2: `worker-base` and `master-agent` in parallel, phase 3: `copilot`, `opencode`, `worker-claude`, `codex` in parallel).
 
 ## Environment
 
