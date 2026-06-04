@@ -1,6 +1,6 @@
 services:
   redis:
-    image: redis:8.6.2-alpine
+    image: redis:8.8.0-alpine
     restart: unless-stopped
     volumes:
       - redis_data:/data
@@ -56,13 +56,9 @@ services:
     environment:
       WORKER_NAME: ${WORKER_CLAUDE_NAME:-claude}
       WORKER_ROLE: ${WORKER_CLAUDE_ROLE:-}
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-      TASK_TIMEOUT: "3600"
-      HISTORY_WINDOW: "10"
       ANTHROPIC_AUTH_TOKEN: ${DEEPSEEK_API_KEY}
       GH_TOKEN: ${WORKER_CLAUDE_GH_TOKEN}
-      TEST_DB_DSN: "postgres://${DB_USER:-devadmin}:${DB_PASSWORD}@time-db:5432/autost?sslmode=disable"
+    env_file: ".worker.env"
     depends_on:
       redis:
         condition: service_healthy
@@ -80,13 +76,9 @@ services:
     environment:
       WORKER_NAME: ${WORKER_COPILOT_NAME:-copilot}
       WORKER_ROLE: ${WORKER_COPILOT_ROLE:-}
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-      TASK_TIMEOUT: "3600"
-      HISTORY_WINDOW: "10"
       COPILOT_PROVIDER_API_KEY: ${DEEPSEEK_API_KEY}
       GH_TOKEN: ${WORKER_COPILOT_GH_TOKEN}
-      TEST_DB_DSN: "postgres://${DB_USER:-devadmin}:${DB_PASSWORD}@time-db:5432/autost?sslmode=disable"
+    env_file: ".worker.env"
     depends_on:
       redis:
         condition: service_healthy
@@ -104,13 +96,9 @@ services:
     environment:
       WORKER_NAME: ${WORKER_OPENCODE_NAME:-opencode}
       WORKER_ROLE: ${WORKER_OPENCODE_ROLE:-}
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-      TASK_TIMEOUT: "3600"
-      HISTORY_WINDOW: "10"
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       GH_TOKEN: ${WORKER_OPENCODE_GH_TOKEN}
-      TEST_DB_DSN: "postgres://${DB_USER:-devadmin}:${DB_PASSWORD}@time-db:5432/autost?sslmode=disable"
+    env_file: ".worker.env"
     depends_on:
       redis:
         condition: service_healthy
@@ -148,12 +136,7 @@ services:
     environment:
       WORKER_NAME: ${WORKER_CODEX_NAME:-codex}
       WORKER_ROLE: ${WORKER_CODEX_ROLE:-}
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-      TASK_TIMEOUT: "3600"
-      HISTORY_WINDOW: "10"
       GH_TOKEN: ${WORKER_CODEX_GH_TOKEN:-}
-      TEST_DB_DSN: "postgres://${DB_USER:-devadmin}:${DB_PASSWORD}@time-db:5432/autost?sslmode=disable"
     depends_on:
       redis:
         condition: service_healthy
