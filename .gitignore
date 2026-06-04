@@ -15,6 +15,7 @@ workspace/
 
 # Environment secrets
 .env
+.worker.env
 
 # Claude Code
 .claude/
