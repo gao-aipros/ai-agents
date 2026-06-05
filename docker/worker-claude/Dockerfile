@@ -3,7 +3,7 @@ ARG WORKER_BASE_IMAGE=worker-base:latest
 # Build stage: download Claude CLI
 FROM debian:trixie AS claude-download
 
-ARG CLAUDE_VERSION=2.1.162
+ARG CLAUDE_VERSION=2.1.165
 ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
