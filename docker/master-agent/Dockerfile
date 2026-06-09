@@ -3,7 +3,7 @@ ARG BASE_IMAGE=ai-base:latest
 # Build stage: download Claude CLI
 FROM debian:trixie AS claude-build
 
-ARG CLAUDE_VERSION=2.1.168
+ARG CLAUDE_VERSION=2.1.169
 ARG TARGETARCH
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
